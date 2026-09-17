@@ -2271,6 +2271,41 @@ plausible-sounding guesswork.
     own right. Could not reproduce the live multi-client contention
     condition in this environment to test more conclusively.
 
+**Scale feature added to Position & Hierarchy, 2026-09-17, owner's
+request** ("to make it up to me, you can add scale features to the
+positioning section...w/a lock toggle (on by default) that scales x & y
+maintaining proportions"). `Sprite` gained `scale_x`/`scale_y` (default
+1.0) as a *static, authored* size multiplier -- distinct from the
+existing `stretch_amount`, which is *reactive* and always returns to 1.0
+at rest. The two combine multiplicatively in `render.py`'s transform
+(`combined_scale = sprite.scale * runtime.scale`), so a permanently
+resized layer still squashes/stretches normally around its own new size.
+UI: two spinboxes plus a checkable "🔗 Lock proportions" button (checked
+by default, following the existing Guide/Ghost checkable-QPushButton
+convention rather than a QCheckBox) in the Positioning section -- when
+locked, dragging either spinbox writes the same value to the other via
+`blockSignals` to avoid feedback loops. The lock state persists in
+`ControlPanelConfig.scale_lock_proportions` like the other UI toggles.
+Persisted as `scaleX`/`scaleY` in the `.uc`/`.save` JSON, with old files
+defaulting both to 1.0 on load. New regression tests across all four
+layers: `Sprite` defaults (`test_rig.py`), save/load round-trip
+(`test_persistence.py`), the combined static+reactive transform math
+(`test_render.py`), and the lock-toggle linking + config round-trip
+(`test_control_panel_window.py`). Full suite green at 359 tests.
+
+Also answered the owner's Position-vs-Offset question (asked in the same
+message): per `rig.py`'s own transform-hierarchy docstring, Position is
+the pivot point that parenting/rotation/stretch center on, while Offset
+shifts the artwork away from that pivot *without* moving the pivot
+itself -- they only produce visibly different results once a sprite also
+rotates or stretches reactively and needs a pivot away from its own
+visual center (e.g. a limb hinging at a joint). None of the three real
+avatars built so far exercise that combination, which is exactly why
+Offset has looked redundant with Position in practice. Recommendation
+given to the owner: keep it in the data model/persistence for backward
+compatibility and future reactive-limb work, but it's a legitimate
+candidate to hide from the UI by default if it stays unused.
+
 ---
 
 ## 0. What we're actually replacing
