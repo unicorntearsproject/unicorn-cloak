@@ -2177,6 +2177,53 @@ behaviors, etc.."):
     match, since it was still named/worded around the *previous*
     default avatar's own now-superseded bug fix.
 
+**Third avatar (bugged-out-nerd) built + eyes fix applied to both new
+avatars, 2026-09-17, owner's request** ("i also have a whole new set of
+assets for one we'll call 'bugged-out-nerd.uc'... land the uc file for
+that one right there with its assets" -- landed at
+`/home/jj/projects/bon/images/avatar-animated/`, personal content, not
+in this repo, same treatment as avatar-01). Same asked-not-guessed
+approach for its own genuine ambiguity (this asset set has *three*
+open-eye candidates -- normal/wide/squint -- plus an asymmetric wink
+that can only ever be manual): owner picked wide+squint as the automatic
+pair, normal manual, mirroring the answer given for unicorn-demo.
+  - **Both answers turned out wrong, and the owner caught it**: "we
+    previously had the eyes just right... mostly open, squinted
+    sometimes, blinked sometimes... that's not how they are now? you
+    asked the same question for each but didn't get it right... our
+    presently-loading-on-default model probably has it right, i don't
+    think we've touched that one... and that was before we designed the
+    'expressions' feature." "Presently loading" was the key clue: the
+    owner's real `settings.json` still points at avatar-01 directly
+    (`DEFAULT_AVATAR_PATH` is only the fallback when no path is already
+    set, so swapping it to unicorn-demo never touched what their actual
+    running app loads) -- confirmed avatar-01's own real `.uc` is
+    genuinely untouched (only Group/State tags were added to it earlier
+    today, never talk/blink/variant/manual values) and predates
+    Expressions by definition: its Eyes group is just two automatic
+    variants (wide + squint) alternating under "Only eyes open", *no*
+    manual-only sprite at all. Both new avatars' question framing had a
+    real flaw: pulling the plain, default-looking sprite (regular/
+    normal) out to Manually-driven, keeping only the more exaggerated
+    look (open/wide) in automatic rotation -- meaning the avatar never
+    showed its plain resting look at all outside a manual trigger, only
+    ever "excited" or "squinting". Fixed both by swapping which sprite
+    is automatic vs. manual: the plain sprite (regular/normal) is now
+    the Variant-0 automatic partner for Squint (matching avatar-01's own
+    pairing shape), the more exaggerated one (open/wide) becomes the
+    Manually-driven expression instead -- Expressions itself wasn't the
+    mistake (the owner confirmed it's a real, intentionally-designed
+    feature), just which sprite got assigned to it. Verified at the
+    opacity level, not just visually, for both. Zero `rig_lint` issues
+    on either file.
+  - Also reported live in the same message, not yet resolved: the mic
+    stopped driving the avatar with OBS open (previously worked), and
+    quitting crashed the whole process --
+    `Expression 'result' failed in 'src/hostapi/jack/pa_jack.c', line:
+    1703`. Real PortAudio/JACK-hostapi crash, not a Python exception --
+    see this file's own next entry once that's actually investigated,
+    not guessed at from here.
+
 ---
 
 ## 0. What we're actually replacing
