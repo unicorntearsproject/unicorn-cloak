@@ -2977,6 +2977,34 @@ did).
   gitignored, personal machine state).
 - Full suite green at 410 tests.
 
+**Costume row still overflowed at a narrower stress-tested width;
+Costumes/Expressions tabs renamed to disambiguate from an existing
+Sprites-tab section, 2026-09-17, same-day follow-up.**
+
+- Stress-testing the just-fixed single-column layout at a narrower panel
+  width than the owner's own screenshot (820px, then 650px total window)
+  still showed a horizontal scrollbar -- capping each dropdown's own
+  width (`setMinimumContentsLength`) reduced the problem but didn't
+  eliminate it, since Hide and Show still shared one row. Fixed for real
+  this time by stacking Hide above Show instead of side by side, so
+  each dropdown only ever competes with its own short label for width,
+  never with a sibling dropdown -- verified clean (no scrollbar) all the
+  way down to 479px of panel width, well past anything the owner's real
+  screenshots showed.
+- Owner: "i thought the expressions TAB was about assigning expressions
+  and the one in the sprites tab would fire them?" -- their model was
+  basically right (Sprites tab defines *and* fires; the tab only
+  *binds* a hotkey to something already defined), but "Expressions"
+  naming two different UI locations a tab apart from each other was a
+  real, avoidable point of confusion, not something to argue past.
+  Renamed the tab labels to **Costume Hotkeys**/**Expression Hotkeys**
+  (CollapsibleSection titles inside each tab, and the Sprites tab's own
+  "Expressions" section, both left alone -- only the bare tab-bar labels
+  were ambiguous) and added an explicit "two different Expressions, a
+  tab apart" paragraph to the Help window's Hotkeys tab spelling out the
+  define/fire vs. bind distinction, rather than leaving it implicit.
+- Full suite green at 410 tests.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)

@@ -780,8 +780,8 @@ class ControlPanelWindow(QWidget):
     def _build_tabs(self, root: QVBoxLayout) -> None:
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_sprites_tab(), "Sprites")
-        self.tabs.addTab(self._build_costumes_tab(), "Costumes")
-        self.tabs.addTab(self._build_expressions_tab(), "Expressions")
+        self.tabs.addTab(self._build_costumes_tab(), "Costume Hotkeys")
+        self.tabs.addTab(self._build_expressions_tab(), "Expression Hotkeys")
         self.tabs.addTab(self._build_behavior_tab(), "Behavior")
         self.tabs.addTab(self._build_audio_tab(), "Audio")
         self.tabs.addTab(self._build_application_tab(), "Application")
@@ -3018,29 +3018,33 @@ class ControlPanelWindow(QWidget):
         combo.blockSignals(False)
 
     def _build_costume_pair_row(self, slot: int, hide_id: int | None, show_id: int | None) -> QWidget:
+        # Hide and Show stacked vertically, not side by side -- two full
+        # sprite-name dropdowns ("clothes_hoodie_front.png (5)") sharing
+        # one row needed more width than a realistic (non-maximized)
+        # panel actually has, forcing a horizontal scrollbar (found from
+        # the owner's own screenshot, 2026-09-17; capping each combo's own
+        # width first still wasn't enough at a narrower stress-tested
+        # width). Stacked, each combo only ever competes with its own
+        # short label for width, so this can't happen regardless of panel
+        # width -- costs one extra line per pair, not a real tradeoff
+        # against actually working.
         row = QWidget()
-        row_layout = QHBoxLayout(row)
+        row_layout = QVBoxLayout(row)
         row_layout.setContentsMargins(16, 0, 0, 0)
+        hide_row = QHBoxLayout()
+        show_row = QHBoxLayout()
         hide_combo = QComboBox()
         show_combo = QComboBox()
-        # A sprite filename can be long ("clothes_hoodie_front.png (5)")
-        # -- QComboBox otherwise grows to fit its longest current item,
-        # which made two side-by-side dropdowns force a horizontal
-        # scrollbar on a realistic (non-maximized) panel width (found
-        # from the owner's own screenshot, 2026-09-17). Capped instead;
-        # the combo elides the closed display and shows the full name
-        # in its tooltip and in the open dropdown list either way.
-        for combo in (hide_combo, show_combo):
-            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-            combo.setMinimumContentsLength(14)
         self._populate_costume_sprite_combo(hide_combo, hide_id)
         self._populate_costume_sprite_combo(show_combo, show_id)
         hide_combo.setToolTip("Hidden by default -- shown while this costume is active.")
         show_combo.setToolTip("Shown by default -- hidden while this costume is active.")
-        row_layout.addWidget(QLabel("Hide"))
-        row_layout.addWidget(hide_combo, 1)
-        row_layout.addWidget(QLabel("Show"))
-        row_layout.addWidget(show_combo, 1)
+        hide_row.addWidget(QLabel("Hide"))
+        hide_row.addWidget(hide_combo, 1)
+        show_row.addWidget(QLabel("Show"))
+        show_row.addWidget(show_combo, 1)
+        row_layout.addLayout(hide_row)
+        row_layout.addLayout(show_row)
         row.hide_combo = hide_combo
         row.show_combo = show_combo
         row.committed = (hide_id, show_id) if hide_id is not None and show_id is not None else None

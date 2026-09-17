@@ -214,9 +214,9 @@ HOTKEYS_HTML = (
 <h3>Render Window (needs keyboard focus there)</h3>
 <ul>
 <li><b>1-9, 0</b> — switch costume slot. Remappable per slot from the
-<b>Costumes</b> tab (click a slot's key-capture box, press the key you
-want). Avoid Escape and avoid reusing the same key on two slots — only
-the first matching slot fires.</li>
+<b>Costume Hotkeys</b> tab (click a slot's key-capture box, press the key
+you want). Avoid Escape and avoid reusing the same key on two slots —
+only the first matching slot fires.</li>
 <li><b>Escape</b> — quit the app, with confirmation (not remappable).</li>
 </ul>
 <p>These only fire while the <b>Render Window</b> itself has keyboard
@@ -239,10 +239,20 @@ window has focus -- not the Render Window, and not at all while the
 Control Panel is closed. If you plan to use them live, keep the Control
 Panel open somewhere off to the side, outside whatever OBS is actually
 capturing.</p>
+<p><b>Two different "Expressions," a tab apart -- not the same thing:</b>
+the Sprites tab's Expressions section is where an expression actually
+gets <i>defined</i> (tag a sprite Manually driven with a Group/State
+name) and where you can always <i>fire</i> it with a plain click, no
+hotkey required. The Expression Hotkeys tab doesn't define or fire
+anything new by itself -- it only <i>binds</i> an already-defined
+expression to a Shift+number key, by clicking that exact same button for
+you. An expression you haven't bound to a hotkey yet still works fine
+from the Sprites tab; it just won't show up as a row here until you
+explicitly add it.</p>
 
 <h3>Setting up what a costume hotkey does</h3>
-<p>The <b>Costumes</b> tab, immediately right of Sprites -- a scrolling
-list of all 10 slots. Each slot has:</p>
+<p>The <b>Costume Hotkeys</b> tab, immediately right of Sprites -- a
+scrolling list of all 10 slots. Each slot has:</p>
 <ul>
 <li>Its own remappable key-capture box (see above).</li>
 <li>Zero or more <b>Hide / Show</b> sprite-pair rows. Pick a sprite in
@@ -260,11 +270,12 @@ edit (each sprite's own "Costume layers"); nothing about how costumes
 actually render changed.</p>
 
 <h3>Setting up what an Expression hotkey does</h3>
-<p>The <b>Expressions</b> tab, right of Costumes -- same scrolling,
-ten-slot layout. Each Shift+number slot has zero or more <b>Force</b>
-rows -- pick an Expression (any Manually-driven Group name/State name
-pair; tag one on the Sprites tab first if none exist yet, or use the
-Sprites tab's own Expressions section, which lists exactly the same
+<p>The <b>Expression Hotkeys</b> tab, right of Costume Hotkeys -- same
+scrolling, ten-slot layout. Each Shift+number slot has zero or more
+<b>Force</b> rows -- pick an Expression (any Manually-driven Group
+name/State name pair; tag one on the Sprites tab first if none exist
+yet, or use the Sprites tab's own Expressions section, which lists
+exactly the same
 pairs as plain toggle buttons if you just want to force one live without
 a hotkey). Add more than one row to
 force several groups together as one combined expression (e.g. a mouth
@@ -319,10 +330,10 @@ read-only) and is the default; Edit Sprites is the interactive canvas --
 drag a sprite to move it, driven by the Preview state controls that
 appear above it instead of live audio. A level meter is always shown
 just below the canvas, in either mode.</li>
-<li><b>Tabs</b> (middle) — Sprites, Costumes, Expressions, Behavior,
-Audio, and Application. Each tab is made of a few sections you can
-collapse (click the header) or resize (drag the divider between them)
-independently.</li>
+<li><b>Tabs</b> (middle) — Sprites, Costume Hotkeys, Expression Hotkeys,
+Behavior, Audio, and Application. Each tab is made of a few sections you
+can collapse (click the header) or resize (drag the divider between
+them) independently.</li>
 <li><b>Bottom bar</b> (always visible, never scrolled away) — audio
 source controls on their own row (Source/Play/Browse…/Record, with the
 chosen file's path shown just below, shortened from the middle if it's
@@ -422,7 +433,7 @@ show up inside a silhouette.</li>
 <li><b>Costume layers</b> — which of the 10 costume slots (see the
 <b>Hotkeys</b> tab) this sprite appears in. Every sprite defaults to
 "every slot" until a costume-hotkey assignment hides it from one. Set
-this up from the <b>Costumes</b> tab, not here directly — pick two
+this up from the <b>Costume Hotkeys</b> tab, not here directly — pick two
 sprites (one hidden by default and shown by this slot, one shown by
 default and hidden by this slot) and both sprites' Costume layers update
 automatically.</li>
@@ -469,8 +480,8 @@ different button in the same group automatically turns the previous one
 off. If nothing shows here, no sprite has been marked Manually driven
 yet. The <i>currently forced state</i> isn't saved across restarts --
 it's a live control, not a setting -- but you can bind any of these
-buttons to a Shift+number hotkey from the <b>Expressions</b> tab (see
-the <b>Hotkeys</b> tab for the full explanation), which <i>is</i>
+buttons to a Shift+number hotkey from the <b>Expression Hotkeys</b> tab
+(see the <b>Hotkeys</b> tab for the full explanation), which <i>is</i>
 saved.</li>
 </ul>
 
@@ -616,9 +627,9 @@ below.</li>
 Edit-mode canvas's grid lines are, toggled on/off with the Guide button
 in the bottom bar.</li>
 </ul>
-<p>Costume/Expression hotkey setup moved to its own <b>Costumes</b>/
-<b>Expressions</b> tabs, immediately right of Sprites -- see the
-<b>Hotkeys</b> tab for the full explanation.</p>
+<p>Costume/Expression hotkey setup moved to its own <b>Costume
+Hotkeys</b>/<b>Expression Hotkeys</b> tabs, immediately right of Sprites
+-- see the <b>Hotkeys</b> tab for the full explanation.</p>
 <p>Every field has a tooltip with the short version of its own
 explanation — hover anything you're unsure about.</p>
 """

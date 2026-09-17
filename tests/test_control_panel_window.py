@@ -32,7 +32,7 @@ def test_panel_is_a_single_window_with_the_expected_object_name(qapp, tmp_path):
 def test_panel_has_the_six_expected_tabs_in_order(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
-    assert titles == ["Sprites", "Costumes", "Expressions", "Behavior", "Audio", "Application"]
+    assert titles == ["Sprites", "Costume Hotkeys", "Expression Hotkeys", "Behavior", "Audio", "Application"]
 
 
 def test_no_tab_has_more_than_three_collapsible_sections(qapp, tmp_path):
