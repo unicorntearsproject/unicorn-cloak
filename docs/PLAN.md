@@ -2599,6 +2599,13 @@ be):**
   license, and CI, separate from this `obs` repo.
 - **Test/docs/community polish** if it's going public: full test suite,
   contribution guide, accessibility pass.
+- **Lock the shipped default avatar once it's finalized.** Owner, 2026-09-17,
+  after seeing `unicorn-demo.uc` running: "this is the official app
+  mascot!" -- once the owner is "done done" tweaking it, make the shipped
+  default read-only in the app (Save As still works, plain Save onto the
+  bundled file does not). Deliberately not done yet -- the owner is still
+  hand-editing it directly (see the same date's hair-position tweak) and
+  explicitly said this is a "when I'm done" step, not a now step.
 
 ---
 
