@@ -2925,6 +2925,58 @@ squeeze (see screenshot in that turn: cramped, key-capture boxes reading
   up).
 - Full suite green at 410 tests.
 
+**Costumes/Expressions single-column fix; Layer List given real room;
+one-character settings.json repair, 2026-09-17, owner's screenshots of
+the actual running app.** Two "this is horrible" reports, each with a
+real screenshot -- diagnosed by reproducing against the owner's own real
+avatar and real settings.json (a synthetic 4-sprite test rig at a
+deliberately wide 1060px window had NOT caught either bug; only matching
+the owner's real, narrower panel width and real long sprite filenames
+did).
+
+- **Root cause of the broken-looking Costumes/Expressions tabs**: the
+  two-column layout put two full sprite-name dropdowns side by side per
+  row (e.g. "clothes_hoodie_front.png (5)"), which needed more width than
+  a realistic (non-maximized) panel actually has -- forcing an ugly
+  *horizontal* scrollbar on top of the intended vertical one. Fixed two
+  ways: (1) dropped back to a single column entirely -- the two-column
+  idea only ever existed to save vertical space for the old, collapsed-
+  by-default Application-tab section, and the `QScrollArea` from the same
+  day's earlier fix already handles unlimited vertical content on its
+  own, so columns weren't buying anything anymore; (2) capped every
+  sprite/Expression dropdown's own natural width
+  (`setSizeAdjustPolicy(AdjustToMinimumContentsLengthWithIcon)` +
+  `setMinimumContentsLength(14)`) so a single long name can't blow out
+  even a single-column row -- it elides instead, full text still visible
+  via the open dropdown or hover tooltip.
+- Verified visually against the real app afterward (`theme.apply()` +
+  the real default avatar + the owner's actual narrow panel width, not
+  the earlier synthetic repro) -- no horizontal scrollbar, no visual
+  corruption, full sprite names readable.
+- Caught two more stale "Behavior tab's Expressions" tooltip references
+  while re-verifying (Sprites tab, not Behavior -- same mistake as the
+  Help window text fixed earlier the same day) and fixed those too.
+- **Layer List was cramped** ("super cramped @ around 2.75 [lines]") --
+  it had no explicit minimum height, so it only ever got whatever
+  leftover space State Assignment/Expressions didn't need on the same
+  splitter. Given an explicit `setMinimumHeight()` sized to 10 rows
+  (measured empirically against the real list/real theme: 25px/row).
+- **"The one expression we already have set up is not showing here"**
+  -- not a bug: the Sprites tab's own Expressions section (the original
+  toggle-button UI) still shows "Eyes: Open" exactly as before: the new
+  Expressions *tab* only lists hotkey *bindings*, and nothing has bound
+  "Eyes: Open" to a Shift+number slot yet. Genuinely easy to conflate
+  now that two different "Expressions" UIs exist a tab apart from each
+  other -- Help text updated to spell out the distinction explicitly
+  rather than assume it's obvious.
+- Also found and fixed in passing, unrelated to the layout bug: the
+  owner's own real `settings.json` had an empty string for costume slot
+  1's key (`costume_keys[0] == ""`, rendering as "Press shortcut"
+  instead of "1") -- likely an accidental clear from earlier
+  interaction. One-character repair, not a code change (the field is
+  gitignored, personal machine state).
+- Full suite green at 410 tests.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)

@@ -241,8 +241,8 @@ Panel open somewhere off to the side, outside whatever OBS is actually
 capturing.</p>
 
 <h3>Setting up what a costume hotkey does</h3>
-<p>The <b>Costumes</b> tab, immediately right of Sprites. Costumes are
-laid out as two columns of five slots. Each slot has:</p>
+<p>The <b>Costumes</b> tab, immediately right of Sprites -- a scrolling
+list of all 10 slots. Each slot has:</p>
 <ul>
 <li>Its own remappable key-capture box (see above).</li>
 <li>Zero or more <b>Hide / Show</b> sprite-pair rows. Pick a sprite in
@@ -260,10 +260,13 @@ edit (each sprite's own "Costume layers"); nothing about how costumes
 actually render changed.</p>
 
 <h3>Setting up what an Expression hotkey does</h3>
-<p>The <b>Expressions</b> tab, right of Costumes -- same two-column, ten-
-slot layout. Each Shift+number slot has zero or more <b>Force</b> rows --
-pick an Expression (any Manually-driven Group name/State name pair; tag
-one on the Sprites tab first if none exist yet). Add more than one row to
+<p>The <b>Expressions</b> tab, right of Costumes -- same scrolling,
+ten-slot layout. Each Shift+number slot has zero or more <b>Force</b>
+rows -- pick an Expression (any Manually-driven Group name/State name
+pair; tag one on the Sprites tab first if none exist yet, or use the
+Sprites tab's own Expressions section, which lists exactly the same
+pairs as plain toggle buttons if you just want to force one live without
+a hotkey). Add more than one row to
 force several groups together as one combined expression (e.g. a mouth
 shape and an eye shape at once).
 Clearing a row's dropdown removes it, same gesture as costumes.</p>

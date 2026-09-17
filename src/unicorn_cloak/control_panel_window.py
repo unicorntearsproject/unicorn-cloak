@@ -796,6 +796,14 @@ class ControlPanelWindow(QWidget):
             "Indentation shows parent/child grouping. Click to select."
         )
         self.sprite_list.currentItemChanged.connect(self._on_list_selection_changed)
+        # Owner's request, 2026-09-17: "expand the layers section so it
+        # can display 10 lines... it's super cramped @ around 2.75 right
+        # now." Without an explicit minimum, this list only ever got
+        # whatever leftover space State Assignment/Expressions didn't
+        # need, on this same tab's shared splitter. Row height measured
+        # empirically (sizeHintForRow, real rig, real theme) at 23px --
+        # 10 rows plus a little frame padding.
+        self.sprite_list.setMinimumHeight(23 * 10 + 20)
         layer_section.body_layout.addWidget(self.sprite_list)
 
         layer_order_row = QHBoxLayout()
@@ -1380,9 +1388,18 @@ class ControlPanelWindow(QWidget):
         # QScrollArea's own sizeHint doesn't grow with its content the
         # way a plain nested layout's does, which is what made the
         # previous single-section version balloon every *other* tab's
-        # minimum size too (QTabWidget sizes to its largest page). Two
-        # columns of 5 (kept from the previous layout, same reasoning:
-        # one column of 10 multi-row editors is too tall).
+        # minimum size too (QTabWidget sizes to its largest page).
+        #
+        # Single column, not the two-columns-of-5 tried first: a swap row
+        # is two full sprite-name dropdowns wide, and two of those side by
+        # side needed more width than a realistic panel width actually
+        # has, forcing an ugly *horizontal* scrollbar on top of vertical
+        # (found from the owner's own screenshot, 2026-09-17, not caught
+        # by an earlier check with a wider test window than the panel
+        # actually gets). Two columns only ever existed to save vertical
+        # space for the old collapsed-section approach -- the QScrollArea
+        # here already handles unlimited vertical content, so there's
+        # nothing left for columns to buy.
         section = CollapsibleSection("Costumes — press the number to switch")
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1392,12 +1409,6 @@ class ControlPanelWindow(QWidget):
         section.body_layout.addWidget(scroll)
 
         self._hotkey_edits: list[QKeySequenceEdit] = []
-        costume_columns = QHBoxLayout()
-        costume_column_layouts = [QVBoxLayout(), QVBoxLayout()]
-        for column_layout in costume_column_layouts:
-            costume_columns.addLayout(column_layout)
-        content_layout.addLayout(costume_columns)
-
         for slot, key_text in enumerate(self.config.hotkeys.costume_keys[:NUM_COSTUMES]):
             slot_box = QVBoxLayout()
             header_row = QHBoxLayout()
@@ -1431,7 +1442,7 @@ class ControlPanelWindow(QWidget):
             )
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_costume_row(s))
             slot_box.addWidget(add_btn)
-            costume_column_layouts[slot // 5].addLayout(slot_box)
+            content_layout.addLayout(slot_box)
         content_layout.addStretch(1)
 
         tab = QWidget()
@@ -1447,12 +1458,6 @@ class ControlPanelWindow(QWidget):
         content_layout = QVBoxLayout(content)
         scroll.setWidget(content)
         section.body_layout.addWidget(scroll)
-
-        expression_columns = QHBoxLayout()
-        expression_column_layouts = [QVBoxLayout(), QVBoxLayout()]
-        for column_layout in expression_column_layouts:
-            expression_columns.addLayout(column_layout)
-        content_layout.addLayout(expression_columns)
 
         for slot in range(NUM_COSTUMES):
             slot_box = QVBoxLayout()
@@ -1472,7 +1477,7 @@ class ControlPanelWindow(QWidget):
             )
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_expression_hotkey_row(s))
             slot_box.addWidget(add_btn)
-            expression_column_layouts[slot // 5].addLayout(slot_box)
+            content_layout.addLayout(slot_box)
         content_layout.addStretch(1)
 
         tab = QWidget()
@@ -3018,6 +3023,16 @@ class ControlPanelWindow(QWidget):
         row_layout.setContentsMargins(16, 0, 0, 0)
         hide_combo = QComboBox()
         show_combo = QComboBox()
+        # A sprite filename can be long ("clothes_hoodie_front.png (5)")
+        # -- QComboBox otherwise grows to fit its longest current item,
+        # which made two side-by-side dropdowns force a horizontal
+        # scrollbar on a realistic (non-maximized) panel width (found
+        # from the owner's own screenshot, 2026-09-17). Capped instead;
+        # the combo elides the closed display and shows the full name
+        # in its tooltip and in the open dropdown list either way.
+        for combo in (hide_combo, show_combo):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(14)
         self._populate_costume_sprite_combo(hide_combo, hide_id)
         self._populate_costume_sprite_combo(show_combo, show_id)
         hide_combo.setToolTip("Hidden by default -- shown while this costume is active.")
@@ -3087,10 +3102,12 @@ class ControlPanelWindow(QWidget):
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(16, 0, 0, 0)
         combo = QComboBox()
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        combo.setMinimumContentsLength(14)
         self._populate_expression_combo(combo, pair)
         combo.setToolTip(
             "Forces this Expression on while this hotkey slot is toggled\n"
-            "on, exactly like clicking its button in the Behavior tab's\n"
+            "on, exactly like clicking its button in the Sprites tab's\n"
             "Expressions section (they share the same live state)."
         )
         row_layout.addWidget(QLabel("Force"))
