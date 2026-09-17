@@ -2606,6 +2606,13 @@ be):**
   bundled file does not). Deliberately not done yet -- the owner is still
   hand-editing it directly (see the same date's hair-position tweak) and
   explicitly said this is a "when I'm done" step, not a now step.
+- **Post-FX drop-in.** Owner, 2026-09-17: "put on our todo list - post fx
+  drop-in (i'll do that around release time)." A plugin-style slot for
+  post-processing visual effects on the rendered avatar (glow, chromatic
+  aberration, etc. -- distinct from the Extensibility bullet above, which
+  is about new *motion* drivers, not a rendering pass). Owner's own item
+  to build, timed for around release -- nothing to design or implement
+  here yet.
 
 **Zoom moved to Position & Hierarchy; image/video backgrounds added,
 2026-09-17, owner's requests.** Two separate asks in the same session:
@@ -2654,6 +2661,85 @@ be):**
     across a mode switch), `config.py` (save/load round-trip), and
     `control_panel_window.py` (Browse wiring, visibility toggling). Full
     suite green at 371 tests.
+
+**Editor drag-to-scale/rotate; costume swap verified; Expressions
+suppression bug fixed, 2026-09-17 -- owner's "three things...then we can
+pretty much call it a wrap" list.**
+
+- **Drag-to-scale/rotate on the edit canvas.** Drag-to-*move* already
+  existed (`EditableSpriteItem`'s `ItemIsMovable`); this adds real corner
+  and rotate handles, not just the Position & Hierarchy spinboxes. New
+  `Sprite.rotation_deg` (static, authored -- same relationship to the
+  existing reactive `rotation_drag_strength` as `scale_x/y` has to
+  `stretch_amount`), persisted as `rotationDeg`, combined with the
+  reactive rotation in `render.py` by addition (`sprite.rotation_deg +
+  degrees(rt.rotation_rad)`) the same way scale combines by
+  multiplication. A "Rotation (deg)" spinbox added to Position &
+  Hierarchy alongside Scale.
+  - `EditableSpriteItem` gained 4 corner handles + 1 rotate handle
+    (drawn in `paint()`, replacing Qt's own dashed selection rect via the
+    standard "paint with `State_Selected` cleared" pattern), hit-tested
+    in local item coordinates. Key finding verified empirically before
+    trusting it: a mouse event's `.pos()` on a `QGraphicsItem` is already
+    inverse-mapped through the item's *current* transform, so the new
+    absolute scale/rotation can be computed directly from the live mouse
+    position every move event -- no incremental delta-tracking needed,
+    and it stays correct even mid-rotation (confirmed with a throwaway
+    scene script, not assumed from docs). Corner-drag scaling reuses the
+    existing Scale-lock toggle (`scale_lock`) rather than a second lock
+    concept, and clamps to positive-only scale (dragging past the origin
+    no longer flips the sprite, matching the spinbox's own 0.01-100.0
+    range). Found and fixed while wiring this up:
+    `QGraphicsPixmapItem.boundingRect()` pads the pixmap rect by half a
+    unit on every side (confirmed empirically -- a 100x100 pixmap at
+    offset (-50,-50) reports as `(-50.5,-50.5,101,101)`), which silently
+    threw off every corner-handle position and scale calculation until
+    `_pixmap_rect()` was rewritten to build the rect directly from
+    `offset()`/`pixmap().size()` instead of trusting `boundingRect()`.
+  - Verified with a real rendered screenshot of the edit canvas (not
+    just unit tests) that the handles actually draw where expected.
+  - New regression tests: `rig`/`persistence`/`render` coverage for
+    `rotation_deg` mirroring the existing scale tests, plus direct tests
+    of `_handle_at`/`_drag_handle` (called as plain methods with a
+    `QPointF`, not simulated through real Qt mouse events -- simpler and
+    just as valid, since Qt's own event dispatch is what's responsible
+    for turning a real mouse event into that same local `QPointF` in the
+    first place).
+- **Costume swap (hoodie -> vest) -- already fully wired, verified not
+  rebuilt.** Owner asked to "wire up the costumes... swap hoody [both
+  parts!] for vest and costume hotkeys," but this was already done in the
+  original unicorn-demo build (see "Replace default avatar with
+  unicorn-demo, fully wired" above): slot 0 shows both hoodie layers and
+  hides the vest + bare-torso layer, slot 1 is the reverse, and costume
+  hotkeys are generic (any avatar's `costume_layers` "just works" once
+  authored). Confirmed live via direct simulation before reporting it
+  back rather than assuming the commit message was still accurate, and
+  pinned down with a new end-to-end regression test against the real
+  shipped file (`test_the_real_default_avatars_costume_slots_swap_hoodie_for_vest`)
+  so a future costumeLayers edit can't silently break it.
+- **Expressions: a real suppression bug found and fixed, not just
+  "wired."** `motion.sprite_alpha` decides each sprite's visibility
+  independently and has no notion of "groups" (deliberate, per its own
+  docstring) -- which meant turning on unicorn-demo's one existing
+  expression ("Eyes: Open") while the automatic blink system had
+  "Regular" showing left *both* eye sprites drawn opaque on top of each
+  other. Confirmed with a direct opacity dump before touching any code,
+  not assumed. Fixed in `render.py`'s `_apply_to_scene` (not
+  `sprite_alpha`, to keep that function's own Qt/group-agnostic design
+  intact): a non-manual sprite is now also force-hidden whenever its own
+  `group_name` has an active override elsewhere, routed through the
+  existing `hidden` parameter rather than a new one since it's exactly
+  the same "always wins, ghosted in edit mode" treatment. Regression test
+  extends the existing `test_manual_override_shows_only_the_matching_sprite`
+  to also assert the automatic sibling's opacity (it wasn't being checked
+  at all before, despite the automatic sibling already being right there
+  in the test's own rig). How to actually use an expression, for the
+  owner: Behavior tab -> Expressions section has one toggle button per
+  tagged (Group, State) pair -- click to force it live on the real Render
+  Window (and therefore OBS), click again to release it back to
+  automatic. No hotkey binding exists for these yet (only costumes have
+  one) -- flagged to the owner as an open question, not assumed either
+  way.
 
 ---
 

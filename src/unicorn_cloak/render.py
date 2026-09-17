@@ -702,12 +702,14 @@ class RenderWindow(QWidget):
             # gets a fresh QTransform exactly as before; this only skips
             # the call once its own rotation/scale have actually settled
             # back to nothing.
-            # sprite.scale_x/scale_y (static, authored -- see rig.Sprite's
-            # own comment) multiplies on top of rt.scale (the reactive
-            # squash/stretch, which returns to (1, 1) at rest) rather than
-            # replacing it, so a permanently-resized layer still squashes
-            # and stretches normally around its own authored size.
-            rot_deg = math.degrees(rt.rotation_rad)
+            # sprite.scale_x/scale_y and sprite.rotation_deg (static,
+            # authored -- see rig.Sprite's own comments) combine with
+            # rt.scale/rt.rotation_rad (the reactive squash/stretch/drag-
+            # rotation, which return to (1, 1)/0 at rest) by multiplying
+            # or adding respectively, rather than replacing them, so a
+            # permanently resized/rotated layer still squashes, stretches,
+            # and reacts to drag normally around its own authored baseline.
+            rot_deg = sprite.rotation_deg + math.degrees(rt.rotation_rad)
             combined_scale_x = sprite.scale_x * rt.scale[0]
             combined_scale_y = sprite.scale_y * rt.scale[1]
             is_identity = (
@@ -729,6 +731,23 @@ class RenderWindow(QWidget):
             if sprite.frames > 1:
                 rt.item.setPixmap(rt.frame_pixmaps[rt.current_frame])
 
+            # An active Expression override forces its own group to show
+            # exactly one thing: the forced state. Without this, the
+            # group's ordinary *automatic* members (e.g. "Eyes: Regular"
+            # picked by the real blink timer) keep showing right alongside
+            # the forced one, since sprite_alpha decides each sprite
+            # independently and has no idea a sibling is being overridden
+            # -- confirmed empirically, 2026-09-17 (turning on "Eyes: Open"
+            # while "Regular" was the live automatic pick left both drawn
+            # on top of each other). Routed through the existing `hidden`
+            # parameter rather than a new one: it's exactly the same
+            # "always wins, ghosted in edit mode" treatment sprite.hidden
+            # already gets.
+            suppressed_by_other_expression = (
+                not sprite.manual_driven
+                and bool(sprite.group_name)
+                and sprite.group_name in self.manual_overrides
+            )
             alpha = motion.sprite_alpha(
                 sprite.talk_state,
                 sprite.blink_state,
@@ -741,7 +760,7 @@ class RenderWindow(QWidget):
                 blink_variant=sprite.variant,
                 active_blink_variant=self._blink_variant_frame,
                 blink_variant_count=self._blink_variant_count,
-                hidden=sprite.hidden,
+                hidden=sprite.hidden or suppressed_by_other_expression,
                 manual_driven=sprite.manual_driven,
                 manual_active=(
                     self.manual_overrides.get(sprite.group_name) == sprite.state_name

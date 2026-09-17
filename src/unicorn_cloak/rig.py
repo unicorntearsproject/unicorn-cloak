@@ -104,6 +104,14 @@ class Sprite:
     scale_x: float = 1.0
     scale_y: float = 1.0
 
+    # Static, authored rotation (degrees) -- owner's request, 2026-09-17:
+    # "in the editor, drag the active sprite around and scale/rotate it."
+    # Same relationship to rotation_drag_strength below as scale_x/y has
+    # to stretch_amount: this is a fixed baseline angle (e.g. a permanently
+    # tilted accessory), the *reactive* drag-based rotation below adds on
+    # top of it and still returns to this value at rest, not to 0.
+    rotation_deg: float = 0.0
+
     # Secondary motion: idle sway (independent sine per axis)
     sway_x_freq: float = 0.0
     sway_x_amp: float = 0.0

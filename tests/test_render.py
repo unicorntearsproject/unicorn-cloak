@@ -1,11 +1,13 @@
 import time
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QTransform
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
 
-from unicorn_cloak.config import HotkeysConfig, MotionConfig
+from unicorn_cloak.config import DEFAULT_AVATAR_PATH, HotkeysConfig, MotionConfig
+from unicorn_cloak.persistence import load_avatar
 from unicorn_cloak.render import SIM_DT, RenderWindow
 from unicorn_cloak.rig import AvatarRig, Sprite
 
@@ -89,18 +91,28 @@ def test_manual_override_shows_only_the_matching_sprite(qapp):
     ]
     rig = AvatarRig(name="test", sprites=sprites)
     window = RenderWindow(rig, MotionConfig())
+    closed_item = window._runtimes[1].item
     laughing_item = window._runtimes[2].item
 
     window._apply_to_scene()
     assert laughing_item.opacity() == 0.0  # no override active yet
+    assert closed_item.opacity() == 1.0  # the automatic sibling shows as normal
 
     window.set_manual_override("Mouth", "Laughing")
     window._apply_to_scene()
     assert laughing_item.opacity() == 1.0
+    # Regression 2026-09-17: sprite_alpha decides each sprite independently
+    # and has no idea a sibling is being overridden -- without render.py's
+    # own suppression, the automatic "Closed" mouth kept showing right
+    # alongside the forced "Laughing" one (found live with unicorn-demo's
+    # "Eyes: Open" expression, both eye sprites drawn on top of each
+    # other). An active override must take over its whole group.
+    assert closed_item.opacity() == 0.0
 
     window.set_manual_override("Mouth", None)
     window._apply_to_scene()
     assert laughing_item.opacity() == 0.0
+    assert closed_item.opacity() == 1.0  # automatic sibling resumes
 
 
 def test_manual_override_does_not_affect_a_different_group(qapp):
@@ -770,6 +782,26 @@ def test_static_scale_produces_a_non_identity_transform_even_at_rest(qapp):
     assert transform.m22() == pytest.approx(0.75)
 
 
+def test_static_rotation_produces_a_non_identity_transform_even_at_rest(qapp):
+    png = make_test_png_bytes()
+    sprite = Sprite(id=1, path="a.png", image_data=png, rotation_deg=45.0)
+    rig = AvatarRig(name="t", sprites=[sprite])
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[1].item
+
+    window._simulate_step()
+    window._apply_to_scene()
+
+    transform = item.transform()
+    assert not transform.isIdentity()
+    expected = QTransform()
+    expected.rotate(45.0)
+    assert transform.m11() == pytest.approx(expected.m11())
+    assert transform.m12() == pytest.approx(expected.m12())
+    assert transform.m21() == pytest.approx(expected.m21())
+    assert transform.m22() == pytest.approx(expected.m22())
+
+
 def test_rotating_sprite_gets_a_real_non_identity_transform(qapp):
     png = make_test_png_bytes()
     sprite = Sprite(
@@ -934,6 +966,41 @@ def test_hidden_sprite_does_not_count_toward_talk_variant_alternation(qapp):
         window._simulate_step()
         window._apply_to_scene()
         assert visible_item.opacity() == 1.0
+
+
+def test_the_real_default_avatars_costume_slots_swap_hoodie_for_vest(qapp):
+    # End-to-end sanity check against the shipped default avatar
+    # (unicorn-demo), owner's request 2026-09-17 ("wire up the costumes...
+    # swap hoody [both parts!] for vest"). Confirmed already fully wired
+    # (see the same date's commit "Replace default avatar with
+    # unicorn-demo, fully wired") -- this pins that behavior down so a
+    # future costumeLayers edit can't silently break it. Package-relative
+    # path (see config.py's own DEFAULT_AVATAR_PATH comment), so this
+    # always runs rather than skip; the guard is a defensive fallback for
+    # a stripped/partial checkout, not the common case.
+    if not Path(DEFAULT_AVATAR_PATH).exists():
+        pytest.skip("default avatar not present on this machine")
+    rig = load_avatar(DEFAULT_AVATAR_PATH)
+    window = RenderWindow(rig, MotionConfig())
+    window._simulate_step()
+
+    def opacity_by_path(suffix: str) -> float:
+        rt = next(rt for rt in window._runtimes.values() if rt.sprite.path.endswith(suffix))
+        return rt.item.opacity()
+
+    window.rig.active_costume = 0
+    window._apply_to_scene()
+    assert opacity_by_path("clothes_hoodie_back.png") == 1.0
+    assert opacity_by_path("clothes_hoodie_front.png") == 1.0
+    assert opacity_by_path("clothes_vest_heart.png") == 0.0
+    assert opacity_by_path("body_white_horse.png") == 0.0
+
+    window.rig.active_costume = 1
+    window._apply_to_scene()
+    assert opacity_by_path("clothes_hoodie_back.png") == 0.0
+    assert opacity_by_path("clothes_hoodie_front.png") == 0.0
+    assert opacity_by_path("clothes_vest_heart.png") == 1.0
+    assert opacity_by_path("body_white_horse.png") == 1.0
 
 
 def test_costume_inactive_sprite_does_not_count_toward_talk_variant_alternation(qapp):

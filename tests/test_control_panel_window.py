@@ -1,4 +1,5 @@
-from PySide6.QtCore import Qt
+import pytest
+from PySide6.QtCore import QPointF, Qt
 
 from unicorn_cloak import control_panel_window as cpw_module
 from unicorn_cloak import motion
@@ -641,6 +642,120 @@ def test_scale_lock_proportions_round_trips_through_config(qapp, tmp_path):
     panel.scale_lock.setChecked(False)
     panel._capture_ui_state_into_config()
     assert config.control_panel.scale_lock_proportions is False
+
+
+# --- Rotation -----------------------------------------------------------------
+
+
+def test_rotation_field_loads_the_selected_sprites_value(qapp, tmp_path):
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), rotation_deg=45.0)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    assert panel.rotation.value() == 45.0
+
+
+def test_editing_rotation_field_writes_through_to_the_sprite(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.rotation.setValue(30.0)
+    assert panel.rig.by_id(1).rotation_deg == 30.0
+
+
+# --- Interactive scale/rotate handles (edit canvas) --------------------------
+
+
+def _make_square_sprite_panel(tmp_path, **sprite_kwargs):
+    png = make_test_png_bytes(size=100)
+    sprite = Sprite(id=1, path="a.png", image_data=png, **sprite_kwargs)
+    return make_panel(tmp_path, rig=AvatarRig(name="t", sprites=[sprite]))
+
+
+def test_handle_hit_test_finds_nothing_when_not_selected(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    item = panel._items[1]
+    assert item._handle_at(item._pixmap_rect().bottomRight()) is None
+
+
+def test_handle_hit_test_finds_each_corner_and_the_rotate_handle(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    rect = item._pixmap_rect()
+    assert item._handle_at(rect.topLeft()) == "tl"
+    assert item._handle_at(rect.topRight()) == "tr"
+    assert item._handle_at(rect.bottomLeft()) == "bl"
+    assert item._handle_at(rect.bottomRight()) == "br"
+    above_top_center = QPointF(rect.center().x(), rect.top() - 28.0)
+    assert item._handle_at(above_top_center) == "rotate"
+    assert item._handle_at(rect.center()) is None
+
+
+def test_dragging_a_corner_handle_scales_independently_when_unlocked(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+    item = panel._items[1]
+    item._active_handle = "br"  # corner rest position (50, 50)
+    item._drag_handle(QPointF(75.0, 150.0))
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == pytest.approx(1.5)  # 75 / 50
+    assert sprite.scale_y == pytest.approx(3.0)  # 150 / 50
+    assert panel.scale_x.value() == pytest.approx(1.5)
+    assert panel.scale_y.value() == pytest.approx(3.0)
+
+
+def test_dragging_a_corner_handle_keeps_proportions_when_locked(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(True)
+    item = panel._items[1]
+    item._active_handle = "br"
+    item._drag_handle(QPointF(75.0, 150.0))
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == pytest.approx(sprite.scale_y)
+
+
+def test_dragging_a_corner_handle_never_produces_a_negative_scale(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+    item = panel._items[1]
+    item._active_handle = "br"
+    item._drag_handle(QPointF(-25.0, -25.0))  # dragged past the origin
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x > 0
+    assert sprite.scale_y > 0
+
+
+def test_dragging_the_rotate_handle_straight_up_is_zero_degrees(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    item._active_handle = "rotate"
+    item._drag_handle(QPointF(0.0, -40.0))
+    assert panel.rig.by_id(1).rotation_deg == pytest.approx(0.0)
+
+
+def test_dragging_the_rotate_handle_sideways_is_ninety_degrees(qapp, tmp_path):
+    # Verified against QTransform.rotate's own sign convention, not
+    # assumed -- see EditableSpriteItem._drag_handle's own comment.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    item._active_handle = "rotate"
+    item._drag_handle(QPointF(40.0, 0.0))
+    assert panel.rig.by_id(1).rotation_deg == pytest.approx(90.0)
+    assert panel.rotation.value() == pytest.approx(90.0)
+
+
+def test_scale_and_rotate_drags_mark_the_avatar_dirty(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    assert panel._dirty is False
+    item._active_handle = "br"
+    item._drag_handle(QPointF(75.0, 75.0))
+    assert panel._dirty is True
 
 
 # --- Reset/Lock fields ------------------------------------------------------

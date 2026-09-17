@@ -128,6 +128,10 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
                 # loads showing exactly what it always did.
                 scale_x=entry.get("scaleX", 1.0),
                 scale_y=entry.get("scaleY", 1.0),
+                # New 2026-09-17, same reasoning as scaleX/Y above -- an
+                # older file has no authored rotation, so 0.0 (unrotated)
+                # reproduces exactly what it always showed.
+                rotation_deg=entry.get("rotationDeg", 0.0),
                 sway_x_freq=entry.get("xFrq", 0.0),
                 sway_x_amp=entry.get("xAmp", 0.0),
                 sway_y_freq=entry.get("yFrq", 0.0),
@@ -185,6 +189,7 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
             "zindex": sprite.z_index,
             "scaleX": sprite.scale_x,
             "scaleY": sprite.scale_y,
+            "rotationDeg": sprite.rotation_deg,
             "drag": sprite.drag_speed,
             "xFrq": sprite.sway_x_freq,
             "xAmp": sprite.sway_x_amp,

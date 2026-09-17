@@ -108,15 +108,16 @@ def test_avatar_01_save_preserves_every_raw_key(tmp_path):
     sprite_keys = set(original_raw.keys()) - {"__format_version__"}
     assert sprite_keys == set(roundtripped_raw.keys()) - {"__format_version__"}
     # variant, hidden, groupName, stateName, and manualDriven (all added
-    # 2026-09-16, see rig.Sprite), plus scaleX/scaleY (added 2026-09-17),
-    # have no legacy counterpart, so they're expected to be *gained* on
+    # 2026-09-16, see rig.Sprite), plus scaleX/scaleY and rotationDeg
+    # (both added 2026-09-17), have no legacy counterpart, so they're
+    # expected to be *gained* on
     # every sprite the first time an old real file round-trips through
     # this app -- that's intentional, not a dropped-field bug, so they're
     # excluded from "extra" only (never from "missing": once written, a
     # key must stay written).
     _NEW_KEYS_WITH_NO_LEGACY_COUNTERPART = {
         "variant", "hidden", "groupName", "stateName", "manualDriven",
-        "scaleX", "scaleY",
+        "scaleX", "scaleY", "rotationDeg",
     }
     for sprite_key in sprite_keys:
         original_entry = original_raw[sprite_key]
@@ -321,6 +322,29 @@ def test_save_writes_scale_fields(tmp_path):
         raw = json.load(f)
     assert raw["0"]["scaleX"] == 1.5
     assert raw["0"]["scaleY"] == 0.75
+
+
+def test_load_preserves_rotation_deg(tmp_path):
+    path = tmp_path / "rotated.save"
+    path.write_text(json.dumps({"0": _sprite_entry(rotationDeg=45.0)}))
+    rig = load_avatar(path)
+    assert rig.sprites[0].rotation_deg == 45.0
+
+
+def test_load_defaults_rotation_deg_to_zero_when_absent(tmp_path):
+    path = tmp_path / "no-rotation.save"
+    path.write_text(json.dumps({"0": _sprite_entry()}))
+    rig = load_avatar(path)
+    assert rig.sprites[0].rotation_deg == 0.0
+
+
+def test_save_writes_rotation_deg(tmp_path):
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png", rotation_deg=45.0)])
+    path = tmp_path / "out.save"
+    save_avatar(rig, path)
+    with path.open() as f:
+        raw = json.load(f)
+    assert raw["0"]["rotationDeg"] == 45.0
 
 
 def test_save_is_atomic_no_leftover_tmp_file(tmp_path):

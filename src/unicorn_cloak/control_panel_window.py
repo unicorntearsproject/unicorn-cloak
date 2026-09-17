@@ -31,7 +31,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QSize, Qt, QTimer
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QIcon,
@@ -66,6 +66,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyleOptionGraphicsItem,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -142,11 +144,20 @@ class _LayerNameLabel(QLabel):
         super().mousePressEvent(event)
 
 
+# Corner/rotate handle geometry for EditableSpriteItem, below -- fixed in
+# local (unscaled) pixels rather than compensated for the edit canvas's own
+# zoom, since GridCanvasView has no zoom feature of its own to compensate
+# for (confirmed 2026-09-17: it's a plain 1:1 QGraphicsView).
+_HANDLE_HALF = 6.0
+_ROTATE_HANDLE_DISTANCE = 28.0
+
+
 class EditableSpriteItem(QGraphicsPixmapItem):
     def __init__(self, sprite: Sprite, pixmap: QPixmap, panel: "ControlPanelWindow", parent=None) -> None:
         super().__init__(pixmap, parent)
         self.sprite = sprite
         self._panel = panel
+        self._active_handle: str | None = None
         self.setOffset(-pixmap.width() / 2 + sprite.offset[0], -pixmap.height() / 2 + sprite.offset[1])
         self.setZValue(sprite.z_index)
         self.setFlag(QGraphicsItem.ItemStacksBehindParent, sprite.z_index < 0)
@@ -157,21 +168,178 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         self.setFlag(QGraphicsItem.ItemIsMovable, True)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
         self.setPos(*sprite.position)
-        # Edit canvas is a static preview (no rotation/reactive stretch --
-        # see render.py's own comment on those) -- scale is the one
-        # authored-transform property it still needs to show.
-        self.setTransform(QTransform().scale(sprite.scale_x, sprite.scale_y))
+        # Edit canvas is a static preview (no *reactive* drag-rotation or
+        # squash/stretch -- see render.py's own comment on those) -- the
+        # two *authored* transform properties (rotation_deg, scale_x/y)
+        # still need to show here, same combination render.py itself uses.
+        self.setTransform(QTransform().rotate(sprite.rotation_deg).scale(sprite.scale_x, sprite.scale_y))
+
+    def _pixmap_rect(self) -> QRectF:
+        # NOT super().boundingRect() -- QGraphicsPixmapItem pads that by
+        # half a unit on every side (confirmed empirically, 2026-09-17:
+        # offset (-50,-50) + a 100x100 pixmap boundingRect()s as
+        # (-50.5,-50.5,101,101), not (-50,-50,100,100)). Handle placement
+        # and the corner-scale math in _drag_handle both need the exact,
+        # unpadded pixmap edges.
+        size = self.pixmap().size()
+        offset = self.offset()
+        return QRectF(offset.x(), offset.y(), size.width(), size.height())
+
+    def boundingRect(self) -> QRectF:  # noqa: N802 (Qt override)
+        rect = self._pixmap_rect()
+        if self.isSelected():
+            # Extended upward to include the rotate handle, which floats
+            # above the pixmap's own top edge -- Qt clips paint()/hit-
+            # testing to whatever boundingRect() reports, so the handle
+            # would otherwise be half-invisible and half-unclickable.
+            rect = rect.adjusted(0, -(_ROTATE_HANDLE_DISTANCE + _HANDLE_HALF), 0, 0)
+        return rect
+
+    def _handle_rects(self) -> dict[str, QRectF]:
+        rect = self._pixmap_rect()
+        centers = {
+            "tl": rect.topLeft(), "tr": rect.topRight(),
+            "bl": rect.bottomLeft(), "br": rect.bottomRight(),
+            "rotate": QPointF(rect.center().x(), rect.top() - _ROTATE_HANDLE_DISTANCE),
+        }
+        return {
+            name: QRectF(pt.x() - _HANDLE_HALF, pt.y() - _HANDLE_HALF, _HANDLE_HALF * 2, _HANDLE_HALF * 2)
+            for name, pt in centers.items()
+        }
+
+    def _handle_at(self, local_pos: QPointF) -> str | None:
+        if not self.isSelected():
+            return None
+        for name, rect in self._handle_rects().items():
+            if rect.contains(local_pos):
+                return name
+        return None
+
+    def paint(self, painter, option, widget=None) -> None:  # noqa: N802 (Qt override)
+        # Qt's own dashed selection rectangle doesn't communicate "drag a
+        # corner to scale, drag above to rotate" -- suppressed here
+        # (standard Qt pattern: paint with a copy of `option` that has
+        # State_Selected cleared) and replaced with the handles below,
+        # which are this sprite's only selection indicator now.
+        plain_option = QStyleOptionGraphicsItem(option)
+        plain_option.state &= ~QStyle.StateFlag.State_Selected
+        super().paint(painter, plain_option, widget)
+        if not self.isSelected():
+            return
+        accent = QColor(theme.MAGENTA_500)
+        pen = QPen(accent)
+        pen.setWidth(2)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        rect = self._pixmap_rect()
+        painter.drawRect(rect)
+        handles = self._handle_rects()
+        top_center = QPointF(rect.center().x(), rect.top())
+        painter.drawLine(top_center, handles["rotate"].center())
+        painter.setBrush(accent)
+        for name, hrect in handles.items():
+            if name == "rotate":
+                painter.drawEllipse(hrect)
+            else:
+                painter.drawRect(hrect)
+
+    def hoverMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        handle = self._handle_at(event.pos())
+        if handle == "rotate":
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        elif handle is not None:
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
+        else:
+            self.unsetCursor()
+        super().hoverMoveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._panel.push_undo_snapshot()
+        handle = self._handle_at(event.pos())
+        if handle is not None:
+            self._active_handle = handle
+            event.accept()
+            return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._active_handle is not None:
+            self._drag_handle(event.pos())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._active_handle = None
+        super().mouseReleaseEvent(event)
+
+    def _drag_handle(self, local_pos: QPointF) -> None:
+        # `local_pos` (a mouse event's .pos()) is already expressed in
+        # this item's own, untransformed local coordinate system -- Qt
+        # inverse-maps through the item's *current* transform (whatever
+        # rotation/scale is already applied) to produce it, verified
+        # empirically 2026-09-17. That means these formulas compute the
+        # new absolute rotation/scale directly from the current mouse
+        # position, with no incremental delta-tracking needed: dividing
+        # the still-original, unscaled corner point into the current
+        # local mouse position gives exactly the scale factor that would
+        # place that corner under the cursor, and atan2 against the
+        # origin gives exactly the angle that would place the rotate
+        # handle under the cursor -- regardless of whatever rotation/
+        # scale was already in effect before this drag started.
+        if self._active_handle == "rotate":
+            # 0 deg = straight up from the origin (this item's pivot,
+            # i.e. Position -- see rig.Sprite's Position/Offset comment);
+            # verified empirically against QTransform.rotate's own sign
+            # convention (positive = clockwise in Qt's y-down coordinate
+            # system) rather than assumed.
+            angle = math.degrees(math.atan2(local_pos.x(), -local_pos.y()))
+            self.sprite.rotation_deg = angle
+            self._apply_authored_transform()
+            self._panel.on_sprite_rotated(self.sprite)
+            return
+
+        corner = {
+            "tl": self._pixmap_rect().topLeft(), "tr": self._pixmap_rect().topRight(),
+            "bl": self._pixmap_rect().bottomLeft(), "br": self._pixmap_rect().bottomRight(),
+        }[self._active_handle]
+        if abs(corner.x()) < 1e-6 or abs(corner.y()) < 1e-6:
+            return  # a zero-size pixmap dimension has no meaningful corner to scale from
+        new_scale_x = local_pos.x() / corner.x()
+        new_scale_y = local_pos.y() / corner.y()
+        if self._panel.scale_lock.isChecked():
+            # Same lock the Scale spinboxes already honor (see
+            # _on_scale_x/y_changed) -- reused here rather than a second,
+            # separate lock concept for the same idea.
+            ratio = (abs(new_scale_x) + abs(new_scale_y)) / 2
+            new_scale_x = math.copysign(ratio, new_scale_x)
+            new_scale_y = math.copysign(ratio, new_scale_y)
+        # Dragging a corner across the origin would otherwise flip the
+        # sprite (a negative scale) -- the Scale spinboxes only ever go
+        # positive (0.01-100.0), so clamp here too rather than showing a
+        # canvas-only capability the numeric field can't represent.
+        self.sprite.scale_x = max(0.01, abs(new_scale_x))
+        self.sprite.scale_y = max(0.01, abs(new_scale_y))
+        self._apply_authored_transform()
+        self._panel.on_sprite_scaled(self.sprite)
+
+    def _apply_authored_transform(self) -> None:
+        self.prepareGeometryChange()
+        self.setTransform(QTransform().rotate(self.sprite.rotation_deg).scale(self.sprite.scale_x, self.sprite.scale_y))
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged:
             pos = self.pos()
             self.sprite.position = (pos.x(), pos.y())
             self._panel.on_sprite_moved(self.sprite)
+        elif change == QGraphicsItem.ItemSelectedHasChanged:
+            # boundingRect() grows to fit the rotate handle once selected
+            # (see its own comment) -- Qt must be told explicitly, or it
+            # keeps using the smaller, stale rect from before selection.
+            self.prepareGeometryChange()
         return super().itemChange(change, value)
 
 
@@ -881,6 +1049,23 @@ class ControlPanelWindow(QWidget):
         self.property_form.addRow("Z-index", self.z_index)
         self.property_form.addRow("Parent", self.parent_combo)
 
+        # Rotation, owner's request, 2026-09-17: "in the editor, drag the
+        # active sprite around and scale/rotate it" -- a plain numeric
+        # field here, same as Position/Offset above; the drag-to-rotate
+        # handle on the edit canvas (see EditableSpriteItem) writes into
+        # this same sprite.rotation_deg and keeps this spinbox in sync via
+        # on_sprite_rotated, the same pattern on_sprite_moved already uses
+        # for drag-to-move.
+        self.rotation = self._spin(-360.0, 360.0)
+        self.rotation.setToolTip(
+            "Permanently rotates this sprite, e.g. for an accessory drawn\n"
+            "at the wrong angle, or a limb that should hang at a fixed\n"
+            "tilt. 0 is the image's own native orientation. Independent of\n"
+            "the reactive drag-based rotation on the Behavior tab's Motion\n"
+            "section, which adds on top of this."
+        )
+        self.property_form.addRow("Rotation (deg)", self.rotation)
+
         # Scale, owner's request, 2026-09-17: "add scale features to the
         # positioning section... w/a lock toggle (on by default) that
         # scales x & y maintaining proportions." A toggle QPushButton, not
@@ -943,18 +1128,18 @@ class ControlPanelWindow(QWidget):
 
         property_fields = (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo,
-            self.scale_x, self.scale_y, self.scale_lock,
+            self.rotation, self.scale_x, self.scale_y, self.scale_lock,
             self.frames, self.anim_speed, self.variant,
         )
         for form, fields in (
-            (self.property_form, (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo)),
+            (self.property_form, (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo, self.rotation)),
             (self.animation_form, (self.frames, self.anim_speed, self.variant)),
         ):
             for field_widget in fields:
                 label = form.labelForField(field_widget)
                 if label is not None:
                     label.setToolTip(field_widget.toolTip())
-        for box in (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.variant, self.anim_speed):
+        for box in (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.rotation, self.variant, self.anim_speed):
             box.valueChanged.connect(self._on_property_changed)
         # Scale X/Y get their own handlers, not the generic loop above --
         # each one may also need to update the *other* spinbox's value
@@ -1958,6 +2143,20 @@ class ControlPanelWindow(QWidget):
         if sprite.id == self._selected_id:
             self._load_property_form(sprite)
 
+    def on_sprite_scaled(self, sprite: Sprite) -> None:
+        # Same shape as on_sprite_moved above -- EditableSpriteItem's
+        # corner-handle drag (see _drag_handle) writes straight into
+        # sprite.scale_x/y, this just keeps the Scale spinboxes and the
+        # dirty flag in sync with that live drag.
+        self._mark_dirty()
+        if sprite.id == self._selected_id:
+            self._load_property_form(sprite)
+
+    def on_sprite_rotated(self, sprite: Sprite) -> None:
+        self._mark_dirty()
+        if sprite.id == self._selected_id:
+            self._load_property_form(sprite)
+
     def _on_scene_selection_changed(self) -> None:
         selected = self.scene.selectedItems()
         if not selected:
@@ -2028,6 +2227,7 @@ class ControlPanelWindow(QWidget):
         self.offset_x.setValue(sprite.offset[0])
         self.offset_y.setValue(sprite.offset[1])
         self.z_index.setValue(sprite.z_index)
+        self.rotation.setValue(sprite.rotation_deg)
         self.scale_x.setValue(sprite.scale_x)
         self.scale_y.setValue(sprite.scale_y)
         self._populate_group_name_combo(sprite)
@@ -2099,6 +2299,7 @@ class ControlPanelWindow(QWidget):
         sprite.position = (self.pos_x.value(), self.pos_y.value())
         sprite.offset = (self.offset_x.value(), self.offset_y.value())
         sprite.z_index = int(self.z_index.value())
+        sprite.rotation_deg = self.rotation.value()
         sprite.scale_x = self.scale_x.value()
         sprite.scale_y = self.scale_y.value()
         sprite.group_name = self.group_name.currentText().strip()
@@ -2114,7 +2315,7 @@ class ControlPanelWindow(QWidget):
         item.setOffset(-item.pixmap().width() / 2 + sprite.offset[0], -item.pixmap().height() / 2 + sprite.offset[1])
         item.setZValue(sprite.z_index)
         item.setFlag(QGraphicsItem.ItemStacksBehindParent, sprite.z_index < 0)
-        item.setTransform(QTransform().scale(sprite.scale_x, sprite.scale_y))
+        item.setTransform(QTransform().rotate(sprite.rotation_deg).scale(sprite.scale_x, sprite.scale_y))
         self._refresh_preview_expression_combo()
         self._refresh_expressions_section()
         self._apply_preview_opacity(item)

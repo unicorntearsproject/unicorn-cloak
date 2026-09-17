@@ -33,8 +33,8 @@ def make_test_wav(path, duration_s=0.3, samplerate=8000, amplitude=0.5, frequenc
         f.writeframes(struct.pack(f"<{n}h", *samples))
 
 
-def make_test_png_bytes(color=(255, 0, 0, 255)) -> bytes:
-    image = QImage(4, 4, QImage.Format.Format_ARGB32)
+def make_test_png_bytes(color=(255, 0, 0, 255), size=4) -> bytes:
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
     image.fill(QColor(*color))
     buf = QBuffer()
     buf.open(QIODevice.OpenModeFlag.WriteOnly)

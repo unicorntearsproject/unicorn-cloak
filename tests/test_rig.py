@@ -11,6 +11,11 @@ def test_sprite_scale_defaults_to_native_size():
     assert sprite.scale_y == 1.0
 
 
+def test_sprite_rotation_deg_defaults_to_unrotated():
+    sprite = make_sprite(1)
+    assert sprite.rotation_deg == 0.0
+
+
 def test_generate_sprite_id_avoids_collisions():
     existing = {1, 2, 3}
     for _ in range(50):
