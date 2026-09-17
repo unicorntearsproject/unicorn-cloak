@@ -80,7 +80,7 @@ from .config import Config, save_state
 from .help_window import HelpWindow
 from .persistence import DEFAULT_EXTENSION, save_avatar
 from .render import BACKGROUND_COLORS
-from .rig import NUM_COSTUMES, AvatarRig, Sprite, duplicate_sprite
+from .rig import NUM_COSTUMES, AvatarRig, Sprite, duplicate_sprite, with_costume_layer
 from .rig_lint import find_rig_issues
 from .snapshot import export_costume_snapshot
 from .spritesheet import slice_frame
@@ -95,6 +95,14 @@ from .widgets import (
 
 SELECTED_ID = Qt.ItemDataRole.UserRole
 AUTOSAVE_INTERVAL_MS = 30_000
+
+# Expression hotkeys are Shift+<digit>, fixed (not user-remappable, unlike
+# costume_keys) -- owner's request, 2026-09-17: "yea hotkey it up please...
+# shift+<number>". Same 1-9,0 numbering convention as
+# config.HotkeysConfig.costume_keys' own default, purely for the on-screen
+# label; render.py/render matching uses Qt.Key constants directly, not
+# this string form.
+EXPRESSION_HOTKEY_LABELS = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
 
 _BACKGROUND_LABELS = {
     "transparent": "Transparent (see-through to OBS -- normal setup)",
@@ -436,6 +444,16 @@ class ControlPanelWindow(QWidget):
         self._reset_buttons: dict = {}
         self._lock_buttons: dict = {}
         self._expression_buttons: dict[tuple[str, str], QPushButton] = {}
+        # Costume/Expression hotkey editors, owner's request, 2026-09-17
+        # -- see _rebuild_costume_and_expression_editors's own docstring.
+        # Indexed 0..NUM_COSTUMES-1 like rig.AvatarRig.costume_assignments/
+        # expression_hotkeys, initialized before any tab is built since
+        # _rebuild_scene() (called at the end of __init__) rebuilds these
+        # too and must find real lists/layouts here, not missing keys.
+        self._costume_rows: dict[int, list[QWidget]] = {slot: [] for slot in range(NUM_COSTUMES)}
+        self._costume_rows_layout: dict[int, QVBoxLayout] = {}
+        self._expression_hotkey_rows: dict[int, list[QWidget]] = {slot: [] for slot in range(NUM_COSTUMES)}
+        self._expression_hotkey_rows_layout: dict[int, QVBoxLayout] = {}
         self._sections: dict[str, CollapsibleSection] = {}
         self._tab_splitters: list[QSplitter] = []
         self._obs_connected = False
@@ -1344,10 +1362,26 @@ class ControlPanelWindow(QWidget):
         )
         canvas_section.body_layout.addLayout(canvas_form)
 
-        hotkeys_section = CollapsibleSection("Hotkeys — costume switching")
-        hotkeys_form = QFormLayout()
+        # Costume/Expression hotkeys, redesigned 2026-09-17, owner's
+        # request ("are the costume hotkeys labeled with what they do?
+        # when i went in there i just saw a list of numbers"): each slot
+        # now shows what it actually does -- a list of explicit hide/show
+        # sprite pairs the owner assigns right here, not an opaque number
+        # that only means something by cross-referencing costume_layers
+        # in a raw save file. One CollapsibleSection covers both (see
+        # test_no_tab_has_more_than_three_collapsible_sections -- this
+        # tab is already at its cap of 3).
+        hotkeys_section = CollapsibleSection("Hotkeys — Costumes & Expressions", collapsed=True)
+
+        costumes_label = QLabel("Costumes — press the number to switch")
+        costumes_label.setStyleSheet(f"color: {theme.MAGENTA_500}; font-weight: 600;")
+        hotkeys_section.body_layout.addWidget(costumes_label)
+
         self._hotkey_edits: list[QKeySequenceEdit] = []
         for slot, key_text in enumerate(self.config.hotkeys.costume_keys[:NUM_COSTUMES]):
+            slot_box = QVBoxLayout()
+            header_row = QHBoxLayout()
+            header_row.addWidget(QLabel(f"Costume {slot + 1}"))
             edit = QKeySequenceEdit()
             edit.setMaximumSequenceLength(1)
             edit.setKeySequence(QKeySequence(key_text))
@@ -1360,10 +1394,48 @@ class ControlPanelWindow(QWidget):
                 "distinguished from the plain key."
             )
             edit.keySequenceChanged.connect(self._hotkey_setter(slot, edit))
-            hotkeys_form.addRow(f"Costume {slot + 1}", edit)
-            self._set_label_tooltip(hotkeys_form, edit, edit.toolTip())
             self._hotkey_edits.append(edit)
-        hotkeys_section.body_layout.addLayout(hotkeys_form)
+            header_row.addWidget(edit, stretch=1)
+            slot_box.addLayout(header_row)
+
+            rows_layout = QVBoxLayout()
+            self._costume_rows_layout[slot] = rows_layout
+            slot_box.addLayout(rows_layout)
+
+            add_btn = QPushButton("+ Add swap")
+            add_btn.setToolTip(
+                "Pick two sprites: the left one starts hidden and this\n"
+                "costume shows it; the right one starts shown and this\n"
+                "costume hides it. Add more than one pair to swap several\n"
+                "sprites at once (e.g. both halves of a hoodie for a vest)."
+            )
+            add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_costume_row(s))
+            slot_box.addWidget(add_btn)
+            hotkeys_section.body_layout.addLayout(slot_box)
+
+        expressions_label = QLabel("Expressions — Shift + number toggles on/off")
+        expressions_label.setStyleSheet(f"color: {theme.MAGENTA_500}; font-weight: 600;")
+        hotkeys_section.body_layout.addWidget(expressions_label)
+
+        for slot in range(NUM_COSTUMES):
+            slot_box = QVBoxLayout()
+            slot_box.addWidget(QLabel(f"Shift+{EXPRESSION_HOTKEY_LABELS[slot]}"))
+
+            rows_layout = QVBoxLayout()
+            self._expression_hotkey_rows_layout[slot] = rows_layout
+            slot_box.addLayout(rows_layout)
+
+            add_btn = QPushButton("+ Add expression")
+            add_btn.setToolTip(
+                "Pick an Expression (tag a sprite Manually driven with a\n"
+                "Group/State on the Behavior tab first if none exist yet).\n"
+                "Add more than one to force several groups at once (e.g. a\n"
+                "mouth shape and an eye shape together for one combined\n"
+                "expression)."
+            )
+            add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_expression_hotkey_row(s))
+            slot_box.addWidget(add_btn)
+            hotkeys_section.body_layout.addLayout(slot_box)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -1462,6 +1534,17 @@ class ControlPanelWindow(QWidget):
         actions_row_1.addWidget(self._redo_btn)
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo)
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo)
+
+        # Expression hotkeys, owner's request, 2026-09-17: "shift+<number>"
+        # -- fixed, not user-remappable (unlike costume_keys), and scoped
+        # to this window (fires while the Control Panel has focus, not
+        # the Render Window) since that's already where Expressions are
+        # configured and toggled today.
+        for slot, label in enumerate(EXPRESSION_HOTKEY_LABELS):
+            QShortcut(
+                QKeySequence(f"Shift+{label}"), self,
+                activated=lambda s=slot: self._trigger_expression_hotkey(s),
+            )
 
         help_btn = QPushButton("Help")
         help_btn.setToolTip("Open the full reference: hotkeys, sprite fields, file format, workflow.")
@@ -1658,11 +1741,28 @@ class ControlPanelWindow(QWidget):
         self._redo_stack.clear()
         self._update_undo_redo_buttons()
 
-    def _snapshot(self) -> list[Sprite]:
-        return [copy.copy(s) for s in self.rig.sprites]
+    def _snapshot(self) -> tuple[list[Sprite], list[list[tuple[int, int]]], list[list[tuple[str, str]]]]:
+        # costume_assignments/expression_hotkeys ride along in the same
+        # snapshot as the sprites, added 2026-09-17 -- otherwise undoing a
+        # sprite edit that happens to also revert a sprite's
+        # costume_layers (assign_costume_pair/remove_costume_pair mutate
+        # it) would leave the *assignment list* stale, showing a costume/
+        # Expression hotkey row that no longer matches what the sprites
+        # actually do. deepcopy, not copy.copy -- these are lists of
+        # lists of tuples; a shallow copy of the outer list would still
+        # share (and let this snapshot silently mutate alongside) the
+        # per-slot inner lists.
+        return (
+            [copy.copy(s) for s in self.rig.sprites],
+            copy.deepcopy(self.rig.costume_assignments),
+            copy.deepcopy(self.rig.expression_hotkeys),
+        )
 
-    def _restore(self, snapshot: list[Sprite]) -> None:
-        self.rig.sprites = [copy.copy(s) for s in snapshot]
+    def _restore(self, snapshot: tuple[list[Sprite], list[list[tuple[int, int]]], list[list[tuple[str, str]]]]) -> None:
+        sprites, costume_assignments, expression_hotkeys = snapshot
+        self.rig.sprites = [copy.copy(s) for s in sprites]
+        self.rig.costume_assignments = copy.deepcopy(costume_assignments)
+        self.rig.expression_hotkeys = copy.deepcopy(expression_hotkeys)
         self._rebuild_scene()
         self._rebuild_list()
         self._select(None)
@@ -1975,6 +2075,7 @@ class ControlPanelWindow(QWidget):
         finally:
             self._rebuilding_scene = False
         self.edit_view.refit_to_content()
+        self._rebuild_costume_and_expression_editors()
 
     def _preview_variant_counts(self) -> tuple[int, int]:
         talk_count = 0
@@ -2783,6 +2884,13 @@ class ControlPanelWindow(QWidget):
     # Expressions
     # =====================================================================
 
+    def _manual_expression_pairs(self) -> list[tuple[str, str]]:
+        return sorted({
+            (s.group_name, s.state_name)
+            for s in self.rig.sprites
+            if s.manual_driven and s.group_name and s.state_name
+        })
+
     def _refresh_expressions_section(self) -> None:
         while self._expressions_layout.count():
             child = self._expressions_layout.takeAt(0)
@@ -2790,11 +2898,7 @@ class ControlPanelWindow(QWidget):
                 child.widget().setParent(None)
         self._expression_buttons.clear()
 
-        pairs = sorted({
-            (s.group_name, s.state_name)
-            for s in self.rig.sprites
-            if s.manual_driven and s.group_name and s.state_name
-        })
+        pairs = self._manual_expression_pairs()
         if pairs:
             for group, state in pairs:
                 btn = QPushButton(f"{group}: {state}")
@@ -2825,3 +2929,199 @@ class ControlPanelWindow(QWidget):
                 self.render_window.set_manual_override(group, None)
 
         return on_toggled
+
+    # =====================================================================
+    # Costume & Expression hotkey editors
+    # =====================================================================
+    #
+    # Both editors share the same shape (owner's request, 2026-09-17: "the
+    # list of numbers... each number has two drop boxes and a + button"),
+    # applied to two different underlying assignments:
+    #   - Costumes: rig.costume_assignments[slot], each row a (hide_id,
+    #     show_id) sprite pair, write-through to costume_layers (see
+    #     AvatarRig.assign_costume_pair's own comment for why).
+    #   - Expressions: rig.expression_hotkeys[slot], each row a single
+    #     (group_name, state_name) pair -- no second box needed, since
+    #     forcing a state already suppresses its own group's automatic
+    #     siblings (see render.py's manual-override handling).
+    # A row only becomes a real, committed assignment once it's fully
+    # filled in; clearing any part of an already-committed row removes it
+    # instead -- generalizes the owner's own described deletion gesture
+    # ("not assigning to first box but assigning the second box will
+    # simply remove the item") to "any incomplete row isn't a real
+    # assignment anymore," which also covers clearing the *other* box.
+
+    def _sprite_label(self, sprite: Sprite) -> str:
+        name = sprite.path.rsplit("/", 1)[-1]
+        return f"{name} ({sprite.id})"
+
+    def _find_combo_index_by_data(self, combo: QComboBox, value) -> int:
+        # Not combo.findData(value) -- reliable for the plain ints the
+        # rest of this app already uses it for, but not trusted here for
+        # the expression combo's tuple userData (QVariant-wrapped
+        # arbitrary Python object equality isn't guaranteed the same way).
+        for i in range(combo.count()):
+            if combo.itemData(i) == value:
+                return i
+        return 0
+
+    def _populate_costume_sprite_combo(self, combo: QComboBox, current_id: int | None) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("—", None)
+        for sprite in self.rig.sprites:
+            combo.addItem(self._sprite_label(sprite), sprite.id)
+        combo.setCurrentIndex(max(combo.findData(current_id), 0))
+        combo.blockSignals(False)
+
+    def _build_costume_pair_row(self, slot: int, hide_id: int | None, show_id: int | None) -> QWidget:
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(16, 0, 0, 0)
+        hide_combo = QComboBox()
+        show_combo = QComboBox()
+        self._populate_costume_sprite_combo(hide_combo, hide_id)
+        self._populate_costume_sprite_combo(show_combo, show_id)
+        hide_combo.setToolTip("Hidden by default -- shown while this costume is active.")
+        show_combo.setToolTip("Shown by default -- hidden while this costume is active.")
+        row_layout.addWidget(QLabel("Hide"))
+        row_layout.addWidget(hide_combo, 1)
+        row_layout.addWidget(QLabel("Show"))
+        row_layout.addWidget(show_combo, 1)
+        row.hide_combo = hide_combo
+        row.show_combo = show_combo
+        row.committed = (hide_id, show_id) if hide_id is not None and show_id is not None else None
+        hide_combo.currentIndexChanged.connect(lambda _checked=False, s=slot, r=row: self._on_costume_row_changed(s, r))
+        show_combo.currentIndexChanged.connect(lambda _checked=False, s=slot, r=row: self._on_costume_row_changed(s, r))
+        return row
+
+    def _add_costume_row(self, slot: int, hide_id: int | None = None, show_id: int | None = None) -> None:
+        row = self._build_costume_pair_row(slot, hide_id, show_id)
+        self._costume_rows[slot].append(row)
+        self._costume_rows_layout[slot].addWidget(row)
+
+    def _remove_costume_row(self, slot: int, row: QWidget) -> None:
+        self._costume_rows[slot].remove(row)
+        self._costume_rows_layout[slot].removeWidget(row)
+        row.setParent(None)
+        row.deleteLater()
+
+    def _on_costume_row_changed(self, slot: int, row: QWidget) -> None:
+        self.push_undo_snapshot()
+        hide_id = row.hide_combo.currentData()
+        show_id = row.show_combo.currentData()
+        now_complete = hide_id is not None and show_id is not None
+        if row.committed is not None and not now_complete:
+            self._remove_costume_row(slot, row)
+        else:
+            row.committed = (hide_id, show_id) if now_complete else None
+        self._resync_costume_slot(slot)
+
+    def _resync_costume_slot(self, slot: int) -> None:
+        """Rebuilds rig.costume_assignments[slot] (and its write-through
+        to costume_layers) from the current row widgets -- simpler and
+        less bug-prone than tracking incremental add/edit/remove by list
+        index, which drifts as rows are added/removed out of order."""
+        for hide_id, show_id in list(self.rig.costume_assignments[slot]):
+            for sprite_id in (hide_id, show_id):
+                sprite = self.rig.by_id(sprite_id)
+                if sprite is not None:
+                    sprite.costume_layers = with_costume_layer(sprite.costume_layers, slot, True)
+        self.rig.costume_assignments[slot] = []
+        for row in self._costume_rows[slot]:
+            hide_id = row.hide_combo.currentData()
+            show_id = row.show_combo.currentData()
+            if hide_id is not None and show_id is not None:
+                self.rig.assign_costume_pair(slot, hide_id, show_id)
+        self._mark_dirty()
+
+    def _populate_expression_combo(self, combo: QComboBox, current: tuple[str, str] | None) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("—", None)
+        for group, state in self._manual_expression_pairs():
+            combo.addItem(f"{group}: {state}", (group, state))
+        combo.setCurrentIndex(self._find_combo_index_by_data(combo, current))
+        combo.blockSignals(False)
+
+    def _build_expression_hotkey_row(self, slot: int, pair: tuple[str, str] | None) -> QWidget:
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(16, 0, 0, 0)
+        combo = QComboBox()
+        self._populate_expression_combo(combo, pair)
+        combo.setToolTip(
+            "Forces this Expression on while this hotkey slot is toggled\n"
+            "on, exactly like clicking its button in the Behavior tab's\n"
+            "Expressions section (they share the same live state)."
+        )
+        row_layout.addWidget(QLabel("Force"))
+        row_layout.addWidget(combo, 1)
+        row.combo = combo
+        row.committed = pair
+        combo.currentIndexChanged.connect(lambda _checked=False, s=slot, r=row: self._on_expression_hotkey_row_changed(s, r))
+        return row
+
+    def _add_expression_hotkey_row(self, slot: int, pair: tuple[str, str] | None = None) -> None:
+        row = self._build_expression_hotkey_row(slot, pair)
+        self._expression_hotkey_rows[slot].append(row)
+        self._expression_hotkey_rows_layout[slot].addWidget(row)
+
+    def _remove_expression_hotkey_row(self, slot: int, row: QWidget) -> None:
+        self._expression_hotkey_rows[slot].remove(row)
+        self._expression_hotkey_rows_layout[slot].removeWidget(row)
+        row.setParent(None)
+        row.deleteLater()
+
+    def _on_expression_hotkey_row_changed(self, slot: int, row: QWidget) -> None:
+        self.push_undo_snapshot()
+        value = row.combo.currentData()
+        if row.committed is not None and value is None:
+            self._remove_expression_hotkey_row(slot, row)
+        else:
+            row.committed = value
+        self._resync_expression_hotkey_slot(slot)
+
+    def _resync_expression_hotkey_slot(self, slot: int) -> None:
+        self.rig.expression_hotkeys[slot] = []
+        for row in self._expression_hotkey_rows[slot]:
+            value = row.combo.currentData()
+            if value is not None:
+                group, state = value
+                self.rig.assign_expression_hotkey(slot, group, state)
+        self._mark_dirty()
+
+    def _trigger_expression_hotkey(self, slot: int) -> None:
+        """Shift+<number> (see the QShortcut wiring in __init__) --
+        toggles every Expression button assigned to this slot, reusing
+        the buttons' own existing toggle handler (_make_expression_toggle_
+        handler) rather than duplicating its group-exclusivity logic, so
+        a hotkey press and a real click always stay in sync."""
+        for group, state in self.rig.expression_hotkeys[slot]:
+            btn = self._expression_buttons.get((group, state))
+            if btn is not None:
+                btn.click()
+
+    def _rebuild_costume_and_expression_editors(self) -> None:
+        """Full rebuild from rig.costume_assignments/expression_hotkeys --
+        called at the end of _rebuild_scene() (covers load, undo/redo,
+        add/remove/duplicate sprite, hot reload, and initial construction,
+        in one place), since the dropdown options (every sprite; every
+        tagged Expression) and the assignments shown both depend on what
+        currently exists in the rig."""
+        for slot in range(NUM_COSTUMES):
+            for row in list(self._costume_rows[slot]):
+                self._costume_rows[slot].remove(row)
+                self._costume_rows_layout[slot].removeWidget(row)
+                row.setParent(None)
+                row.deleteLater()
+            for hide_id, show_id in self.rig.costume_assignments[slot]:
+                self._add_costume_row(slot, hide_id, show_id)
+
+            for row in list(self._expression_hotkey_rows[slot]):
+                self._expression_hotkey_rows[slot].remove(row)
+                self._expression_hotkey_rows_layout[slot].removeWidget(row)
+                row.setParent(None)
+                row.deleteLater()
+            for group, state in self.rig.expression_hotkeys[slot]:
+                self._add_expression_hotkey_row(slot, (group, state))

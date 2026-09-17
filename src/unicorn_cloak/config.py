@@ -270,7 +270,12 @@ class ControlPanelConfig:
     # tuple unconditionally on construction, so this default, not the
     # CollapsibleSection constructor's own `collapsed=` arg, is what
     # actually controls first-launch state.
-    collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation")
+    # "Hotkeys — Costumes & Expressions" joined this default 2026-09-17,
+    # same reasoning: its per-slot editor rows (up to 20 slots' worth of
+    # dropdowns) made the whole panel's minimum size balloon when expanded
+    # by default, since a hidden CollapsibleSection body doesn't count
+    # toward layout size but a big expanded one does.
+    collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation", "Hotkeys — Costumes & Expressions")
 
     # Whether Scale X/Y (Position & Hierarchy) are linked -- editing one
     # updates the other to match, keeping the sprite's proportions.

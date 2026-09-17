@@ -16,6 +16,60 @@ def test_sprite_rotation_deg_defaults_to_unrotated():
     assert sprite.rotation_deg == 0.0
 
 
+def test_costume_assignments_and_expression_hotkeys_default_to_empty_per_slot():
+    from unicorn_cloak.rig import NUM_COSTUMES
+
+    rig = AvatarRig(name="t", sprites=[make_sprite(1)])
+    assert len(rig.costume_assignments) == NUM_COSTUMES
+    assert all(pairs == [] for pairs in rig.costume_assignments)
+    assert len(rig.expression_hotkeys) == NUM_COSTUMES
+    assert all(pairs == [] for pairs in rig.expression_hotkeys)
+
+
+def test_assign_costume_pair_shows_the_first_sprite_and_hides_the_second():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1), make_sprite(2)])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    assert rig.costume_assignments[2] == [(1, 2)]
+    assert rig.by_id(1).costume_layers[2] is True  # "hide" sprite: assumed off, shown here
+    assert rig.by_id(2).costume_layers[2] is False  # "show" sprite: assumed on, hidden here
+    # Untouched slots/sprites keep the "visible everywhere" default.
+    assert rig.by_id(1).costume_layers[0] is True
+    assert rig.by_id(2).costume_layers[0] is True
+
+
+def test_assign_costume_pair_is_a_noop_for_an_unknown_sprite_id():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1)])
+    rig.assign_costume_pair(0, hide_id=1, show_id=999)
+    assert rig.costume_assignments[0] == []
+    assert rig.by_id(1).costume_layers[0] is True
+
+
+def test_remove_costume_pair_reverts_both_sprites_to_visible():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1), make_sprite(2)])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    rig.remove_costume_pair(2, 0)
+    assert rig.costume_assignments[2] == []
+    assert rig.by_id(1).costume_layers[2] is True
+    assert rig.by_id(2).costume_layers[2] is True
+
+
+def test_costume_pair_can_be_added_multiple_times_to_the_same_slot():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1), make_sprite(2), make_sprite(3), make_sprite(4)])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    rig.assign_costume_pair(2, hide_id=3, show_id=4)
+    assert rig.costume_assignments[2] == [(1, 2), (3, 4)]
+    assert rig.by_id(1).costume_layers[2] is True
+    assert rig.by_id(3).costume_layers[2] is True
+
+
+def test_assign_and_remove_expression_hotkey():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1)])
+    rig.assign_expression_hotkey(4, "Mouth", "Laughing")
+    assert rig.expression_hotkeys[4] == [("Mouth", "Laughing")]
+    rig.remove_expression_hotkey(4, 0)
+    assert rig.expression_hotkeys[4] == []
+
+
 def test_generate_sprite_id_avoids_collisions():
     existing = {1, 2, 3}
     for _ in range(50):

@@ -2613,6 +2613,15 @@ be):**
   is about new *motion* drivers, not a rendering pass). Owner's own item
   to build, timed for around release -- nothing to design or implement
   here yet.
+- **Independent costume toggles.** Owner, 2026-09-17, when asked to pick
+  between "one look at a time" (built, see that day's dated entry) and
+  independent per-hotkey on/off toggles that can combine freely (e.g. a
+  hat and glasses toggled separately, at the same time): "do one look at
+  a time, put combinations on later list." Bigger change than it sounds --
+  replaces the single mutually-exclusive `active_costume` index with
+  several simultaneously-active toggle states, and needs converting the 2
+  real avatars that already use costumes (unicorn-demo, bugged-out-nerd)
+  to whatever the new format ends up being.
 
 **Zoom moved to Position & Hierarchy; image/video backgrounds added,
 2026-09-17, owner's requests.** Two separate asks in the same session:
@@ -2740,6 +2749,94 @@ pretty much call it a wrap" list.**
   automatic. No hotkey binding exists for these yet (only costumes have
   one) -- flagged to the owner as an open question, not assumed either
   way.
+
+**Costume/Expression hotkeys redesigned around explicit sprite-pair
+assignments; Expression hotkeys added, 2026-09-17, owner's follow-up.**
+Owner, on seeing the old numbered costume-hotkey list: "are the costume
+hotkeys labeled with what they do? when i went in there i just saw a list
+of numbers." Owner's proposed fix, generalized to Expressions too: a
+number list where each slot has explicit dropdown-picked assignments
+instead of an opaque index into a raw `costumeLayers` bitmask. Confirmed
+with the owner up front which of two structurally different models to
+build -- "one look at a time" (today's single mutually-exclusive
+`active_costume` index, just a friendlier editor) vs. "independent
+toggles" (any number of costumes on/off at once, a bigger change touching
+all 3 real avatars' saved data) -- owner picked the former, deferring the
+latter ("put combinations on later list", logged in Phase 3's candidate
+list below).
+
+- **New `AvatarRig.costume_assignments`/`expression_hotkeys`** (both
+  `list[list[tuple]]`, one inner list per hotkey slot) are a pure
+  *authoring* layer on top of the existing, unchanged
+  `costume_layers`/`active_costume` engine -- adding a costume pair
+  writes straight through to both sprites' `costume_layers` via the new
+  `AvatarRig.assign_costume_pair`/`remove_costume_pair`, so rendering
+  itself never needs to know this list exists and a file saved before
+  this feature existed keeps working unmodified. Persisted as two new
+  rig-level (not per-sprite) JSON keys, `__costume_assignments__`/
+  `__expression_hotkeys__`.
+- **A real semantic bug found and fixed before it shipped**: the first
+  implementation of `assign_costume_pair` had hide/show backwards --
+  `hide_id`'s sprite (meant to read "hidden by default, shown while this
+  costume is active", per the owner's own wording) was being set to
+  *hidden*, not shown, at the target slot, and `show_id` the reverse.
+  Caught by working through the exact real migration this same entry
+  describes below (unicorn-demo's already-correct real data has the
+  vest/body layers visible *only* in slot 1) rather than trusting the
+  first pass -- the bug would have made every new costume assignment
+  backwards from what its own UI labels/tooltips said. Fixed in
+  `rig.py`, with test assertions corrected to match.
+- **UI**: the Application tab's "Hotkeys" section is now "Hotkeys —
+  Costumes & Expressions" -- one number list per feature, each slot a
+  dynamic set of rows (two sprite dropdowns for Costumes, one Expression
+  dropdown for Expressions) plus a "+ Add" button. A row only becomes a
+  real, saved assignment once fully filled in; clearing any part of an
+  already-committed row removes it -- generalizes the owner's own
+  described deletion gesture ("not assigning to first box but assigning
+  the second box will simply remove the item") to "any incomplete row
+  isn't a real assignment," which also covers clearing the *other* box,
+  not just the first. Dropdown options and displayed rows fully rebuild
+  from the rig's own data at the end of `_rebuild_scene()` -- one
+  integration point covers load, undo/redo, and add/remove/duplicate
+  sprite, since they all already funnel through it.
+  - Found and fixed while building this: this section's own content (up
+    to 20 slots' worth of dropdown rows) made the *whole panel's* minimum
+    size balloon when expanded by default, since a `QTabWidget`'s overall
+    minimum size is driven by its largest page regardless of which tab is
+    active -- added to `ControlPanelConfig.collapsed_sections`' own
+    default tuple (matching "Position & Hierarchy"/"Animation"'s existing
+    entries) rather than left expanded.
+  - `costume_assignments`/`expression_hotkeys` ride along in the same
+    undo/redo snapshot as the sprite list now (`_snapshot`/`_restore`
+    extended, `deepcopy` since they're lists of lists of tuples) --
+    otherwise undoing a change that happens to revert a sprite's
+    `costume_layers` would leave the assignment list stale, showing a row
+    that no longer matches what the sprites actually do.
+- **Expression hotkeys are Shift+1..Shift+9,Shift+0**, fixed (not
+  user-remappable, unlike costume keys) and scoped to the *Control Panel*
+  window, not the Render Window -- deliberately different from how
+  costume hotkeys work, since Expressions are already configured and
+  toggled entirely through Control Panel buttons today. Implemented as
+  `QShortcut`s that `.click()` the exact same Expression buttons the
+  Behavior tab's Expressions section already has (not a second,
+  parallel toggle implementation), so a hotkey press and a real click
+  always stay in sync automatically, including the existing "only one
+  state per group" exclusivity.
+- **Content migration**: unicorn-demo's and bugged-out-nerd's real,
+  already-correct hoodie/vest and plaid/camo costume swaps existed only
+  as raw `costumeLayers` data with no `costume_assignments` describing
+  them, which would have shown as empty rows in the new editor despite
+  already working. Backfilled both real files via
+  `AvatarRig.assign_costume_pair` itself (not hand-edited JSON) and
+  verified byte-for-byte that `costumeLayers` came out unchanged -- this
+  only adds the new authoring metadata, never touches what's actually
+  rendered. avatar-01 was checked too and has no costume-layer usage at
+  all (predates the Expressions-era swap pattern), so nothing to migrate
+  there.
+- Full suite green at 409 tests, including new coverage across
+  `rig.py`/`persistence.py`/`control_panel_window.py` for both editors,
+  the undo/redo extension, the hide/show semantics themselves, and the
+  Shift+number shortcut wiring.
 
 ---
 

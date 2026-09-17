@@ -791,6 +791,170 @@ def test_expressions_section_refreshes_after_tagging_a_sprite_manual(qapp, tmp_p
     assert ("Mouth", "Laughing") in panel._expression_buttons
 
 
+# --- Costume & Expression hotkey editors -------------------------------------
+
+
+def test_hotkeys_section_starts_collapsed(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._sections["Hotkeys — Costumes & Expressions"].is_collapsed() is True
+
+
+def test_costume_slots_start_with_no_rows(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert all(panel._costume_rows[slot] == [] for slot in range(10))
+
+
+def test_adding_a_costume_row_stays_uncommitted_until_both_boxes_are_set(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._add_costume_row(2)
+    row = panel._costume_rows[2][0]
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(1))
+    assert panel.rig.costume_assignments[2] == []  # show box still unset
+    assert panel.rig.by_id(1).costume_layers[2] is True  # unchanged so far
+
+
+def test_filling_both_boxes_commits_the_costume_pair(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._add_costume_row(2)
+    row = panel._costume_rows[2][0]
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(1))
+    row.show_combo.setCurrentIndex(row.show_combo.findData(2))
+    assert panel.rig.costume_assignments[2] == [(1, 2)]
+    assert panel.rig.by_id(1).costume_layers[2] is True
+    assert panel.rig.by_id(2).costume_layers[2] is False
+
+
+def test_clearing_hide_box_on_a_committed_row_removes_it_and_reverts(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._add_costume_row(2)
+    row = panel._costume_rows[2][0]
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(1))
+    row.show_combo.setCurrentIndex(row.show_combo.findData(2))
+    assert panel.rig.costume_assignments[2] == [(1, 2)]
+
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(None))
+    assert panel._costume_rows[2] == []  # the row widget itself is gone
+    assert panel.rig.costume_assignments[2] == []
+    assert panel.rig.by_id(1).costume_layers[2] is True  # reverted to visible
+    assert panel.rig.by_id(2).costume_layers[2] is True
+
+
+def test_a_costume_slot_can_hold_multiple_pairs_at_once(qapp, tmp_path):
+    # "both parts!" -- e.g. a hoodie's front and back swapping for a vest
+    # and an exposed-body layer together, under one hotkey.
+    png = make_test_png_bytes()
+    sprites = [Sprite(id=i, path=f"{i}.png", image_data=png) for i in range(1, 5)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._add_costume_row(2)
+    row1 = panel._costume_rows[2][0]
+    row1.hide_combo.setCurrentIndex(row1.hide_combo.findData(1))
+    row1.show_combo.setCurrentIndex(row1.show_combo.findData(2))
+
+    panel._add_costume_row(2)
+    row2 = panel._costume_rows[2][1]
+    row2.hide_combo.setCurrentIndex(row2.hide_combo.findData(3))
+    row2.show_combo.setCurrentIndex(row2.show_combo.findData(4))
+
+    assert panel.rig.costume_assignments[2] == [(1, 2), (3, 4)]
+    assert panel.rig.by_id(1).costume_layers[2] is True
+    assert panel.rig.by_id(3).costume_layers[2] is True
+
+
+def test_costume_editor_survives_undo_after_a_sprite_edit(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._add_costume_row(2)
+    row = panel._costume_rows[2][0]
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(1))
+    row.show_combo.setCurrentIndex(row.show_combo.findData(2))
+
+    panel.undo()
+    assert panel.rig.costume_assignments[2] == []
+    assert panel.rig.by_id(1).costume_layers[2] is True
+    assert panel._costume_rows[2] == []
+
+    panel.redo()
+    assert panel.rig.costume_assignments[2] == [(1, 2)]
+    assert panel.rig.by_id(1).costume_layers[2] is True
+
+
+def test_expression_hotkey_slot_starts_empty(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert all(panel._expression_hotkey_rows[slot] == [] for slot in range(10))
+
+
+def _make_manual_expression_rig():
+    png = make_test_png_bytes()
+    sprites = [
+        Sprite(id=1, path="a.png", image_data=png),
+        Sprite(
+            id=2, path="b.png", image_data=png,
+            group_name="Mouth", state_name="Laughing", manual_driven=True,
+        ),
+    ]
+    return AvatarRig(name="t", sprites=sprites)
+
+
+def test_assigning_an_expression_hotkey_writes_through_to_the_rig(qapp, tmp_path):
+    # NOT combo.findData(("Mouth", "Laughing")) -- confirmed unreliable
+    # for tuple userData (identity-based under the hood, not Python
+    # equality; PySide6/Qt behavior, verified empirically, 2026-09-17).
+    # Same reason _populate_expression_combo uses _find_combo_index_by_data
+    # internally rather than findData -- these tests reuse that method
+    # rather than duplicating the same landmine.
+    config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
+    panel._add_expression_hotkey_row(4)
+    row = panel._expression_hotkey_rows[4][0]
+    index = panel._find_combo_index_by_data(row.combo, ("Mouth", "Laughing"))
+    row.combo.setCurrentIndex(index)
+    assert panel.rig.expression_hotkeys[4] == [("Mouth", "Laughing")]
+
+
+def test_clearing_an_expression_hotkey_row_removes_it(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
+    panel._add_expression_hotkey_row(4)
+    row = panel._expression_hotkey_rows[4][0]
+    row.combo.setCurrentIndex(panel._find_combo_index_by_data(row.combo, ("Mouth", "Laughing")))
+    row.combo.setCurrentIndex(panel._find_combo_index_by_data(row.combo, None))
+    assert panel._expression_hotkey_rows[4] == []
+    assert panel.rig.expression_hotkeys[4] == []
+
+
+def test_triggering_an_expression_hotkey_clicks_its_button_and_forces_the_override(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
+    panel.rig.assign_expression_hotkey(4, "Mouth", "Laughing")
+    panel._rebuild_costume_and_expression_editors()
+
+    laughing_item = panel._items[2]
+    panel._trigger_expression_hotkey(4)
+    assert panel._expression_buttons[("Mouth", "Laughing")].isChecked() is True
+    assert window.manual_overrides.get("Mouth") == "Laughing"
+
+    panel._trigger_expression_hotkey(4)  # press again -- toggles back off
+    assert panel._expression_buttons[("Mouth", "Laughing")].isChecked() is False
+    assert window.manual_overrides.get("Mouth") is None
+
+
+def test_expression_hotkey_shortcut_matches_shift_plus_digit(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    shortcuts = panel.findChildren(cpw_module.QShortcut)
+    sequences = {s.key().toString() for s in shortcuts}
+    assert "Shift+1" in sequences
+    assert "Shift+0" in sequences
+
+
+def test_rebuilding_the_scene_repopulates_costume_and_expression_rows(qapp, tmp_path):
+    # Covers load/undo/redo/add-remove-sprite in one place, since they
+    # all funnel through _rebuild_scene() -- see that method's own hook.
+    config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
+    panel.rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    panel.rig.assign_expression_hotkey(4, "Mouth", "Laughing")
+    panel._rebuild_scene()
+    assert len(panel._costume_rows[2]) == 1
+    assert panel._costume_rows[2][0].committed == (1, 2)
+    assert len(panel._expression_hotkey_rows[4]) == 1
+    assert panel._expression_hotkey_rows[4][0].committed == ("Mouth", "Laughing")
+
+
 # --- Window/UI state persistence --------------------------------------------
 
 

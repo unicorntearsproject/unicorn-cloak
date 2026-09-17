@@ -12,7 +12,7 @@ from unicorn_cloak.persistence import (
     parse_vector2,
     save_avatar,
 )
-from unicorn_cloak.rig import AvatarRig, Sprite
+from unicorn_cloak.rig import NUM_COSTUMES, AvatarRig, Sprite
 
 AVATAR_01 = Path(
     "/home/jj/projects/unicorn-tears/images/animated-avatar/avatar-01/"
@@ -105,8 +105,16 @@ def test_avatar_01_save_preserves_every_raw_key(tmp_path):
     # stamp regardless; every sprite key must still match exactly, which
     # is the part that actually catches a silently-dropped field.
     assert roundtripped_raw["__format_version__"] == CURRENT_FORMAT_VERSION
-    sprite_keys = set(original_raw.keys()) - {"__format_version__"}
-    assert sprite_keys == set(roundtripped_raw.keys()) - {"__format_version__"}
+    # __costume_assignments__/__expression_hotkeys__ (added 2026-09-17,
+    # see persistence.py's own comment) are rig-level, not per-sprite --
+    # excluded from the top-level comparison for the same reason
+    # __format_version__ is: save_avatar always writes them, the real
+    # external file predates the feature and never will have them.
+    _RIG_LEVEL_KEYS_WITH_NO_LEGACY_COUNTERPART = {
+        "__format_version__", "__costume_assignments__", "__expression_hotkeys__",
+    }
+    sprite_keys = set(original_raw.keys()) - _RIG_LEVEL_KEYS_WITH_NO_LEGACY_COUNTERPART
+    assert sprite_keys == set(roundtripped_raw.keys()) - _RIG_LEVEL_KEYS_WITH_NO_LEGACY_COUNTERPART
     # variant, hidden, groupName, stateName, and manualDriven (all added
     # 2026-09-16, see rig.Sprite), plus scaleX/scaleY and rotationDeg
     # (both added 2026-09-17), have no legacy counterpart, so they're
@@ -345,6 +353,36 @@ def test_save_writes_rotation_deg(tmp_path):
     with path.open() as f:
         raw = json.load(f)
     assert raw["0"]["rotationDeg"] == 45.0
+
+
+def test_costume_assignments_round_trip(tmp_path):
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="a.png"), Sprite(id=2, path="b.png")])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    path = tmp_path / "out.save"
+    save_avatar(rig, path)
+    reloaded = load_avatar(path)
+    assert reloaded.costume_assignments[2] == [(1, 2)]
+    assert reloaded.by_id(1).costume_layers[2] is True
+    assert reloaded.by_id(2).costume_layers[2] is False
+
+
+def test_expression_hotkeys_round_trip(tmp_path):
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="a.png")])
+    rig.assign_expression_hotkey(4, "Mouth", "Laughing")
+    path = tmp_path / "out.save"
+    save_avatar(rig, path)
+    reloaded = load_avatar(path)
+    assert reloaded.expression_hotkeys[4] == [("Mouth", "Laughing")]
+
+
+def test_load_defaults_costume_assignments_and_expression_hotkeys_when_absent(tmp_path):
+    # A file saved before this feature existed (or written by hand) has
+    # neither top-level key at all.
+    path = tmp_path / "old.save"
+    path.write_text(json.dumps({"0": _sprite_entry()}))
+    rig = load_avatar(path)
+    assert rig.costume_assignments == [[] for _ in range(NUM_COSTUMES)]
+    assert rig.expression_hotkeys == [[] for _ in range(NUM_COSTUMES)]
 
 
 def test_save_is_atomic_no_leftover_tmp_file(tmp_path):

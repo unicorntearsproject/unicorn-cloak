@@ -223,6 +223,70 @@ class AvatarRig:
     sprites: list[Sprite] = field(default_factory=list)
     active_costume: int = 0  # index into costume_layers, 0-based
 
+    # Explicit (hide_sprite_id, show_sprite_id) pairs assigned to each
+    # costume hotkey slot -- an *authoring* convenience only (see
+    # control_panel_window.py's costume editor). Adding a pair also writes
+    # straight into both sprites' costume_layers for this slot via
+    # assign_costume_pair() below, so the actual rendering path
+    # (motion.py/render.py) never needs to know this list exists, and a
+    # file saved before this feature existed still works unmodified.
+    # Index i is the same costume hotkey slot as
+    # HotkeysConfig.costume_keys[i]. Owner's request, 2026-09-17: "each
+    # number has two drop boxes and a + button... pick a sprite from the
+    # first box... the hotkey will toggle its display (first box is
+    # assumed off)... the second box is what it swaps with (assumed on)."
+    costume_assignments: list[list[tuple[int, int]]] = field(
+        default_factory=lambda: [[] for _ in range(NUM_COSTUMES)]
+    )
+
+    # Explicit (group_name, state_name) pairs forced together when this
+    # avatar's Shift+<number> Expression hotkey fires (see
+    # control_panel_window.py's Expressions hotkey editor -- same shape as
+    # costume_assignments above, but only one value per row: forcing a
+    # state already suppresses its own group's automatic siblings, see
+    # render.py's manual-override handling, so there's no separate
+    # "swap with" side to pick). Same slot numbering as
+    # costume_assignments.
+    expression_hotkeys: list[list[tuple[str, str]]] = field(
+        default_factory=lambda: [[] for _ in range(NUM_COSTUMES)]
+    )
+
+    def assign_costume_pair(self, slot: int, hide_id: int, show_id: int) -> None:
+        """Adds a hide/show pair to costume_assignments[slot] and writes
+        it straight through to both sprites' costume_layers[slot] -- see
+        that field's own comment for why the write-through matters.
+        `hide_id`'s sprite is hidden everywhere else and only shows in
+        this slot (owner's own wording: "assumed off... the hotkey will
+        toggle its display"); `show_id`'s sprite is the reverse -- shown
+        everywhere else, hidden here ("what it swaps with... assumed
+        on"). A no-op if either id doesn't resolve to a real sprite."""
+        hide_sprite = self.by_id(hide_id)
+        show_sprite = self.by_id(show_id)
+        if hide_sprite is None or show_sprite is None:
+            return
+        self.costume_assignments[slot].append((hide_id, show_id))
+        hide_sprite.costume_layers = with_costume_layer(hide_sprite.costume_layers, slot, True)
+        show_sprite.costume_layers = with_costume_layer(show_sprite.costume_layers, slot, False)
+
+    def remove_costume_pair(self, slot: int, index: int) -> None:
+        """Removes the pair at `index`, reverting both sprites'
+        costume_layers[slot] back to True (the default -- "assumed on")
+        rather than guessing whether some other pair still wants either
+        of them hidden in this slot."""
+        hide_id, show_id = self.costume_assignments[slot].pop(index)
+        hide_sprite = self.by_id(hide_id)
+        show_sprite = self.by_id(show_id)
+        if hide_sprite is not None:
+            hide_sprite.costume_layers = with_costume_layer(hide_sprite.costume_layers, slot, True)
+        if show_sprite is not None:
+            show_sprite.costume_layers = with_costume_layer(show_sprite.costume_layers, slot, True)
+
+    def assign_expression_hotkey(self, slot: int, group_name: str, state_name: str) -> None:
+        self.expression_hotkeys[slot].append((group_name, state_name))
+
+    def remove_expression_hotkey(self, slot: int, index: int) -> None:
+        del self.expression_hotkeys[slot][index]
+
     def by_id(self, sprite_id: int) -> Sprite | None:
         for sprite in self.sprites:
             if sprite.id == sprite_id:
@@ -353,6 +417,14 @@ class AvatarRig:
             i = next(k for k, s in enumerate(self.sprites) if s.id == a.id)
             j = next(k for k, s in enumerate(self.sprites) if s.id == b.id)
             self.sprites[i], self.sprites[j] = self.sprites[j], self.sprites[i]
+
+
+def with_costume_layer(layers: tuple[bool, ...], slot: int, value: bool) -> tuple[bool, ...]:
+    """costume_layers is an immutable tuple -- this returns a copy with
+    just `slot` replaced, for AvatarRig.assign_costume_pair/remove_costume_pair."""
+    as_list = list(layers)
+    as_list[slot] = value
+    return tuple(as_list)
 
 
 def generate_sprite_id(existing_ids: set[int]) -> int:

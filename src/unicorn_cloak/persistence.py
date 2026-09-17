@@ -54,6 +54,14 @@ LEGACY_EXTENSION = ".save"
 
 CURRENT_FORMAT_VERSION = 1
 _FORMAT_VERSION_KEY = "__format_version__"
+# Rig-level (not per-sprite) metadata, added 2026-09-17 for the costume/
+# Expression hotkey editors -- see rig.AvatarRig's own comments on
+# costume_assignments/expression_hotkeys. Excluded from sprite_keys below
+# exactly like _FORMAT_VERSION_KEY, for the same reason: load_avatar sorts
+# sprite_keys with `key=int`, which would crash on a non-numeric key.
+_COSTUME_ASSIGNMENTS_KEY = "__costume_assignments__"
+_EXPRESSION_HOTKEYS_KEY = "__expression_hotkeys__"
+_NON_SPRITE_KEYS = {_FORMAT_VERSION_KEY, _COSTUME_ASSIGNMENTS_KEY, _EXPRESSION_HOTKEYS_KEY}
 
 _VEC2_RE = re.compile(r"Vector2\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)")
 
@@ -105,7 +113,7 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
     with path.open() as f:
         raw = json.load(f)
 
-    sprite_keys = [k for k in raw if k != _FORMAT_VERSION_KEY]
+    sprite_keys = [k for k in raw if k not in _NON_SPRITE_KEYS]
     sprites = []
     for key in sorted(sprite_keys, key=int):
         entry = raw[key]
@@ -167,12 +175,37 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
             )
         )
 
-    return AvatarRig(name=name or path.stem, sprites=sprites)
+    return AvatarRig(
+        name=name or path.stem,
+        sprites=sprites,
+        costume_assignments=_normalize_slot_pairs(raw.get(_COSTUME_ASSIGNMENTS_KEY)),
+        expression_hotkeys=_normalize_slot_pairs(raw.get(_EXPRESSION_HOTKEYS_KEY)),
+    )
+
+
+def _normalize_slot_pairs(raw_slots: list | None) -> list[list[tuple]]:
+    """Shared by costume_assignments/expression_hotkeys -- both are a
+    per-slot (NUM_COSTUMES-length) list of pairs, JSON round-tripping
+    each pair as a 2-element list (JSON has no tuple type) that needs
+    turning back into an actual tuple. Absent (a file saved before this
+    feature existed) or short/long normalizes the same way
+    _normalize_costume_layers does, for the same reason: never raise on
+    an older or hand-edited file."""
+    result: list[list[tuple]] = [[] for _ in range(NUM_COSTUMES)]
+    if not raw_slots:
+        return result
+    for slot, pairs in enumerate(raw_slots[:NUM_COSTUMES]):
+        result[slot] = [tuple(pair) for pair in pairs]
+    return result
 
 
 def save_avatar(rig: AvatarRig, path: str | Path) -> None:
     path = Path(path)
-    out = {_FORMAT_VERSION_KEY: CURRENT_FORMAT_VERSION}
+    out = {
+        _FORMAT_VERSION_KEY: CURRENT_FORMAT_VERSION,
+        _COSTUME_ASSIGNMENTS_KEY: rig.costume_assignments,
+        _EXPRESSION_HOTKEYS_KEY: rig.expression_hotkeys,
+    }
     for i, sprite in enumerate(rig.sprites):
         out[str(i)] = {
             "type": "sprite",
