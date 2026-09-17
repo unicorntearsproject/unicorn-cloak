@@ -630,6 +630,81 @@ def test_unknown_background_mode_falls_back_to_transparent(qapp):
     assert _rendered_corner_color(window).alpha() == 0
 
 
+def test_background_image_shows_a_pixmap_item_scaled_to_fill_the_window(qapp, tmp_path):
+    png_path = tmp_path / "bg.png"
+    png_path.write_bytes(make_test_png_bytes())
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(200, 100))
+    window.set_background("image", str(png_path))
+
+    assert window._background_image_item is not None
+    assert window.scene.backgroundBrush().style() == Qt.BrushStyle.NoBrush
+    pixmap = window._background_image_item.pixmap()
+    transform = window._background_image_item.transform()
+    assert transform.m11() == pytest.approx(200 / pixmap.width())
+    assert transform.m22() == pytest.approx(100 / pixmap.height())
+
+
+def test_background_image_with_a_bad_path_falls_back_to_transparent(qapp, tmp_path):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_background("image", str(tmp_path / "does-not-exist.png"))
+    assert window._background_image_item is None
+    assert window.scene.backgroundBrush().style() == Qt.BrushStyle.NoBrush
+
+
+def test_background_video_with_an_empty_path_falls_back_to_transparent(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_background("video", "")
+    assert window._background_video_item is None
+    assert window._background_player is None
+
+
+def test_background_video_constructs_a_muted_looping_player(qapp, tmp_path):
+    from PySide6.QtMultimedia import QMediaPlayer
+
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    fake_video = tmp_path / "bg.mp4"
+    fake_video.write_bytes(b"not a real video, just needs to exist for the path check")
+    window.set_background("video", str(fake_video))
+
+    assert window._background_video_item is not None
+    assert window._background_player is not None
+    assert window._background_audio_output.isMuted() is True
+    assert window._background_player.loops() == QMediaPlayer.Loops.Infinite
+
+
+def test_switching_away_from_image_background_cleans_up_the_pixmap_item(qapp, tmp_path):
+    png_path = tmp_path / "bg.png"
+    png_path.write_bytes(make_test_png_bytes())
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_background("image", str(png_path))
+    assert window._background_image_item is not None
+
+    window.set_background("black")
+    assert window._background_image_item is None
+    assert window.scene.backgroundBrush().color().getRgb()[:3] == (0, 0, 0)
+
+
+def test_set_background_remembers_the_path_across_a_mode_switch(qapp, tmp_path):
+    # Owner-facing behavior: switching Background to a solid color and
+    # back to Image/Video (without re-Browsing) should redisplay whatever
+    # file was already chosen -- see RenderWindow.set_background's own
+    # docstring for why the path is stored on the instance, not just
+    # passed through each call.
+    png_path = tmp_path / "bg.png"
+    png_path.write_bytes(make_test_png_bytes())
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_background("image", str(png_path))
+    window.set_background("black")
+    window.set_background("image")
+    assert window._background_image_item is not None
+
+
 def test_zoom_scales_root_item(qapp):
     rig = make_test_rig()
     window = RenderWindow(rig, MotionConfig(), zoom=2.5)

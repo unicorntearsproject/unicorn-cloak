@@ -99,6 +99,8 @@ def main() -> int:
         hotkeys_config=config.hotkeys,
         window_size=(config.window.width, config.window.height),
         background=config.window.background,
+        background_image_path=config.window.background_image_path,
+        background_video_path=config.window.background_video_path,
         zoom=config.window.zoom,
     )
     window.show()

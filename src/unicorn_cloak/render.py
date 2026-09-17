@@ -24,8 +24,10 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QKeySequence, QPixmap, QTransform
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -68,6 +70,14 @@ BACKGROUND_COLORS: dict[str, QColor | None] = {
     "white": QColor(255, 255, 255, 255),
     "green": QColor(0, 255, 0, 255),
 }
+
+# "image" and "video" are handled separately from BACKGROUND_COLORS above --
+# each needs its own scene item (a pixmap or a QGraphicsVideoItem) rather
+# than a plain background brush, since a brush can't be scaled to fill the
+# window. That item sits far enough behind every sprite (root_item and its
+# children stay in the roughly -1000..1000 z_index range, see rig.Sprite)
+# to never fight for stacking order, regardless of layer count.
+BACKGROUND_MEDIA_ITEM_Z = -100_000
 
 MIN_ZOOM = 0.1
 MAX_ZOOM = 5.0
@@ -131,6 +141,8 @@ class RenderWindow(QWidget):
         edit_mode: bool = False,
         window_size: tuple[int, int] = (1280, 720),
         background: str = "transparent",
+        background_image_path: str = "",
+        background_video_path: str = "",
         zoom: float = 1.0,
     ) -> None:
         super().__init__()
@@ -142,6 +154,18 @@ class RenderWindow(QWidget):
         self.hotkeys_config = hotkeys_config if hotkeys_config is not None else HotkeysConfig()
         self.edit_mode = edit_mode
         self.zoom = _clamp_zoom(zoom)
+
+        # Background image/video state -- see set_background's own
+        # docstring. Tracked here (rather than only ever passed in) so a
+        # mode switch back to "image"/"video" after visiting another mode
+        # doesn't need the caller to remember and re-pass the path.
+        self._background_mode = "transparent"
+        self._background_image_path = background_image_path
+        self._background_video_path = background_video_path
+        self._background_image_item: QGraphicsPixmapItem | None = None
+        self._background_video_item: QGraphicsVideoItem | None = None
+        self._background_player: QMediaPlayer | None = None
+        self._background_audio_output: QAudioOutput | None = None
 
         self.setWindowTitle(WINDOW_TITLE)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -231,12 +255,100 @@ class RenderWindow(QWidget):
         self.timer.timeout.connect(self._on_frame)
         self.timer.start(PAINT_INTERVAL_MS)
 
-    def set_background(self, mode: str) -> None:
-        """Live-updatable (see settings_window.py). Unknown values fall
-        back to transparent rather than raising -- consistent with how
-        the rest of this app treats a bad settings.json value."""
+    def set_background(self, mode: str, path: str | None = None) -> None:
+        """Live-updatable (see settings_window.py). `path` only matters
+        for "image"/"video" -- pass a new one when the owner browses a
+        different file, or omit it (None) to just switch back to a mode
+        whose file was already chosen earlier. Unknown modes, an empty
+        path, or a file that fails to load/play all fall back to
+        transparent rather than raising -- consistent with how the rest
+        of this app treats a bad settings.json value."""
+        if mode == "image" and path is not None:
+            self._background_image_path = path
+        elif mode == "video" and path is not None:
+            self._background_video_path = path
+        self._background_mode = mode
+        self._clear_background_media()
+
+        if mode == "image":
+            self._set_image_background(self._background_image_path)
+            return
+        if mode == "video":
+            self._set_video_background(self._background_video_path)
+            return
+
         color = BACKGROUND_COLORS.get(mode)
         self.scene.setBackgroundBrush(color if color is not None else Qt.BrushStyle.NoBrush)
+
+    def _clear_background_media(self) -> None:
+        if self._background_player is not None:
+            self._background_player.stop()
+            self._background_player = None
+        self._background_audio_output = None
+        if self._background_video_item is not None:
+            self.scene.removeItem(self._background_video_item)
+            self._background_video_item = None
+        if self._background_image_item is not None:
+            self.scene.removeItem(self._background_image_item)
+            self._background_image_item = None
+
+    def _set_image_background(self, path: str) -> None:
+        pixmap = QPixmap(path) if path else QPixmap()
+        if pixmap.isNull():
+            self.scene.setBackgroundBrush(Qt.BrushStyle.NoBrush)
+            return
+        self.scene.setBackgroundBrush(Qt.BrushStyle.NoBrush)
+        self._background_image_item = QGraphicsPixmapItem(pixmap)
+        self._background_image_item.setZValue(BACKGROUND_MEDIA_ITEM_Z)
+        self.scene.addItem(self._background_image_item)
+        self._resize_background_media()
+
+    def _set_video_background(self, path: str) -> None:
+        if not path:
+            self.scene.setBackgroundBrush(Qt.BrushStyle.NoBrush)
+            return
+        self.scene.setBackgroundBrush(Qt.BrushStyle.NoBrush)
+        self._background_video_item = QGraphicsVideoItem()
+        self._background_video_item.setZValue(BACKGROUND_MEDIA_ITEM_Z)
+        self.scene.addItem(self._background_video_item)
+        self._resize_background_media()
+        # Muted, not just volume-zeroed -- this is a silent visual loop,
+        # never meant to play out loud (same "never plays its own sound"
+        # rule as the audio-file playback path in audio_manager.py). A
+        # QMediaPlayer needs *some* QAudioOutput assigned to decode audio
+        # tracks cleanly rather than erroring on files that have one.
+        self._background_audio_output = QAudioOutput()
+        self._background_audio_output.setMuted(True)
+        self._background_player = QMediaPlayer(self)
+        self._background_player.setAudioOutput(self._background_audio_output)
+        self._background_player.setVideoOutput(self._background_video_item)
+        self._background_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self._background_player.errorOccurred.connect(self._on_background_video_error)
+        self._background_player.setSource(QUrl.fromLocalFile(path))
+        self._background_player.play()
+
+    def _on_background_video_error(self, error, error_string: str) -> None:
+        # A hard C-level decode failure isn't something to recover from
+        # mid-playback -- fall back to transparent, same as any other bad
+        # background value, rather than leaving a stalled/black item on
+        # screen. Logged, not raised: this can legitimately happen for an
+        # OBS-connected app on someone else's machine (missing codec,
+        # since Qt Multimedia's FFmpeg backend still depends on what's
+        # actually built into it) and shouldn't crash the render window.
+        print(f"[background] video playback failed: {error_string}", flush=True)
+        self._clear_background_media()
+        self.scene.setBackgroundBrush(Qt.BrushStyle.NoBrush)
+
+    def _resize_background_media(self) -> None:
+        rect = self.scene.sceneRect()
+        if self._background_image_item is not None:
+            pixmap = self._background_image_item.pixmap()
+            if pixmap.width() and pixmap.height():
+                self._background_image_item.setTransform(
+                    QTransform().scale(rect.width() / pixmap.width(), rect.height() / pixmap.height())
+                )
+        if self._background_video_item is not None:
+            self._background_video_item.setSize(rect.size())
 
     def set_zoom(self, zoom: float) -> None:
         """Live-updatable (see settings_window.py). Scales the avatar
@@ -646,6 +758,7 @@ class RenderWindow(QWidget):
         # self.width()/self.height() live), so this is the other half of
         # "stay centered across a resize."
         self.scene.setSceneRect(0, 0, self.width(), self.height())
+        self._resize_background_media()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         # Escape is checked first and unconditionally, before costume

@@ -99,6 +99,8 @@ _BACKGROUND_LABELS = {
     "black": "Black",
     "white": "White",
     "green": "Green (chroma key)",
+    "image": "Image (choose a file below)",
+    "video": "Video, looping (choose a file below)",
 }
 
 
@@ -815,6 +817,33 @@ class ControlPanelWindow(QWidget):
         # the Layer List. Collapsed by default (also the owner's
         # request) since Motion is the one most people tune first.
         position_section = CollapsibleSection("Position & Hierarchy", collapsed=True)
+
+        # Zoom, moved here from the Application tab's Display group,
+        # owner's request, 2026-09-17: "i think we should move zoom to
+        # the position panel." It's a whole-avatar scale, not per-sprite
+        # like everything else below -- its own QFormLayout, deliberately
+        # left out of self.property_form/self._per_sprite_widgets, so it
+        # doesn't get reloaded or disabled as sprites are selected.
+        zoom_form = QFormLayout()
+        self.zoom = ScrollSafeDoubleSpinBox()
+        self.zoom.setRange(0.1, 5.0)
+        self.zoom.setSingleStep(0.05)
+        self.zoom.setDecimals(2)
+        self.zoom.setValue(self.config.window.zoom)
+        zoom_tooltip = (
+            "Scales the whole avatar bigger/smaller within the Render\n"
+            "Window, around its own center -- doesn't change the window's\n"
+            "own size, and applies no matter which sprite (if any) is\n"
+            "selected below. 1.0 = normal size."
+        )
+        self.zoom.setToolTip(zoom_tooltip)
+        self.zoom.valueChanged.connect(self._on_zoom_changed)
+        self._add_row_with_reset_and_lock(
+            zoom_form, "Zoom (whole avatar)", self.zoom,
+            self._default_for(self.config.window, "zoom"), zoom_tooltip,
+        )
+        position_section.body_layout.addLayout(zoom_form)
+
         self.property_form = QFormLayout()
         self.pos_x = self._spin(-4000, 4000)
         self.pos_y = self._spin(-4000, 4000)
@@ -1079,12 +1108,20 @@ class ControlPanelWindow(QWidget):
         self.background = QComboBox()
         for mode in BACKGROUND_COLORS:
             self.background.addItem(_BACKGROUND_LABELS.get(mode, mode), mode)
+        # Image/video, owner's request, 2026-09-17 -- not in BACKGROUND_COLORS
+        # (that dict is solid-brush colors only, see render.py), added as
+        # their own combo entries here instead.
+        self.background.addItem(_BACKGROUND_LABELS["image"], "image")
+        self.background.addItem(_BACKGROUND_LABELS["video"], "video")
         self.background.setToolTip(
             "What's behind the avatar. Transparent lets whatever is beneath\n"
             "this source in your OBS scene show through -- that's the normal\n"
             "setup. Pick a solid color instead if you're using OBS's Chroma\n"
             "Key filter on this source, or just want a plain backdrop while\n"
-            "previewing outside OBS."
+            "previewing outside OBS. Image/Video show a file of your own\n"
+            "choosing (Browse… appears below once selected) -- video loops\n"
+            "continuously and is always silent, regardless of its own audio\n"
+            "track."
         )
         index = self.background.findData(self.config.window.background)
         self.background.setCurrentIndex(max(index, 0))
@@ -1092,22 +1129,16 @@ class ControlPanelWindow(QWidget):
         display_form.addRow("Background", self.background)
         self._set_label_tooltip(display_form, self.background, self.background.toolTip())
 
-        self.zoom = ScrollSafeDoubleSpinBox()
-        self.zoom.setRange(0.1, 5.0)
-        self.zoom.setSingleStep(0.05)
-        self.zoom.setDecimals(2)
-        self.zoom.setValue(self.config.window.zoom)
-        zoom_tooltip = (
-            "Scales the avatar bigger/smaller within the Render Window,\n"
-            "around its own center -- doesn't change the window's own\n"
-            "size. 1.0 = normal size."
+        self._background_browse_btn = QPushButton("Browse…")
+        self._background_browse_btn.setToolTip(
+            "Choose the image or video file to show behind the avatar."
         )
-        self.zoom.setToolTip(zoom_tooltip)
-        self.zoom.valueChanged.connect(self._on_zoom_changed)
-        self._add_row_with_reset_and_lock(
-            display_form, "Zoom", self.zoom,
-            self._default_for(self.config.window, "zoom"), zoom_tooltip,
-        )
+        self._background_browse_btn.clicked.connect(self._on_browse_background_file)
+        display_form.addRow("", self._background_browse_btn)
+
+        self.background_file_label = QLabel()
+        display_form.addRow(self.background_file_label)
+        self._update_background_controls_visible()
         display_section.body_layout.addLayout(display_form)
 
         canvas_section = CollapsibleSection("Canvas")
@@ -2358,8 +2389,9 @@ class ControlPanelWindow(QWidget):
     # Audio source bar
     # =====================================================================
 
-    def _elided_file_label(self) -> str:
-        path = self.config.audio.file_path
+    def _elided_file_label(self, path: str | None = None) -> str:
+        if path is None:
+            path = self.config.audio.file_path
         if not path:
             return ""
         metrics = self.fontMetrics()
@@ -2496,6 +2528,48 @@ class ControlPanelWindow(QWidget):
         self.config.window.background = mode
         if self.render_window is not None:
             self.render_window.set_background(mode)
+        self._update_background_controls_visible()
+        self._save_config()
+
+    def _current_background_path(self) -> str:
+        if self.config.window.background == "image":
+            return self.config.window.background_image_path
+        if self.config.window.background == "video":
+            return self.config.window.background_video_path
+        return ""
+
+    def _update_background_controls_visible(self) -> None:
+        mode = self.config.window.background
+        show = mode in ("image", "video")
+        self._background_browse_btn.setVisible(show)
+        path = self._current_background_path()
+        self.background_file_label.setVisible(show and bool(path))
+        self.background_file_label.setText(self._elided_file_label(path))
+        self.background_file_label.setToolTip(path or "No file chosen yet -- click Browse….")
+
+    def _on_browse_background_file(self) -> None:
+        mode = self.config.window.background
+        if mode == "image":
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Choose a background image", "",
+                "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp);;All files (*)",
+            )
+        elif mode == "video":
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Choose a background video", "",
+                "Video files (*.mp4 *.mov *.mkv *.webm *.avi);;All files (*)",
+            )
+        else:
+            return
+        if not path:
+            return
+        if mode == "image":
+            self.config.window.background_image_path = path
+        else:
+            self.config.window.background_video_path = path
+        if self.render_window is not None:
+            self.render_window.set_background(mode, path)
+        self._update_background_controls_visible()
         self._save_config()
 
     def _on_zoom_changed(self, value: float) -> None:

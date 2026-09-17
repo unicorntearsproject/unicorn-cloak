@@ -164,10 +164,17 @@ class WindowConfig:
     height: int = 720
     # What's behind the avatar. "transparent" (the default -- keep it
     # that way, since it's what lets an OBS window/portal capture show
-    # whatever's beneath this source in the scene) or a solid backdrop
-    # for chroma-keying or previewing outside OBS. See render.py's
-    # BACKGROUND_COLORS for the exact set.
+    # whatever's beneath this source in the scene), a solid backdrop for
+    # chroma-keying or previewing outside OBS (see render.py's
+    # BACKGROUND_COLORS), or "image"/"video" to show a chosen file
+    # instead (see background_image_path/background_video_path below).
     background: str = "transparent"
+    # Only read when background == "image"/"video" respectively -- kept
+    # as two separate fields, not one, so switching the Background combo
+    # back and forth doesn't forget whichever file was chosen for the
+    # other mode. Added 2026-09-17, owner's request.
+    background_image_path: str = ""
+    background_video_path: str = ""
     # Scales the avatar around its own center within this fixed-size
     # window -- makes it bigger/smaller on stream without needing
     # different art or changing the window/source dimensions in OBS.

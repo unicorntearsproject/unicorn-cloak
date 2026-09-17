@@ -2607,6 +2607,54 @@ be):**
   hand-editing it directly (see the same date's hair-position tweak) and
   explicitly said this is a "when I'm done" step, not a now step.
 
+**Zoom moved to Position & Hierarchy; image/video backgrounds added,
+2026-09-17, owner's requests.** Two separate asks in the same session:
+
+- "i think we should move zoom to the position panel" -- Zoom (a
+  whole-avatar scale, `config.window.zoom`) moved from the Application
+  tab's Display group into the Behavior tab's Position & Hierarchy
+  section, in its own `QFormLayout` above the per-sprite fields.
+  Deliberately kept out of `self.property_form`/`self._per_sprite_widgets`
+  -- it's global, not tied to whichever sprite is selected, and must not
+  get reloaded or disabled when switching sprites.
+- "add, on the application/background feature... ability to add an image
+  or video? should be easy to do the image, video might require weighty
+  depends?" -- turned out video needed no extra dependency at all: PySide6
+  already bundles its own self-contained FFmpeg-based Qt Multimedia
+  backend (`libffmpegmediaplugin.so`, confirmed present in this project's
+  own `.venv`), so `QMediaPlayer` + `QGraphicsVideoItem` work out of the
+  box with zero new entries in `pyproject.toml`. Verified end-to-end with
+  a real `ffmpeg`-generated test clip, not just import checks: it decodes
+  and loops correctly under this same offscreen/headless setup.
+  - `WindowConfig` gained `background_image_path`/`background_video_path`
+    (separate fields, not one shared path, so switching the Background
+    combo back and forth doesn't forget whichever file was chosen for the
+    *other* mode) -- `background` itself gained `"image"`/`"video"` as
+    two more values alongside the existing solid colors/transparent.
+  - `render.py`: an image renders as a `QGraphicsPixmapItem` scaled to
+    exactly fill the scene rect (a plain background brush can't be
+    scaled); a video renders via `QGraphicsVideoItem` + a looping,
+    force-muted `QMediaPlayer` (`QAudioOutput.setMuted(True)` -- this is a
+    silent visual loop, same "never plays its own sound" rule as the
+    audio-file playback path in `audio_manager.py`, regardless of the
+    file's own audio track). Both sit at a fixed, far-negative `zValue`
+    (`BACKGROUND_MEDIA_ITEM_Z = -100_000`) so they always stay behind
+    every sprite without needing per-avatar tuning. A decode failure
+    (`QMediaPlayer.errorOccurred`) or a bad image path both fall back to
+    transparent, logged not raised -- consistent with how the rest of the
+    app treats a bad settings.json value, and specifically because a
+    missing codec on someone else's machine is a real possibility this
+    app shouldn't crash over.
+  - UI: Background combo gained "Image" and "Video" entries; a Browse…
+    button and an elided file-path label (reusing the same
+    `elide_path_middle` helper as the audio file picker) appear only in
+    those two modes.
+  - New regression tests across `render.py` (pixmap scaling math, muted/
+    looping player construction, bad-path fallback, path persisting
+    across a mode switch), `config.py` (save/load round-trip), and
+    `control_panel_window.py` (Browse wiring, visibility toggling). Full
+    suite green at 371 tests.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)

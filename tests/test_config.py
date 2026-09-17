@@ -92,6 +92,21 @@ def test_avatar_path_override(tmp_path):
     assert config.avatar_path == "/tmp/some-other-avatar.save"
 
 
+def test_window_background_image_and_video_paths_round_trip(tmp_path):
+    path = tmp_path / "settings.json"
+    original = Config()
+    original.window.background = "video"
+    original.window.background_image_path = "/tmp/bg.png"
+    original.window.background_video_path = "/tmp/bg.mp4"
+
+    save_state(original, path)
+    reloaded = load_state(path)
+
+    assert reloaded.window.background == "video"
+    assert reloaded.window.background_image_path == "/tmp/bg.png"
+    assert reloaded.window.background_video_path == "/tmp/bg.mp4"
+
+
 def test_hotkeys_costume_keys_override(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text('{"hotkeys": {"costume_keys": ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10"]}}')

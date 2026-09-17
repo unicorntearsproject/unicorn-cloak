@@ -519,6 +519,87 @@ def test_browsing_a_file_shows_the_elided_label(qapp, tmp_path, monkeypatch):
     assert config.audio.file_path == long_path
 
 
+# --- Background image/video --------------------------------------------------
+
+
+def test_background_browse_button_hidden_for_solid_modes(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._background_browse_btn.isVisible() is False
+    assert panel.background_file_label.isVisible() is False
+
+
+def _show_application_tab(panel):
+    # isVisible() only reflects reality once the widget's whole ancestor
+    # chain (including its QTabWidget page) is actually shown -- these
+    # controls live on the Application tab, so switching to it plus a
+    # real show() is required, not just setVisible() on the widget itself.
+    # The Display section can also start auto-collapsed on a small/fresh
+    # window (the splitter's own "don't overflow the panel" logic, not
+    # anything specific to Background) -- force it open too, independent
+    # of that.
+    panel.show()
+    titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
+    panel.tabs.setCurrentIndex(titles.index("Application"))
+    panel._sections["Display"].set_collapsed(False)
+
+
+def test_selecting_image_background_shows_the_browse_button(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    _show_application_tab(panel)
+    index = panel.background.findData("image")
+    panel.background.setCurrentIndex(index)
+    assert panel._background_browse_btn.isVisible() is True
+    assert config.window.background == "image"
+
+
+def test_browsing_an_image_background_sets_the_path_and_updates_the_window(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    _show_application_tab(panel)
+    index = panel.background.findData("image")
+    panel.background.setCurrentIndex(index)
+    png_path = str(tmp_path / "bg.png")
+    (tmp_path / "bg.png").write_bytes(make_test_png_bytes())
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (png_path, "")
+    )
+    panel._on_browse_background_file()
+    assert config.window.background_image_path == png_path
+    assert panel.background_file_label.isVisible() is True
+    assert window._background_image_item is not None
+
+
+def test_browsing_a_video_background_sets_the_path_and_updates_the_window(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    index = panel.background.findData("video")
+    panel.background.setCurrentIndex(index)
+    video_path = str(tmp_path / "bg.mp4")
+    (tmp_path / "bg.mp4").write_bytes(b"not a real video, just needs to exist")
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (video_path, "")
+    )
+    panel._on_browse_background_file()
+    assert config.window.background_video_path == video_path
+    assert window._background_video_item is not None
+
+
+def test_switching_back_to_a_solid_color_hides_the_browse_controls(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    _show_application_tab(panel)
+    index = panel.background.findData("image")
+    panel.background.setCurrentIndex(index)
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(tmp_path / "bg.png"), "")
+    )
+    (tmp_path / "bg.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    panel._on_browse_background_file()
+
+    index = panel.background.findData("black")
+    panel.background.setCurrentIndex(index)
+    assert panel._background_browse_btn.isVisible() is False
+    assert panel.background_file_label.isVisible() is False
+
+
 # --- Scale ------------------------------------------------------------------
 
 
