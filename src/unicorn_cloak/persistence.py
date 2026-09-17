@@ -1,0 +1,225 @@
+"""
+Load/save avatars in PNGTuber-Plus's `.save` shape: a JSON object keyed by
+stringified index, each entry a sprite with its rig metadata and its PNG
+bytes embedded as base64 (`imageData`). Kept byte-shape-compatible on
+purpose — the owner's real content,
+`unicorn-tears-avatar-01-hoody-hair-aviator-bling.save`, already exists in
+exactly this format (see ../docs/PLAN.md's "Default avatar" decision) — and
+that path is the owner's only master copy of that file, not a working
+copy, so `save_avatar` treats it accordingly (atomic write, one backup).
+
+Godot's `var_to_str()` writes `Vector2`/list values as GDScript literals
+(`"Vector2(0, 0)"`, `"[1, 1, 1, ...]"`) rather than plain JSON — the small
+parse/format helpers below exist only to bridge that, not because this
+format is otherwise unusual.
+
+New files use `.uc` (branding) instead of `.save`; `.save` still loads
+fine since the format itself is unchanged, only the conventional
+extension is new -- see DEFAULT_EXTENSION/LEGACY_EXTENSION.
+
+`hidden` (added 2026-09-16, see rig.Sprite.hidden) is another genuinely
+new key with no legacy counterpart -- defaults to False on load, so every
+file that predates it just loads with everything visible, as before.
+
+`variant` (added 2026-09-16, see rig.Sprite.variant; briefly called
+`talkVariant` for about one turn before blink-axis sprites needed it too,
+see load_avatar's fallback) is a genuinely new key with no legacy
+counterpart -- `.get("variant", ...)` on load so every file that predates
+it just defaults every sprite to variant 0, which is exactly "no
+alternation" until re-saved.
+
+Format versioning (added 2026-09-16): `save_avatar` stamps a
+`__format_version__` key so a future format change has something to
+check against. Any file without that key (every file that predates
+2026-09-16, including every real file in the wild right now) is treated
+as version 0. `needs_migration()` is the check; `avatar_io.py`'s
+`load_avatar_with_upgrade()` is what actually acts on it (load, re-save
+in the current format, warn the owner) -- kept out of this module since
+that's Qt-facing (a message box), and this module stays Qt-free.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import shutil
+import tempfile
+from pathlib import Path
+
+from .rig import NUM_COSTUMES, AvatarRig, Sprite
+
+DEFAULT_EXTENSION = ".uc"
+LEGACY_EXTENSION = ".save"
+
+CURRENT_FORMAT_VERSION = 1
+_FORMAT_VERSION_KEY = "__format_version__"
+
+_VEC2_RE = re.compile(r"Vector2\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)")
+
+
+def parse_vector2(value: str) -> tuple[float, float]:
+    match = _VEC2_RE.match(value.strip())
+    if not match:
+        raise ValueError(f"not a Vector2 string: {value!r}")
+    return (float(match.group(1)), float(match.group(2)))
+
+
+def format_vector2(value: tuple[float, float]) -> str:
+    return f"Vector2({_format_number(value[0])}, {_format_number(value[1])})"
+
+
+def _format_number(n: float) -> str:
+    return str(int(n)) if float(n).is_integer() else str(n)
+
+
+def _normalize_costume_layers(raw_json: str | None) -> tuple[bool, ...]:
+    """The legacy loader pads a too-short costumeLayers list rather than
+    rejecting it (`if size < 8: append 1 five times` -- sloppy, but it
+    never crashes on an older or hand-edited file). Sprite.__post_init__
+    is strict on purpose for sprites this app constructs itself, so an
+    out-of-range list has to be normalized *before* it gets there, or
+    loading a legitimately-old-or-hand-edited file raises instead of
+    loading with a sane default."""
+    if not raw_json:
+        return tuple([True] * NUM_COSTUMES)
+    values = [bool(v) for v in json.loads(raw_json)]
+    if len(values) < NUM_COSTUMES:
+        values = values + [True] * (NUM_COSTUMES - len(values))
+    elif len(values) > NUM_COSTUMES:
+        values = values[:NUM_COSTUMES]
+    return tuple(values)
+
+
+def needs_migration(path: str | Path) -> bool:
+    """True if this file predates format versioning, or is behind the
+    current version. Doesn't load the avatar -- just checks the stamp --
+    so a caller can decide what to warn about before load_avatar runs."""
+    with Path(path).open() as f:
+        raw = json.load(f)
+    return raw.get(_FORMAT_VERSION_KEY, 0) < CURRENT_FORMAT_VERSION
+
+
+def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
+    path = Path(path)
+    with path.open() as f:
+        raw = json.load(f)
+
+    sprite_keys = [k for k in raw if k != _FORMAT_VERSION_KEY]
+    sprites = []
+    for key in sorted(sprite_keys, key=int):
+        entry = raw[key]
+        if entry.get("type") != "sprite":
+            continue
+
+        image_b64 = entry.get("imageData")
+
+        sprites.append(
+            Sprite(
+                id=entry["identification"],
+                path=entry["path"],
+                parent_id=entry.get("parentId"),
+                image_data=base64.b64decode(image_b64) if image_b64 else None,
+                position=parse_vector2(entry["pos"]),
+                offset=parse_vector2(entry.get("offset", "Vector2(0, 0)")),
+                z_index=entry.get("zindex", 0),
+                sway_x_freq=entry.get("xFrq", 0.0),
+                sway_x_amp=entry.get("xAmp", 0.0),
+                sway_y_freq=entry.get("yFrq", 0.0),
+                sway_y_amp=entry.get("yAmp", 0.0),
+                drag_speed=entry.get("drag", 0.0),
+                rotation_drag_strength=entry.get("rotDrag", 0.0),
+                rotation_limit_min_deg=entry.get("rLimitMin", -180.0),
+                rotation_limit_max_deg=entry.get("rLimitMax", 180.0),
+                stretch_amount=entry.get("stretchAmount", 0.0),
+                ignore_bounce=bool(entry.get("ignoreBounce", False)),
+                frames=entry.get("frames", 1),
+                anim_speed=entry.get("animSpeed", 0.0),
+                talk_state=entry.get("showTalk", 0),
+                blink_state=entry.get("showBlink", 0),
+                # "talkVariant" was this key's name for about one turn
+                # before blink-axis sprites needed the same field --
+                # falling back to it means the handful of sprites already
+                # saved under that name (one real file) don't silently
+                # lose their alternation grouping the next time they load.
+                variant=entry.get("variant", entry.get("talkVariant", 0)),
+                costume_layers=_normalize_costume_layers(entry.get("costumeLayers")),
+                clipped=bool(entry.get("clipped", False)),
+                toggle=entry.get("toggle", "null"),
+                hidden=bool(entry.get("hidden", False)),
+                # New 2026-09-16, absent from every file saved before
+                # today (including legacy PNGTuber-Plus's own format) --
+                # default to "not grouped, not manually driven" so an
+                # older file loads with identical behavior to before
+                # these fields existed.
+                group_name=entry.get("groupName", ""),
+                state_name=entry.get("stateName", ""),
+                manual_driven=bool(entry.get("manualDriven", False)),
+            )
+        )
+
+    return AvatarRig(name=name or path.stem, sprites=sprites)
+
+
+def save_avatar(rig: AvatarRig, path: str | Path) -> None:
+    path = Path(path)
+    out = {_FORMAT_VERSION_KEY: CURRENT_FORMAT_VERSION}
+    for i, sprite in enumerate(rig.sprites):
+        out[str(i)] = {
+            "type": "sprite",
+            "path": sprite.path,
+            "imageData": (
+                base64.b64encode(sprite.image_data).decode("ascii")
+                if sprite.image_data
+                else None
+            ),
+            "identification": sprite.id,
+            "parentId": sprite.parent_id,
+            "pos": format_vector2(sprite.position),
+            "offset": format_vector2(sprite.offset),
+            "zindex": sprite.z_index,
+            "drag": sprite.drag_speed,
+            "xFrq": sprite.sway_x_freq,
+            "xAmp": sprite.sway_x_amp,
+            "yFrq": sprite.sway_y_freq,
+            "yAmp": sprite.sway_y_amp,
+            "rotDrag": sprite.rotation_drag_strength,
+            "showTalk": sprite.talk_state,
+            "showBlink": sprite.blink_state,
+            "variant": sprite.variant,
+            "rLimitMin": sprite.rotation_limit_min_deg,
+            "rLimitMax": sprite.rotation_limit_max_deg,
+            "costumeLayers": json.dumps([int(b) for b in sprite.costume_layers]),
+            "stretchAmount": sprite.stretch_amount,
+            "ignoreBounce": sprite.ignore_bounce,
+            "frames": sprite.frames,
+            "animSpeed": sprite.anim_speed,
+            "clipped": sprite.clipped,
+            "toggle": sprite.toggle,
+            "hidden": sprite.hidden,
+            "groupName": sprite.group_name,
+            "stateName": sprite.state_name,
+            "manualDriven": sprite.manual_driven,
+        }
+
+    # Atomic write (temp file + os.replace) plus one backup of whatever
+    # was there before -- the default avatar path is the owner's only
+    # master copy of that file, not a working copy, so a crash mid-write
+    # or an unwanted overwrite must not be able to destroy it with
+    # nothing to recover from.
+    if path.exists():
+        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(out, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.remove(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise

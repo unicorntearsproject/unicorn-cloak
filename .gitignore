@@ -1,0 +1,8 @@
+# Local dev state -- not something a checkout should ship with (personal
+# window geometry, selected audio device, etc.); .bak is already covered
+# by the parent obs repo's own root .gitignore, as are .venv/__pycache__.
+settings.json
+
+# Build/test tooling noise
+.pytest_cache/
+*.egg-info/

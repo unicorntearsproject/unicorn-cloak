@@ -1,0 +1,286 @@
+import threading
+import time
+
+from unicorn_cloak.audio_manager import AudioManager
+from unicorn_cloak.config import Config
+
+from qt_helpers import make_test_wav, needs_ffmpeg
+
+
+def _wait_until(qapp, predicate, timeout=10.0, interval=0.01) -> bool:
+    # Every callback that crosses from a background thread (Microphone's
+    # or FilePlayback's own) into a Qt signal ends up queued, not
+    # direct -- pumping the event loop here is required for those to
+    # actually be delivered, the same as __main__.py's real app relies
+    # on its own event loop doing implicitly.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if predicate():
+            return True
+        time.sleep(interval)
+    qapp.processEvents()
+    return predicate()
+
+
+def test_start_launches_a_microphone_by_default(qapp, monkeypatch):
+    started = []
+    monkeypatch.setattr(
+        "unicorn_cloak.audio_manager.Microphone",
+        lambda **kwargs: type("M", (), {"start": lambda self: started.append(True), "stop": lambda self: None, "blocksize": 1024, "samplerate": 44100})(),
+    )
+    manager = AudioManager(Config())
+    manager.start()
+    assert started == [True]
+
+
+def test_switch_to_file_stops_the_microphone(qapp, monkeypatch):
+    stopped = []
+    monkeypatch.setattr(
+        "unicorn_cloak.audio_manager.Microphone",
+        lambda **kwargs: type("M", (), {
+            "start": lambda self: None,
+            "stop": lambda self: stopped.append(True),
+            "blocksize": 1024, "samplerate": 44100,
+        })(),
+    )
+    manager = AudioManager(Config())
+    manager.start()  # source defaults to microphone
+    manager.switch_to_file("/tmp/whatever.wav")
+    assert stopped == [True]
+    assert manager.config.audio.source == "file"
+    assert manager.config.audio.file_path == "/tmp/whatever.wav"
+
+
+@needs_ffmpeg
+def test_play_file_drives_volume_measured_signal(qapp, tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=0.3, amplitude=0.5)
+
+    manager = AudioManager(Config())
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+
+    manager.switch_to_file(str(path))
+    manager.play_file()
+
+    assert _wait_until(qapp, lambda: len(volumes) > 0)
+    assert _wait_until(qapp, lambda: not manager.is_file_playing)
+    assert max(volumes) > 0.05
+
+
+@needs_ffmpeg
+def test_last_capture_monotonic_is_recorded_for_latency_measurement(qapp, tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=0.2)
+
+    manager = AudioManager(Config())
+    assert manager.last_capture_monotonic is None
+
+    before = time.monotonic()
+    manager.switch_to_file(str(path))
+    manager.play_file()
+    assert _wait_until(qapp, lambda: manager.last_capture_monotonic is not None)
+    after = time.monotonic()
+
+    assert before <= manager.last_capture_monotonic <= after
+    manager.stop_file()
+
+
+@needs_ffmpeg
+def test_file_playback_stopped_signal_fires_when_playback_finishes(qapp, tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=0.2)
+
+    manager = AudioManager(Config())
+    stopped = threading.Event()
+    manager.file_playback_stopped.connect(stopped.set)
+
+    manager.switch_to_file(str(path))
+    manager.play_file()
+
+    assert _wait_until(qapp, stopped.is_set)
+
+
+def test_play_file_does_nothing_without_a_file_path(qapp):
+    manager = AudioManager(Config())
+    manager.play_file()  # config.audio.file_path is None
+    assert manager.is_file_playing is False
+
+
+def test_stop_file_emits_file_playback_stopped_even_with_nothing_playing(qapp):
+    manager = AudioManager(Config())
+    received = []
+    manager.file_playback_stopped.connect(lambda: received.append(True))
+    manager.stop_file()
+    assert received == [True]
+
+
+def test_blocksize_and_samplerate_default_when_nothing_active(qapp):
+    manager = AudioManager(Config())
+    assert manager.blocksize > 0
+    assert manager.samplerate > 0
+
+
+def _fake_microphone_class(started=None, stopped=None):
+    started = started if started is not None else []
+    stopped = stopped if stopped is not None else []
+
+    class _FakeMic:
+        def __init__(self, **kwargs):
+            self._on_volume = kwargs["on_volume"]
+            self.blocksize = 1024
+            self.samplerate = 44100
+
+        def start(self):
+            started.append(True)
+
+        def stop(self):
+            stopped.append(True)
+
+    return _FakeMic, started, stopped
+
+
+def test_start_recording_and_loop_captures_fed_volumes_then_loops(qapp, monkeypatch):
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()  # mic active by default
+    manager.start_recording_and_loop(duration_s=0.05)
+    assert manager.is_recording is True
+
+    manager._handle_volume_from_source(0.2)
+    manager._handle_volume_from_source(0.4)
+
+    assert _wait_until(qapp, lambda: manager.is_recording is False)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+    assert manager.last_recording is not None
+    assert [v for _t, v in manager.last_recording.samples] == [0.2, 0.4]
+
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+    assert _wait_until(qapp, lambda: len(volumes) >= 2)
+
+    manager.shutdown()
+
+
+def test_recording_started_and_finished_signals_fire(qapp, monkeypatch):
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    started_events = []
+    finished_events = []
+    manager.recording_started.connect(lambda: started_events.append(True))
+    manager.recording_finished.connect(lambda: finished_events.append(True))
+
+    manager.start_recording_and_loop(duration_s=0.02)
+    assert started_events == [True]
+    assert _wait_until(qapp, lambda: finished_events == [True])
+    manager.shutdown()
+
+
+def test_stop_loop_restores_microphone_by_default(qapp, monkeypatch):
+    FakeMic, started, stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    started.clear()
+    manager.stop_loop()
+    assert manager.is_looping is False
+    assert started == [True]  # switch_to_microphone restarted the mic
+    manager.shutdown()
+
+
+def test_calling_start_recording_and_loop_twice_is_a_noop_while_recording(qapp, monkeypatch):
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    started_events = []
+    manager.recording_started.connect(lambda: started_events.append(True))
+
+    manager.start_recording_and_loop(duration_s=1.0)
+    manager.start_recording_and_loop(duration_s=1.0)
+    assert started_events == [True]
+    manager.shutdown()
+
+
+def test_switching_to_microphone_stops_an_active_loop(qapp, monkeypatch):
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    manager.switch_to_microphone()
+    assert manager.is_looping is False
+    manager.shutdown()
+
+
+@needs_ffmpeg
+def test_blocksize_and_samplerate_reflect_the_active_file(qapp, tmp_path):
+    from unicorn_cloak.audio import DEFAULT_FILE_SAMPLERATE
+
+    # FilePlayback asks ffmpeg to resample to a fixed target rate (see
+    # audio.py) regardless of the source file's own native rate (8000
+    # here, deliberately different) -- that's what makes frame_seconds
+    # predictable downstream, so the *target* rate is what should show
+    # up here, not the source file's.
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=2.0, samplerate=8000)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file(str(path))
+    manager.play_file()
+    assert _wait_until(qapp, lambda: manager.is_file_playing)
+
+    assert manager.samplerate == DEFAULT_FILE_SAMPLERATE
+    manager.stop_file()
+
+
+def test_gain_multiplies_the_raw_volume_before_it_is_emitted(qapp):
+    config = Config()
+    config.audio.gain = 2.0
+    manager = AudioManager(config)
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+
+    manager._handle_volume_from_source(0.1)
+
+    assert volumes == [0.2]
+
+
+def test_gain_of_one_leaves_the_volume_unchanged(qapp):
+    config = Config()
+    assert config.audio.gain == 1.0
+    manager = AudioManager(config)
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+
+    manager._handle_volume_from_source(0.35)
+
+    assert volumes == [0.35]
+
+
+def test_gain_is_clamped_to_the_zero_to_one_range(qapp):
+    config = Config()
+    config.audio.gain = 10.0
+    manager = AudioManager(config)
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+
+    manager._handle_volume_from_source(0.5)  # 0.5 * 10.0 = 5.0, clamped to 1.0
+
+    assert volumes == [1.0]

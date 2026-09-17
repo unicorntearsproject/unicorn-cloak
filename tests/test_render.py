@@ -1,0 +1,879 @@
+import time
+
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
+
+from unicorn_cloak.config import HotkeysConfig, MotionConfig
+from unicorn_cloak.render import SIM_DT, RenderWindow
+from unicorn_cloak.rig import AvatarRig, Sprite
+
+from qt_helpers import make_filmstrip_png_bytes, make_test_png_bytes, make_test_rig
+
+
+def press_key(window, key):
+    event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+    window.keyPressEvent(event)
+
+
+def test_scene_rect_matches_widget_size_so_view_centers_correctly(qapp):
+    # Regression 2026-09-15: without an explicit sceneRect, QGraphicsView
+    # falls back to an auto-sized rect from itemsBoundingRect(), which
+    # doesn't match the widget's pixel size -- so root_item.setPos(w/2,
+    # h/2) doesn't actually land at the visual center of the window, and
+    # a resize doesn't recenter it either.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(1280, 720))
+    window.show()
+    qapp.processEvents()
+    window._apply_to_scene()
+    view_center = window.view.mapToScene(window.view.viewport().rect().center())
+    assert abs(view_center.x() - window.root_item.pos().x()) <= 1
+    assert abs(view_center.y() - window.root_item.pos().y()) <= 1
+
+    window.resize(800, 600)
+    qapp.processEvents()
+    window._apply_to_scene()
+    view_center = window.view.mapToScene(window.view.viewport().rect().center())
+    assert abs(view_center.x() - window.root_item.pos().x()) <= 1
+    assert abs(view_center.y() - window.root_item.pos().y()) <= 1
+
+
+def test_render_window_builds_one_item_per_sprite(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    assert len(window._runtimes) == 2
+
+
+def test_render_window_respects_parent_child_nesting(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    child_item = window._runtimes[2].item
+    parent_item = window._runtimes[1].item
+    assert child_item.parentItem() is parent_item
+
+
+def test_render_window_simulate_step_does_not_crash(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    for _ in range(5):
+        window._simulate_step()
+    window._apply_to_scene()
+
+
+def test_render_window_talk_level_changes_opacity(qapp):
+    # _apply_to_scene reads talk_level directly, so this doesn't depend
+    # on any simulation steps having run.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    mouth_item = window._runtimes[2].item  # talk_state=1
+
+    window.set_talk_level(0)
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 0.0
+
+    window.set_talk_level(1)
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 1.0
+
+
+def test_manual_override_shows_only_the_matching_sprite(qapp):
+    png = make_test_png_bytes()
+    sprites = [
+        Sprite(id=1, path="a.png", image_data=png, group_name="Mouth", state_name="Closed"),
+        Sprite(
+            id=2, path="b.png", image_data=png,
+            group_name="Mouth", state_name="Laughing", manual_driven=True,
+        ),
+    ]
+    rig = AvatarRig(name="test", sprites=sprites)
+    window = RenderWindow(rig, MotionConfig())
+    laughing_item = window._runtimes[2].item
+
+    window._apply_to_scene()
+    assert laughing_item.opacity() == 0.0  # no override active yet
+
+    window.set_manual_override("Mouth", "Laughing")
+    window._apply_to_scene()
+    assert laughing_item.opacity() == 1.0
+
+    window.set_manual_override("Mouth", None)
+    window._apply_to_scene()
+    assert laughing_item.opacity() == 0.0
+
+
+def test_manual_override_does_not_affect_a_different_group(qapp):
+    png = make_test_png_bytes()
+    sprites = [
+        Sprite(
+            id=1, path="a.png", image_data=png,
+            group_name="Eyes", state_name="Laughing", manual_driven=True,
+        ),
+    ]
+    rig = AvatarRig(name="test", sprites=sprites)
+    window = RenderWindow(rig, MotionConfig())
+    window.set_manual_override("Mouth", "Laughing")  # a different group
+    window._apply_to_scene()
+    assert window._runtimes[1].item.opacity() == 0.0
+
+
+def test_manual_driven_sprite_ignores_talk_level_entirely(qapp):
+    png = make_test_png_bytes()
+    sprites = [
+        Sprite(
+            id=1, path="a.png", image_data=png, talk_state=1,
+            group_name="Mouth", state_name="Laughing", manual_driven=True,
+        ),
+    ]
+    rig = AvatarRig(name="test", sprites=sprites)
+    window = RenderWindow(rig, MotionConfig())
+    window.set_talk_level(1)  # would normally satisfy talk_state=1
+    window._apply_to_scene()
+    assert window._runtimes[1].item.opacity() == 0.0  # manual override not set
+
+    window.set_manual_override("Mouth", "Laughing")
+    window.set_talk_level(0)  # would normally NOT satisfy talk_state=1
+    window._apply_to_scene()
+    assert window._runtimes[1].item.opacity() == 1.0  # manual override wins
+
+
+def test_muted_forces_the_mouth_closed_regardless_of_talk_level(qapp):
+    # Real reported problem, 2026-09-16: "the avatar talks while the
+    # stream hears silence" when the mic is muted in OBS. set_muted must
+    # override talk_level entirely, not just dampen it.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    mouth_item = window._runtimes[2].item  # talk_state=1
+
+    window.set_talk_level(1)
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 1.0
+
+    window.set_muted(True)
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 0.0
+
+
+def test_unmuting_immediately_reflects_whatever_talk_level_already_is(qapp):
+    # No fresh audio update should be required to "wake up" after
+    # unmuting -- effective_talk_level must fall straight back to
+    # whatever talk_level has been the whole time it was muted.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    mouth_item = window._runtimes[2].item
+
+    window.set_talk_level(1)
+    window.set_muted(True)
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 0.0
+
+    window.set_muted(False)
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 1.0
+
+
+def test_muted_suppresses_the_speech_bounce_retrigger(qapp):
+    # Judgment call, documented in docs/PLAN.md: muting suppresses the whole
+    # reactive performance (mouth AND bounce), not just the mouth shape
+    # -- a bouncing-but-silent avatar would still visually read as
+    # "talking energetically," which defeats the point of muting.
+    rig = make_test_rig()
+    config = MotionConfig(bounce_strength=250.0, gravity=1000.0, bounce_retrigger_ms=10.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(2)
+    window.set_muted(True)
+    for _ in range(120):  # 2 simulated seconds -- plenty of time to bounce if it were going to
+        window._simulate_step()
+    assert window.bounce.y_position == 0.0  # never triggered at all
+
+
+def test_effective_talk_level_property(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_talk_level(2)
+    assert window.effective_talk_level == 2
+    window.set_muted(True)
+    assert window.effective_talk_level == 0
+    window.set_muted(False)
+    assert window.effective_talk_level == 2
+
+
+def test_on_frame_does_not_simulate_before_one_sim_dt_elapses(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window._last_time = time.monotonic()  # reset right before calling
+    start_tick = window.tick
+    window._on_frame()
+    assert window.tick == start_tick
+
+
+def test_on_frame_catches_up_after_a_stall(qapp):
+    # The whole point of the accumulator: a real-time gap (e.g. the paint
+    # loop stalling under encode load) must be made up in simulation
+    # steps, not silently lost -- otherwise blink/sway/bounce timing
+    # would warp under load instead of just looking choppy.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window._last_time = time.monotonic() - 0.5  # simulate a 500ms stall
+    start_tick = window.tick
+    window._on_frame()
+    elapsed_ticks = window.tick - start_tick
+    # 0.5s of debt, capped by MAX_CATCH_UP_SECONDS=0.25s -> ~15 steps at
+    # SIM_DT=1/60s. Allow slack for scheduling jitter in the test itself.
+    assert 10 <= elapsed_ticks <= round(0.25 / SIM_DT) + 2
+
+
+def test_render_window_rebuild_after_sprite_added(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    rig.add_sprite(Sprite(id=3, path="c.png", image_data=make_test_png_bytes()))
+    window.rebuild()
+    assert len(window._runtimes) == 3
+
+
+def test_sync_sprite_offset_and_z_without_full_rebuild(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    sprite = rig.by_id(2)
+    sprite.offset = (10.0, 20.0)
+    sprite.z_index = 5
+
+    window.sync_sprite_offset_and_z(2)
+
+    item = window._runtimes[2].item
+    assert item.zValue() == 5
+
+
+def test_bounce_does_not_run_away_over_many_frames(qapp):
+    # End-to-end regression for the bug fixed 2026-09-15: continuous
+    # talk_level with a short bounce_retrigger_ms must not send the
+    # avatar flying upward forever. Drives _simulate_step directly (not
+    # _on_frame) since the fixed-timestep sim is now decoupled from real
+    # wall-clock time -- exactly what this test doesn't want to depend on.
+    rig = make_test_rig()
+    config = MotionConfig(bounce_strength=250.0, gravity=1000.0, bounce_retrigger_ms=50.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(2)
+    for _ in range(600):  # 10 simulated seconds at the fixed 60Hz timestep
+        window._simulate_step()
+        assert window.bounce.y_position >= -100.0
+
+
+def test_hidden_sprite_stays_invisible_regardless_of_talk_level(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    mouth_sprite = rig.by_id(2)  # talk_state=1
+    mouth_sprite.hidden = True
+    mouth_item = window._runtimes[2].item
+
+    window.set_talk_level(1)  # would normally show it
+    window._apply_to_scene()
+    assert mouth_item.opacity() == 0.0
+
+
+def test_costume_hotkeys_1_through_9_select_slots_0_through_8(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    for digit_key, expected_slot in [
+        (Qt.Key.Key_1, 0),
+        (Qt.Key.Key_5, 4),
+        (Qt.Key.Key_9, 8),
+    ]:
+        press_key(window, digit_key)
+        assert rig.active_costume == expected_slot
+
+
+def test_costume_hotkey_0_selects_slot_9(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    press_key(window, Qt.Key.Key_0)
+    assert rig.active_costume == 9
+
+
+def test_costume_hotkeys_are_remappable(qapp):
+    rig = make_test_rig()
+    hotkeys = HotkeysConfig(costume_keys=("F1", "2", "3", "4", "5", "6", "7", "8", "9", "0"))
+    window = RenderWindow(rig, MotionConfig(), hotkeys_config=hotkeys)
+
+    press_key(window, Qt.Key.Key_1)  # slot 0's old default key, now unbound
+    assert rig.active_costume == 0  # unchanged: not 0 by matching, just its initial value
+
+    rig.active_costume = 3
+    press_key(window, Qt.Key.Key_1)
+    assert rig.active_costume == 3  # confirmed: "1" really doesn't match slot 0 anymore
+
+    press_key(window, Qt.Key.Key_F1)  # slot 0's new key
+    assert rig.active_costume == 0
+
+
+def test_oversized_costume_keys_cannot_push_active_costume_out_of_range(qapp):
+    # Regression 2026-09-16, found in review: unlike the old hardcoded
+    # 1-9/0 mapping (exactly 10 keys, always in range), costume_keys has
+    # no length check of its own. A hand-edited config.json with an 11th
+    # entry must not be able to set active_costume past the end of every
+    # sprite's fixed-length (NUM_COSTUMES=10) costume_layers tuple --
+    # that would IndexError the very next frame.
+    rig = make_test_rig()
+    extra_keys = tuple(f"F{i}" for i in range(1, 12))  # 11 entries, one too many
+    hotkeys = HotkeysConfig(costume_keys=extra_keys)
+    window = RenderWindow(rig, MotionConfig(), hotkeys_config=hotkeys)
+
+    press_key(window, Qt.Key.Key_F11)  # the 11th, out-of-range slot
+
+    assert rig.active_costume == 0  # unchanged -- F11 was never bound
+    window._apply_to_scene()  # must not raise IndexError
+
+
+def test_escape_always_quits_even_if_bound_to_a_costume_slot(qapp, monkeypatch):
+    # Regression 2026-09-16: QKeySequenceEdit does not treat Escape as
+    # "cancel this capture" (verified empirically) -- it's a capturable
+    # key like any other, so a hand-edited config.json (or a future UI
+    # bug) could bind it to a costume slot. Escape must still quit
+    # unconditionally; it must never be shadowed by a costume match.
+    rig = make_test_rig()
+    rig.active_costume = 4  # a value slot 0 would never coincidentally produce
+    hotkeys = HotkeysConfig(costume_keys=("Escape", "2", "3", "4", "5", "6", "7", "8", "9", "0"))
+    window = RenderWindow(rig, MotionConfig(), hotkeys_config=hotkeys)
+    closed = []
+    monkeypatch.setattr(window, "close", lambda: closed.append(True))
+
+    press_key(window, Qt.Key.Key_Escape)
+
+    assert closed == [True]
+    assert rig.active_costume == 4  # unchanged -- did not treat it as a costume switch to slot 0
+
+
+def test_close_event_quits_when_no_quit_hook_is_set(qapp, monkeypatch):
+    from unicorn_cloak import render as render_module
+
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    quit_calls = []
+    monkeypatch.setattr(render_module.QApplication, "instance", lambda: type("A", (), {"quit": lambda self: quit_calls.append(True)})())
+    window.close()
+    assert quit_calls == [True]
+
+
+def test_close_event_asks_the_quit_hook_and_quits_if_it_returns_true(qapp, monkeypatch):
+    from unicorn_cloak import render as render_module
+
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.on_quit_requested = lambda: True
+    quit_calls = []
+    monkeypatch.setattr(render_module.QApplication, "instance", lambda: type("A", (), {"quit": lambda self: quit_calls.append(True)})())
+    window.close()
+    assert quit_calls == [True]
+
+
+def test_close_event_is_cancelled_when_the_quit_hook_returns_false(qapp, monkeypatch):
+    from unicorn_cloak import render as render_module
+
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.show()
+    window.on_quit_requested = lambda: False
+    quit_calls = []
+    monkeypatch.setattr(render_module.QApplication, "instance", lambda: type("A", (), {"quit": lambda self: quit_calls.append(True)})())
+    window.close()
+    assert quit_calls == []
+    assert window.isVisible()
+
+
+def test_double_click_calls_the_avatar_double_clicked_hook(qapp):
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    calls = []
+    window.on_avatar_double_clicked = lambda: calls.append(True)
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, QPointF(5, 5), Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+    )
+    window.mouseDoubleClickEvent(event)
+    assert calls == [True]
+
+
+def test_double_click_does_nothing_when_no_hook_is_set(qapp):
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, QPointF(5, 5), Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+    )
+    window.mouseDoubleClickEvent(event)  # must not raise
+
+
+def test_remapped_hotkeys_still_take_effect_live(qapp):
+    # HotkeysConfig is held by reference and read fresh every keypress --
+    # Settings can rebind a key with no rebuild/reconnect needed.
+    rig = make_test_rig()
+    hotkeys = HotkeysConfig()
+    window = RenderWindow(rig, MotionConfig(), hotkeys_config=hotkeys)
+
+    press_key(window, Qt.Key.Key_5)
+    assert rig.active_costume == 4
+
+    keys = list(hotkeys.costume_keys)
+    keys[7] = "5"  # slot 7 (costume 8) now also answers to "5"
+    hotkeys.costume_keys = tuple(keys)
+
+    press_key(window, Qt.Key.Key_5)
+    assert rig.active_costume == 4  # slot 4 still comes first in the scan
+
+
+def _parent_child_rig(*, child_drag_speed=8.0, child_z=0, child_clipped=False):
+    png = make_test_png_bytes()
+    parent = Sprite(id=1, path="p.png", image_data=png, position=(0.0, 0.0))
+    child = Sprite(
+        id=2,
+        path="c.png",
+        parent_id=1,
+        image_data=png,
+        position=(0.0, 50.0),
+        drag_speed=child_drag_speed,
+        z_index=child_z,
+        clipped=child_clipped,
+    )
+    return AvatarRig(name="t", sprites=[parent, child])
+
+
+def test_child_drag_lag_includes_parent_bounce(qapp):
+    # Regression 2026-09-15 (transform-hierarchy review): a child's own
+    # drag lag must chase a target that includes the parent's current
+    # motion (bounce here), not just the child's own authored position --
+    # otherwise a laggy child rigidly tracks its parent instead of
+    # trailing behind it, which defeats the entire point of drag_speed
+    # on something like hair attached to a head.
+    rig = _parent_child_rig(child_drag_speed=8.0)
+    config = MotionConfig(bounce_strength=250.0, gravity=1000.0)
+    window = RenderWindow(rig, config)
+    child_item = window._runtimes[2].item
+
+    window.set_talk_level(2)  # triggers a bounce on this same step
+    window._simulate_step()
+    window._apply_to_scene()
+
+    # No sway configured, so without the fix the child's local pos would
+    # sit exactly at its authored (0, 50) regardless of the parent's
+    # bounce. With it, the child hasn't caught up to the shifted target.
+    assert child_item.pos().y() != 50.0
+
+
+def test_child_with_zero_drag_speed_still_tracks_parent_drift_exactly(qapp):
+    # A rigid (drag_speed=0) child should still end up visually attached
+    # correctly -- drag_lag snaps straight to the target, so it should
+    # land back at its own authored local position once _apply_to_scene
+    # converts back out of the shared "world drift" space.
+    rig = _parent_child_rig(child_drag_speed=0.0)
+    config = MotionConfig(bounce_strength=250.0, gravity=1000.0)
+    window = RenderWindow(rig, config)
+    child_item = window._runtimes[2].item
+
+    window.set_talk_level(2)
+    window._simulate_step()
+    window._apply_to_scene()
+
+    assert child_item.pos().y() == 50.0
+
+
+def test_negative_z_index_child_stacks_behind_parent(qapp):
+    rig = _parent_child_rig(child_z=-1)
+    window = RenderWindow(rig, MotionConfig())
+    child_item = window._runtimes[2].item
+    assert child_item.flags() & QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent
+
+
+def test_non_negative_z_index_child_does_not_stack_behind_parent(qapp):
+    rig = _parent_child_rig(child_z=0)
+    window = RenderWindow(rig, MotionConfig())
+    child_item = window._runtimes[2].item
+    assert not (
+        child_item.flags() & QGraphicsItem.GraphicsItemFlag.ItemStacksBehindParent
+    )
+
+
+def test_clipped_sprite_uses_alpha_mask_shape(qapp):
+    rig = _parent_child_rig(child_clipped=False)
+    rig.sprites[0].clipped = True
+    window = RenderWindow(rig, MotionConfig())
+    parent_item = window._runtimes[1].item
+    assert parent_item.flags() & QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape
+    assert parent_item.shapeMode() == QGraphicsPixmapItem.ShapeMode.MaskShape
+
+
+def test_unclipped_sprite_has_no_clip_flag(qapp):
+    rig = _parent_child_rig()
+    window = RenderWindow(rig, MotionConfig())
+    parent_item = window._runtimes[1].item
+    assert not (
+        parent_item.flags() & QGraphicsItem.GraphicsItemFlag.ItemClipsChildrenToShape
+    )
+
+
+_FRAME_COLORS = [(255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255)]
+
+
+def _rgb(color):
+    return (color.red(), color.green(), color.blue())
+
+
+def test_multi_frame_sprite_starts_on_frame_zero(qapp):
+    png = make_filmstrip_png_bytes(_FRAME_COLORS)
+    sprite = Sprite(id=1, path="strip.png", image_data=png, frames=3, anim_speed=10.0)
+    rig = AvatarRig(name="t", sprites=[sprite])
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[1].item
+    assert _rgb(item.pixmap().toImage().pixelColor(1, 1)) == (255, 0, 0)
+
+
+def test_multi_frame_sprite_offset_uses_single_frame_width_not_sheet_width(qapp):
+    png = make_filmstrip_png_bytes(_FRAME_COLORS, frame_size=4)
+    sprite = Sprite(id=1, path="strip.png", image_data=png, frames=3)
+    rig = AvatarRig(name="t", sprites=[sprite])
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[1].item
+    # Centered on one 4px frame, not the whole 12px-wide filmstrip.
+    assert item.offset().x() == -2.0
+
+
+def test_multi_frame_sprite_cycles_through_frames(qapp):
+    png = make_filmstrip_png_bytes(_FRAME_COLORS)
+    # anim_speed=10fps @ SIM_DT=1/60 -> 6 ticks per frame (see motion.py)
+    sprite = Sprite(id=1, path="strip.png", image_data=png, frames=3, anim_speed=10.0)
+    rig = AvatarRig(name="t", sprites=[sprite])
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[1].item
+
+    for _ in range(6):
+        window._simulate_step()
+    window._apply_to_scene()
+    assert _rgb(item.pixmap().toImage().pixelColor(1, 1)) == (0, 255, 0)
+
+    for _ in range(6):
+        window._simulate_step()
+    window._apply_to_scene()
+    assert _rgb(item.pixmap().toImage().pixelColor(1, 1)) == (0, 0, 255)
+
+
+def test_single_frame_sprite_pixmap_is_never_swapped(qapp):
+    rig = make_test_rig()  # frames=1 everywhere, like every shipped sprite
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[1].item
+    original_key = item.pixmap().cacheKey()
+
+    for _ in range(30):
+        window._simulate_step()
+    window._apply_to_scene()
+
+    # _apply_to_scene only calls setPixmap when sprite.frames > 1, so a
+    # static sprite's pixmap is the exact same object the whole time.
+    assert item.pixmap().cacheKey() == original_key
+
+
+def _rendered_corner_color(window):
+    from PySide6.QtGui import QImage, QPainter
+
+    size = window.size()
+    image = QImage(size, QImage.Format.Format_ARGB32)
+    image.fill(0)
+    painter = QPainter(image)
+    window.scene.render(painter)
+    painter.end()
+    return image.pixelColor(5, 5)  # away from the tiny centered test sprites
+
+
+def test_background_defaults_to_transparent(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(200, 200))
+    color = _rendered_corner_color(window)
+    assert color.alpha() == 0
+
+
+def test_background_solid_colors_are_fully_opaque(qapp):
+    rig = make_test_rig()
+    expected_rgb = {
+        "black": (0, 0, 0),
+        "white": (255, 255, 255),
+        "green": (0, 255, 0),
+    }
+    for mode, rgb in expected_rgb.items():
+        window = RenderWindow(rig, MotionConfig(), window_size=(200, 200), background=mode)
+        color = _rendered_corner_color(window)
+        assert (color.red(), color.green(), color.blue()) == rgb
+        assert color.alpha() == 255
+
+
+def test_set_background_is_live_updatable(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(200, 200))
+    assert _rendered_corner_color(window).alpha() == 0
+
+    window.set_background("green")
+    color = _rendered_corner_color(window)
+    assert (color.red(), color.green(), color.blue(), color.alpha()) == (0, 255, 0, 255)
+
+    window.set_background("transparent")
+    assert _rendered_corner_color(window).alpha() == 0
+
+
+def test_unknown_background_mode_falls_back_to_transparent(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(200, 200))
+    window.set_background("not-a-real-color")
+    assert _rendered_corner_color(window).alpha() == 0
+
+
+def test_zoom_scales_root_item(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), zoom=2.5)
+    assert window.zoom == 2.5
+    assert window.root_item.scale() == 2.5
+
+
+def test_zoom_does_not_move_root_item(qapp):
+    # Zoom scales around the avatar's own center -- the window-centering
+    # position must stay put, only the scale changes.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(300, 200))
+    pos_before = window.root_item.pos()
+    window.set_zoom(3.0)
+    assert window.root_item.pos() == pos_before
+
+
+def test_set_zoom_is_live_updatable(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_zoom(2.0)
+    assert window.zoom == 2.0
+    assert window.root_item.scale() == 2.0
+
+
+def test_zoom_is_clamped_to_sane_range(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_zoom(999.0)
+    assert window.zoom == 5.0  # MAX_ZOOM
+    window.set_zoom(-1.0)
+    assert window.zoom == 0.1  # MIN_ZOOM
+
+
+def test_static_sprite_transform_stays_a_plain_identity(qapp):
+    # Regression 2026-09-16, found while profiling: every sprite in the
+    # real avatar has rotation_drag_strength=0 and stretch_amount=0 (no
+    # real content uses either yet) -- _apply_to_scene must not call
+    # setTransform() at all for a sprite whose rotation/scale never
+    # leaves identity, not just produce a numerically-identity transform.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[2].item  # has no rotation_drag_strength/stretch_amount
+    for _ in range(30):
+        window._simulate_step()
+    window._apply_to_scene()
+    assert item.transform().isIdentity()
+
+
+def test_rotating_sprite_gets_a_real_non_identity_transform(qapp):
+    png = make_test_png_bytes()
+    sprite = Sprite(
+        id=1, path="a.png", image_data=png,
+        rotation_drag_strength=5.0, drag_speed=2.0,
+    )
+    rig = AvatarRig(name="t", sprites=[sprite])
+    config = MotionConfig(bounce_strength=400.0, gravity=800.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(2)  # triggers a bounce, which drives rotation velocity
+    item = window._runtimes[1].item
+
+    for _ in range(5):
+        window._simulate_step()
+    window._apply_to_scene()
+
+    assert not item.transform().isIdentity()
+
+
+def test_rotation_settling_back_to_zero_resets_the_transform_to_identity(qapp):
+    # The resetTransform() path: once rotation/scale decay back to
+    # nothing, the item's transform must actually go back to identity,
+    # not get stuck on the last near-zero-but-not-quite value.
+    png = make_test_png_bytes()
+    sprite = Sprite(
+        id=1, path="a.png", image_data=png,
+        rotation_drag_strength=5.0, drag_speed=2.0,
+    )
+    rig = AvatarRig(name="t", sprites=[sprite])
+    config = MotionConfig(bounce_strength=400.0, gravity=800.0, bounce_retrigger_ms=100_000.0)
+    window = RenderWindow(rig, config)
+    item = window._runtimes[1].item
+
+    window.set_talk_level(2)
+    for _ in range(5):
+        window._simulate_step()
+    window._apply_to_scene()
+    assert not item.transform().isIdentity()  # mid-motion, as above
+
+    window.set_talk_level(0)  # let it settle, no more bounce retriggers
+    for _ in range(600):  # 10 simulated seconds at 60Hz
+        window._simulate_step()
+    window._apply_to_scene()
+    assert item.transform().isIdentity()
+
+
+def test_zoom_survives_rebuild(qapp):
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), zoom=2.0)
+    window.rebuild()
+    assert window.root_item.scale() == 2.0
+
+
+def _two_mild_mouths_rig():
+    png = make_test_png_bytes()
+    mild_a = Sprite(id=1, path="mild-01.png", image_data=png, talk_state=1, variant=0)
+    mild_b = Sprite(id=2, path="mild-02.png", image_data=png, talk_state=1, variant=1)
+    return AvatarRig(name="t", sprites=[mild_a, mild_b])
+
+
+def test_talk_variant_alternates_between_sprites_sharing_a_band(qapp):
+    # End-to-end for rig.Sprite.variant / motion.sprite_alpha's variant
+    # params: two "mild" mouths should take turns, never both invisible
+    # and never both visible, while talk_level stays in their band.
+    rig = _two_mild_mouths_rig()
+    config = MotionConfig(mouth_variant_hz=60.0)  # 1 flip per sim tick at 60Hz
+    window = RenderWindow(rig, config)
+    window.set_talk_level(1)
+    item_a, item_b = window._runtimes[1].item, window._runtimes[2].item
+
+    window._simulate_step()
+    window._apply_to_scene()
+    first = (item_a.opacity(), item_b.opacity())
+    assert sorted(first) == [0.0, 1.0]
+
+    window._simulate_step()
+    window._apply_to_scene()
+    second = (item_a.opacity(), item_b.opacity())
+    assert sorted(second) == [0.0, 1.0]
+    assert second != first  # actually alternated, not stuck on one
+
+
+def test_talk_variant_does_not_advance_while_band_is_inactive(qapp):
+    # Silence (talk_level=0): neither mild mouth is in the active band, so
+    # there's nothing to alternate between -- both stay hidden, and no
+    # variant math should be running against an empty/irrelevant band.
+    rig = _two_mild_mouths_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_talk_level(0)
+    for _ in range(30):
+        window._simulate_step()
+    window._apply_to_scene()
+    item_a, item_b = window._runtimes[1].item, window._runtimes[2].item
+    assert (item_a.opacity(), item_b.opacity()) == (0.0, 0.0)
+
+
+def _two_open_eyes_rig():
+    png = make_test_png_bytes()
+    wide = Sprite(id=1, path="eyes-open-wide-01.png", image_data=png, blink_state=1, variant=0)
+    squint = Sprite(id=2, path="eyes-squint-01.png", image_data=png, blink_state=1, variant=1)
+    return AvatarRig(name="t", sprites=[wide, squint])
+
+
+def test_blink_variant_alternates_between_sprites_sharing_a_band(qapp):
+    # Mirrors test_talk_variant_alternates_between_sprites_sharing_a_band,
+    # but for two "eyes open" shapes on the blink axis.
+    rig = _two_open_eyes_rig()
+    config = MotionConfig(eye_variant_hz=60.0)  # 1 flip per sim tick at 60Hz
+    window = RenderWindow(rig, config)
+    # blink_level defaults to 1 (not blinking) with no simulation run yet.
+    item_a, item_b = window._runtimes[1].item, window._runtimes[2].item
+
+    window._simulate_step()
+    window._apply_to_scene()
+    first = (item_a.opacity(), item_b.opacity())
+    assert sorted(first) == [0.0, 1.0]
+
+    window._simulate_step()
+    window._apply_to_scene()
+    second = (item_a.opacity(), item_b.opacity())
+    assert sorted(second) == [0.0, 1.0]
+    assert second != first
+
+
+def test_talk_and_blink_variant_swaps_do_not_interfere(qapp):
+    # A mouth (talk axis) and a pair of eyes (blink axis) alternating at
+    # the same time must each cycle independently -- neither swap timer
+    # should affect the other axis's sprites.
+    png = make_test_png_bytes()
+    mild_a = Sprite(id=1, path="mild-01.png", image_data=png, talk_state=1, variant=0)
+    mild_b = Sprite(id=2, path="mild-02.png", image_data=png, talk_state=1, variant=1)
+    wide_eye = Sprite(id=3, path="eyes-open-wide-01.png", image_data=png, blink_state=1, variant=0)
+    squint_eye = Sprite(id=4, path="eyes-squint-01.png", image_data=png, blink_state=1, variant=1)
+    rig = AvatarRig(name="t", sprites=[mild_a, mild_b, wide_eye, squint_eye])
+    config = MotionConfig(mouth_variant_hz=60.0, eye_variant_hz=60.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(1)
+
+    for _ in range(4):
+        window._simulate_step()
+        window._apply_to_scene()
+        mouths = (window._runtimes[1].item.opacity(), window._runtimes[2].item.opacity())
+        eyes = (window._runtimes[3].item.opacity(), window._runtimes[4].item.opacity())
+        assert sorted(mouths) == [0.0, 1.0]
+        assert sorted(eyes) == [0.0, 1.0]
+
+
+def test_hidden_sprite_does_not_count_toward_talk_variant_alternation(qapp):
+    # Regression 2026-09-16: variant_count used to count every sprite in
+    # the matching talk band regardless of whether it could actually be
+    # shown. With one of two "mild" mouths hidden via the eye icon, only
+    # one sprite is left eligible -- it must show continuously, not
+    # alternate on/off against a rival that was never visible.
+    rig = _two_mild_mouths_rig()
+    rig.sprites[1].hidden = True  # mild_b hidden
+    config = MotionConfig(mouth_variant_hz=60.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(1)
+    visible_item = window._runtimes[1].item  # mild_a, still eligible
+
+    for _ in range(10):
+        window._simulate_step()
+        window._apply_to_scene()
+        assert visible_item.opacity() == 1.0
+
+
+def test_costume_inactive_sprite_does_not_count_toward_talk_variant_alternation(qapp):
+    from unicorn_cloak.rig import NUM_COSTUMES
+
+    rig = _two_mild_mouths_rig()
+    # mild_b excluded from the active costume slot (0) specifically.
+    layers = [True] * NUM_COSTUMES
+    layers[0] = False
+    rig.sprites[1].costume_layers = tuple(layers)
+    config = MotionConfig(mouth_variant_hz=60.0)
+    window = RenderWindow(rig, config)
+    window.rig.active_costume = 0
+    window.set_talk_level(1)
+    visible_item = window._runtimes[1].item  # mild_a, still in this costume
+
+    for _ in range(10):
+        window._simulate_step()
+        window._apply_to_scene()
+        assert visible_item.opacity() == 1.0
+
+
+def test_single_sprite_band_ignores_variant_swap_rate(qapp):
+    # A talk_state with only one sprite (every rig before 2026-09-16, and
+    # still the common case for "wide") must show continuously, never
+    # blink off because of the swap timer.
+    rig = make_test_rig()  # sprite 2 is the only sprite with talk_state=1
+    config = MotionConfig(mouth_variant_hz=60.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(1)
+    item = window._runtimes[2].item
+    for _ in range(10):
+        window._simulate_step()
+        window._apply_to_scene()
+        assert item.opacity() == 1.0

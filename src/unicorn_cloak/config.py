@@ -1,0 +1,354 @@
+"""
+Live, app-managed settings -- not a file the owner is expected to
+hand-edit. `load_state()` reads `settings.json` (defaults if it doesn't
+exist yet); `save_state()` writes it atomically (temp file + `os.replace`,
+so a crash or power loss mid-write can't corrupt it -- the legacy
+`Saving.write_settings()` just did a direct `FileAccess.WRITE`, no such
+guarantee) and keeps one `.bak` of whatever was there before, matching
+persistence.py's save_avatar (added 2026-09-16, after an agent deleted
+this file directly with no backup to fall back on while poking at it --
+the atomic write alone doesn't help when the thing overwriting the file
+isn't this function at all). `ControlPanelWindow` in
+control_panel_window.py is the actual tuning UI; it mutates a shared
+`Config` instance in place and calls `save_state()` on every change plus
+periodically and on exit.
+
+Also format-versioned, same idea as persistence.py's avatar files (see
+CURRENT_CONFIG_VERSION below) -- a stamp for a future structural change
+to migrate from, not needed for an ordinary new field with a safe
+default (those already round-trip fine through `_merge`).
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import tempfile
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+
+DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "settings.json"
+
+# Format versioning (added 2026-09-17, mirroring persistence.py's own
+# CURRENT_FORMAT_VERSION/needs_migration for avatar files -- owner's
+# request: "we should version the file system... so we can, in the
+# future, be sure we're migrating smoothly for users when we update the
+# app"). A brand-new field with a safe default already round-trips fine
+# without any of this (_merge just fills it in from the dataclass
+# default) -- this exists for the harder case, a future *structural*
+# change (a renamed or restructured key), which needs something to
+# migrate *from*. Any settings.json without the stamp (every one written
+# before today) is version 0.
+#
+# Unlike persistence.py's avatar files, this is app-internal state the
+# owner never hand-edits or is shown a message about -- migrations here
+# are silent, applied on load, before _merge ever sees the dict.
+_CONFIG_VERSION_KEY = "__config_version__"
+CURRENT_CONFIG_VERSION = 1
+
+# One entry per version bump: raw settings dict at that version -> raw
+# dict at version + 1. _migrate_raw_config applies them in sequence, so a
+# file several versions behind still gets every intermediate step, not
+# just the latest. Empty for now -- there's no structural difference
+# between version 0 and 1 yet, only the new stamp itself (exactly like
+# CURRENT_FORMAT_VERSION's own introduction in persistence.py). Add an
+# entry here (keyed by the version it migrates *from*) the day a real
+# structural change needs one.
+_CONFIG_MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+
+
+def _migrate_raw_config(raw: dict) -> dict:
+    version = raw.get(_CONFIG_VERSION_KEY, 0)
+    while version < CURRENT_CONFIG_VERSION:
+        migrate = _CONFIG_MIGRATIONS.get(version)
+        if migrate is None:
+            break  # nothing registered for this step -- leave the rest to _merge's own per-field defaults
+        raw = migrate(raw)
+        version += 1
+    return raw
+
+# Default avatar, replaced 2026-09-17 (owner's request: "let's replace our
+# default model... you can find them in unicorn-cloak/assets/unicorn-demo")
+# -- the previous default lived outside this repo entirely
+# (/home/jj/projects/unicorn-tears/...), on this one machine only, which
+# made a fresh checkout unable to actually run without it. Package-relative
+# now, matching DEFAULT_STATE_PATH above, so the app is self-contained --
+# worth fixing now specifically because this folder is headed for its own
+# repo (see docs/PLAN.md's git history note) and an absolute, owner-specific
+# path would silently break for anyone else.
+DEFAULT_AVATAR_PATH = str(
+    Path(__file__).resolve().parents[2] / "assets" / "unicorn-demo" / "unicorn-demo.uc"
+)
+
+
+@dataclass
+class AudioConfig:
+    # Starting points calibrated 2026-09-15 against the owner's real mic
+    # (ambient floor ~0.002 RMS, speech ~0.02-0.14 RMS) -- all of it is
+    # meant to be tuned live in the Settings window while talking, not
+    # trusted as-is on a different mic.
+    noise_gate: float = 0.005  # RMS below this counts as pure silence
+
+    # A multiplier applied to the raw measured RMS before it ever reaches
+    # noise_gate/mild/wide -- an in-app control independent of whatever
+    # the OS mixer or a mic's own physical gain knob is doing (added
+    # 2026-09-16: the owner's reported mic level and this app's measured
+    # level didn't obviously line up with each other -- PipeWire's own
+    # volume for the device read differently from the number the owner
+    # was looking at, and a hardware gain dial on a USB mic wouldn't show
+    # up in PipeWire at all regardless). 1.0 = no change.
+    gain: float = 1.0
+
+    # Open/close are separate thresholds (hysteresis / Schmitt trigger):
+    # the envelope must rise to *_open to enter a band but fall below the
+    # lower *_close to leave it, so it doesn't flicker at one boundary.
+    mild_open: float = 0.015
+    mild_close: float = 0.008
+    wide_open: float = 0.06
+    wide_close: float = 0.035
+
+    # Attack/hold/release, in milliseconds -- a real envelope follower,
+    # not the single fixed-rate decay that made PNGTuber-Plus's mouth lag
+    # ~0.7s closed after speech stopped (see
+    # docs/decisions/0004-avatar-lipsync-tooling.md's "Superseded" note;
+    # replacing this is the reason this app exists). Hold is what lets
+    # continuous speech keep the mouth open through brief gaps between
+    # syllables instead of snapping shut every time volume dips.
+    attack_ms: float = 15.0
+    hold_ms: float = 120.0
+    release_ms: float = 200.0
+
+    device: str | None = None  # None = system default input device
+
+    # Which volume source drives talk_level -- "microphone" (default) or
+    # "file" (audio.FilePlayback, added 2026-09-16 for re-recording a
+    # video where the avatar needs to be driven by a participant's
+    # isolated track while a *different*, already-combined recording is
+    # what actually gets captured -- see FilePlayback's own docstring).
+    # file_path is remembered across restarts even while source is
+    # "microphone", so switching back to "file" doesn't lose it.
+    source: str = "microphone"
+    file_path: str | None = None
+
+
+@dataclass
+class MotionConfig:
+    bounce_strength: float = 250.0
+    gravity: float = 1000.0
+    blink_speed: float = 1.0
+    blink_chance: int = 200
+    # Re-triggers the speak-bounce on a timer for as long as talk_level
+    # stays above 0, so continuous speech keeps the whole avatar bobbing
+    # instead of one bounce at the start that settles and goes still.
+    bounce_retrigger_ms: float = 150.0
+    # Extra idle wobble layered onto any sprite with a nonzero talk_state
+    # (i.e. any mouth-shape sprite), on top of its own authored sway.
+    mouth_wobble_freq: float = 0.3
+    mouth_wobble_amp: float = 4.0
+    # How many times per second sprites sharing the same nonzero talk_state
+    # swap which one is showing (rig.Sprite.variant) -- e.g. two mild-open
+    # mouth shapes flapping back and forth during continuous speech. A
+    # talk_state with only one sprite in it ignores this entirely.
+    mouth_variant_hz: float = 8.0
+    # Same idea as mouth_variant_hz, but for sprites sharing a nonzero
+    # blink_state instead (e.g. an "eyes open" state with a wide-open and
+    # a squint shape) -- deliberately slow, an occasional expression
+    # change between blinks, not a flutter like the mouth's.
+    eye_variant_hz: float = 0.15
+
+
+@dataclass
+class WindowConfig:
+    width: int = 1280
+    height: int = 720
+    # What's behind the avatar. "transparent" (the default -- keep it
+    # that way, since it's what lets an OBS window/portal capture show
+    # whatever's beneath this source in the scene) or a solid backdrop
+    # for chroma-keying or previewing outside OBS. See render.py's
+    # BACKGROUND_COLORS for the exact set.
+    background: str = "transparent"
+    # Scales the avatar around its own center within this fixed-size
+    # window -- makes it bigger/smaller on stream without needing
+    # different art or changing the window/source dimensions in OBS.
+    zoom: float = 1.0
+
+
+@dataclass
+class HotkeysConfig:
+    # One QKeySequence-parseable string per costume slot (index 0-8 ->
+    # "1".."9", index 9 -> "0", matching the on-screen 1-9,0 numbering).
+    # Remappable from Settings' Hotkeys group (QKeySequenceEdit widgets,
+    # one key per slot -- render.py resolves each string back to a plain
+    # Qt.Key live in keyPressEvent, so a rebind takes effect immediately).
+    #
+    # These only fire while the Render Window itself has keyboard focus.
+    # A global variant (usable while OBS or another app has focus, which
+    # would otherwise be the actually-useful case while streaming) was
+    # considered and deliberately dropped 2026-09-16 -- owner's call: it
+    # would fight with whatever else on the system already claims those
+    # same keys (games, other overlays, DAW shortcuts), and that collision
+    # risk isn't worth it. Not "not built yet" -- rejected as a bad idea.
+    costume_keys: tuple[str, ...] = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+
+
+@dataclass
+class ObsConfig:
+    # Mute awareness (added 2026-09-16, see obs_link.py): reads the mute
+    # state of a named OBS input over obs-websocket -- the same server
+    # the parent `obs` management repo already drives -- and forces the
+    # avatar's mouth closed whenever it's muted, so it doesn't keep
+    # "talking" while the stream hears silence.
+    #
+    # Off by default: this tries to connect (silently, indefinitely
+    # retrying -- OBS not running is routine, not an error) the moment
+    # it's turned on, which is pointless noise for anyone who hasn't set
+    # host/port/password/input_name up yet. The owner enables it once
+    # those are filled in.
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 4455
+    # The owner types this into the running app's Settings window
+    # directly -- never pre-filled or copied in from OBS's own config by
+    # this app, and never written anywhere but this app's own
+    # settings.json (which, like the rest of unicorn-cloak/, stays
+    # outside the parent `obs` repo's git tracking -- see docs/PLAN.md's
+    # "Open questions" section).
+    password: str = ""
+    # Must match an OBS input's name exactly (case-sensitive) -- e.g.
+    # "Mic/Aux". No default: there's no way to guess the owner's actual
+    # input name, and guessing wrong would fail silently different from
+    # "not configured yet" (see obs_link.py's OBSSDKRequestError
+    # handling for what an actual typo looks like once this is set).
+    input_name: str = ""
+
+
+@dataclass
+class ControlPanelConfig:
+    """State for the single merged Editor+Settings window (added
+    2026-09-17, replacing the separate EditorWindow/SettingsWindow
+    top-level windows -- owner's request: "remember all settings/state
+    ... when closing and reopening"). Geometry fields are None until the
+    window has actually been shown once; None means "let Qt pick a
+    default position/size" rather than forcing a fixed first-launch
+    layout."""
+
+    x: int | None = None
+    y: int | None = None
+    # Wide enough that the canvas pane (60% of this, see
+    # control_panel_window.py's _apply_initial_splitter_sizes) shows the
+    # avatar close to its real Render Window size by default, not as a
+    # cramped sidebar -- owner's request, 2026-09-17: "the preview/editor
+    # should be the primary feature."
+    width: int = 1600
+    height: int = 880
+    active_tab: int = 0
+    # "live_preview" mirrors the real Render Window (reacts to actual
+    # mic/blink); "edit" is the interactive drag-to-position canvas.
+    # Defaults to live_preview per owner's explicit choice.
+    canvas_mode: str = "live_preview"
+    # None = use the default 60/40 canvas/tabs split; once the user drags
+    # the splitter, this remembers exactly where they left it.
+    splitter_sizes: tuple[int, int] | None = None
+    show_origin_guides: bool = False
+    show_hidden_ghosted: bool = False
+    # Pixel spacing of the edit-canvas grid overlay (replaces the old
+    # origin crosshair) -- configurable per owner's request.
+    grid_spacing_px: int = 100
+    # Which collapsible sections (identified by their header title) are
+    # currently collapsed. "Position & Hierarchy"/"Animation" start
+    # collapsed on a first launch (owner's request, 2026-09-17, when both
+    # moved from the Sprites tab to the Behavior tab: Motion is what most
+    # people tune first) -- _apply_persisted_ui_state() applies this
+    # tuple unconditionally on construction, so this default, not the
+    # CollapsibleSection constructor's own `collapsed=` arg, is what
+    # actually controls first-launch state.
+    collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation")
+
+
+@dataclass
+class Config:
+    avatar_path: str = DEFAULT_AVATAR_PATH
+    audio: AudioConfig = field(default_factory=AudioConfig)
+    motion: MotionConfig = field(default_factory=MotionConfig)
+    window: WindowConfig = field(default_factory=WindowConfig)
+    hotkeys: HotkeysConfig = field(default_factory=HotkeysConfig)
+    obs: ObsConfig = field(default_factory=ObsConfig)
+    control_panel: ControlPanelConfig = field(default_factory=ControlPanelConfig)
+
+
+def _merge(cls, current, overrides: dict):
+    known = {f.name for f in fields(cls)}
+    unknown = set(overrides) - known
+    if unknown:
+        raise ValueError(f"unknown {cls.__name__} setting(s): {sorted(unknown)}")
+    return cls(**{**vars(current), **overrides})
+
+
+def load_state(path: str | Path = DEFAULT_STATE_PATH) -> Config:
+    path = Path(path)
+    config = Config()
+    if not path.exists():
+        return config
+
+    with path.open() as f:
+        raw = json.load(f)
+    raw = _migrate_raw_config(raw)
+
+    if "avatar_path" in raw:
+        config.avatar_path = raw["avatar_path"]
+    if "audio" in raw:
+        config.audio = _merge(AudioConfig, config.audio, raw["audio"])
+    if "motion" in raw:
+        config.motion = _merge(MotionConfig, config.motion, raw["motion"])
+    if "window" in raw:
+        config.window = _merge(WindowConfig, config.window, raw["window"])
+    if "hotkeys" in raw:
+        config.hotkeys = _merge(HotkeysConfig, config.hotkeys, raw["hotkeys"])
+        # JSON has no tuple type -- _merge hands back whatever list came
+        # out of the file verbatim; normalize back to a tuple so this
+        # field's type stays consistent regardless of load vs. default.
+        config.hotkeys.costume_keys = tuple(config.hotkeys.costume_keys)
+    if "obs" in raw:
+        config.obs = _merge(ObsConfig, config.obs, raw["obs"])
+    if "control_panel" in raw:
+        config.control_panel = _merge(ControlPanelConfig, config.control_panel, raw["control_panel"])
+        # Same tuple-normalization as hotkeys.costume_keys above.
+        config.control_panel.collapsed_sections = tuple(config.control_panel.collapsed_sections)
+        if config.control_panel.splitter_sizes is not None:
+            config.control_panel.splitter_sizes = tuple(config.control_panel.splitter_sizes)
+    return config
+
+
+def save_state(config: Config, path: str | Path = DEFAULT_STATE_PATH) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        _CONFIG_VERSION_KEY: CURRENT_CONFIG_VERSION,
+        "avatar_path": config.avatar_path,
+        "audio": asdict(config.audio),
+        "motion": asdict(config.motion),
+        "window": asdict(config.window),
+        "hotkeys": asdict(config.hotkeys),
+        "obs": asdict(config.obs),
+        "control_panel": asdict(config.control_panel),
+    }
+
+    if path.exists():
+        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.remove(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
