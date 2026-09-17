@@ -2109,6 +2109,74 @@ state/expression assignments if it has any"):
     `test_selecting_an_untagged_sprite_leaves_collapsed_sections_alone`).
     **345 tests total.**
 
+**Committed to git + docs reorg + default avatar replaced, 2026-09-17,
+owner's request** ("i have one or two more iterations... but for now..
+let's replace our default model!... but first, it looks like you
+haven't been committing on a regular basis, please make sure everything
+is committed.. and move all the cloak related docs into
+unicorn-cloak/docs/... when we're done i'll be moving it out to it's
+own repo" + a follow-up: "wire that new model all up w/all the
+behaviors, etc.."):
+  - **Housekeeping first, as asked.** This folder had been untracked
+    inside the `obs` repo the whole time (a deliberate earlier choice,
+    documented in this file's own "Open questions" section) -- the
+    owner's own git-conventions rule for `obs` ("commit and push at the
+    end of every meaningful iteration, without waiting to be asked")
+    was never actually being followed for anything under here. Moved
+    `PLAN.md` to `docs/PLAN.md` (this file), added a local
+    `.gitignore` (personal `settings.json`, `.pytest_cache/`,
+    `*.egg-info/` -- `.venv/`/`__pycache__/`/`*.bak` were already
+    covered by the parent repo's own root `.gitignore`), fixed every
+    internal `PLAN.md` cross-reference to the new path, and committed
+    the whole app in three commits (the app itself; the new default
+    avatar, below; a small doc-link fix in the parent repo's own
+    README.md/CLAUDE.md) -- then pushed, per that same standing
+    convention.
+  - **Default avatar replaced** with a new asset set the owner built,
+    `assets/unicorn-demo/` (17 production PNG layers, each the same
+    1216×1296 canvas per its own `README.txt`, plus two reference-only
+    images) -- assembled into `unicorn-demo.uc` by a one-off build
+    script (not committed -- see `persistence.save_avatar`/`rig.Sprite`
+    directly for the actual shape) and set as `DEFAULT_AVATAR_PATH`.
+    That constant was also made package-relative
+    (`Path(__file__).resolve().parents[2] / "assets" / ...`, matching
+    `DEFAULT_STATE_PATH`'s own existing pattern) instead of an absolute
+    path under `/home/jj/projects/...` that only ever existed on this
+    one machine -- worth fixing now specifically because this folder is
+    headed for its own repo, where that path would have been dead on
+    arrival for anyone else (or even this owner, post-move).
+  - **Fully wired, not just swapped in as a flat image stack** (the
+    owner's explicit follow-up ask) -- every layer got real
+    Group/State/Talk/Blink tagging, not left blank the way the
+    *previous* default avatar actually was (checked directly: its own
+    `.save` file has `groupName`/`stateName` empty on every sprite,
+    despite the app fully supporting them since 2026-09-16). Mouth
+    (Group "Mouth"): Closed gated `TALK_QUIET_ONLY` ("Only when quiet",
+    not `0`/"Always visible" -- the exact bug this value exists to
+    prevent, per `motion.py`'s own docstring), two Slight Open and two
+    Wide Open sprites as alternating Variant pairs. Eyes (Group "Eyes"):
+    real ambiguity here, genuinely asked rather than guessed (four PNGs
+    -- regular/open/squint/closed -- with no single obviously-correct
+    mapping to the app's two-band blink model) -- owner's answer: Open +
+    Squint alternate as the two "eyes open" Variants (confirmed this
+    exactly matches both `motion.py`'s own docstring example *and* the
+    previous default avatar's real `.save` content, `eyes-open-wide-01`
+    paired with `eyes-squint-01`, found by reading it directly rather
+    than assumed), Closed is the mid-blink frame, Regular became a
+    Manually-driven expression instead. Hoodie/vest costume slots
+    (slot 1/2) using the existing costume-layer system, matching the
+    two alternate outfits the asset set actually provides -- hoodie
+    default, matching the asset set's own `preview_hoodie.png`
+    reference exactly; the bare-torso layer shows only under the vest.
+    Verified zero `rig_lint` issues and with real renders of both
+    costumes, quiet/wide talk states, the blink frame, and the manual
+    expression -- not just "it loads without crashing."
+  - `test_rig_lint.py`'s own end-to-end sanity test against "the real
+    default avatar" now actually runs instead of skipping (the file is
+    in the repo, not owner-machine-only) -- renamed and re-commented to
+    match, since it was still named/worded around the *previous*
+    default avatar's own now-superseded bug fix.
+
 ---
 
 ## 0. What we're actually replacing
