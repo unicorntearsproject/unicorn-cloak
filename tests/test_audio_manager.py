@@ -27,7 +27,7 @@ def test_start_launches_a_microphone_by_default(qapp, monkeypatch):
     started = []
     monkeypatch.setattr(
         "unicorn_cloak.audio_manager.Microphone",
-        lambda **kwargs: type("M", (), {"start": lambda self: started.append(True), "stop": lambda self: None, "blocksize": 1024, "samplerate": 44100})(),
+        lambda **kwargs: type("M", (), {"start": lambda self: started.append(True), "stop": lambda self, abandon=False: None, "blocksize": 1024, "samplerate": 44100})(),
     )
     manager = AudioManager(Config())
     manager.start()
@@ -40,7 +40,7 @@ def test_switch_to_file_stops_the_microphone(qapp, monkeypatch):
         "unicorn_cloak.audio_manager.Microphone",
         lambda **kwargs: type("M", (), {
             "start": lambda self: None,
-            "stop": lambda self: stopped.append(True),
+            "stop": lambda self, abandon=False: stopped.append(True),
             "blocksize": 1024, "samplerate": 44100,
         })(),
     )
@@ -135,8 +135,8 @@ def _fake_microphone_class(started=None, stopped=None):
         def start(self):
             started.append(True)
 
-        def stop(self):
-            stopped.append(True)
+        def stop(self, *, abandon=False):
+            stopped.append(abandon)
 
     return _FakeMic, started, stopped
 
@@ -197,6 +197,33 @@ def test_stop_loop_restores_microphone_by_default(qapp, monkeypatch):
     assert manager.is_looping is False
     assert started == [True]  # switch_to_microphone restarted the mic
     manager.shutdown()
+
+
+def test_shutdown_abandons_the_microphone_but_switching_sources_does_not(qapp, monkeypatch):
+    # Regression 2026-09-17, owner's report (real machine, OBS open
+    # sharing the mic): PortAudio's own JACK hostapi hit a hard C-level
+    # assertion inside Microphone.stop()'s stream.abort()/close() calls.
+    # shutdown() is the one caller that's always immediately followed by
+    # the whole process os._exit()ing (see __main__.py's on_quit()), so
+    # it's the only one that should skip that teardown -- a mid-session
+    # source switch must still release the device properly.
+    FakeMic, _started, stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    manager.switch_to_file("/tmp/whatever.mp3")
+    assert stopped == [False]  # normal switch -- real teardown, not abandoned
+
+    stopped.clear()
+    manager.shutdown()
+    assert stopped == []  # mic was already stopped by the switch above -- nothing to shut down
+
+    stopped.clear()
+    manager2 = AudioManager(Config())
+    manager2.start()  # fresh mic, running
+    manager2.shutdown()
+    assert stopped == [True]  # shutdown's own stop -- abandon=True
 
 
 def test_calling_start_recording_and_loop_twice_is_a_noop_while_recording(qapp, monkeypatch):

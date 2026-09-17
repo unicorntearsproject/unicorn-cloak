@@ -2224,6 +2224,53 @@ pair, normal manual, mirroring the answer given for unicorn-demo.
     see this file's own next entry once that's actually investigated,
     not guessed at from here.
 
+**Quit-crash root-caused and fixed; mic-dropout investigated but not
+conclusively resolved, 2026-09-17, same owner report.** Confirmed this
+machine's actual audio setup first, not assumed: no real `jackd` running
+-- `pipewire-jack-audio-connection-kit` provides `libjack.so.0` as a
+PipeWire-backed JACK-compatible shim, and PortAudio's JACK hostapi device
+list (`sd.query_hostapis()`) showed OBS's own nodes ("OBS", "OBS-Monitor")
+sitting on the *same* graph as this app's own mic device -- confirming
+the multi-client JACK contention theory from earlier today, not just
+plausible-sounding guesswork.
+  - **Root cause of the crash, and why the earlier `os._exit()` fix
+    didn't cover it**: that fix only skips Python's `atexit` handlers
+    (specifically `sounddevice`'s own, which calls `Pa_Terminate()`) --
+    but this crash happens *before* that code ever runs, synchronously
+    inside `Microphone.stop()`'s own `stream.abort()`/`stream.close()`
+    calls, called from `on_quit()` while `app.exec()` is still running.
+    A hard C-level assertion inside PortAudio's own JACK hostapi isn't a
+    Python exception, so no `try`/`except` here could ever have caught
+    it regardless of where it was placed.
+  - **Fix**: `Microphone.stop()` gained an `abandon` parameter -- when
+    True, skips the `stream.abort()`/`close()` calls entirely rather
+    than attempting-and-ignoring-exceptions (never actually an option
+    for a C-level abort). `AudioManager.shutdown()` is the *only* caller
+    that passes `abandon=True`, since it's the only one always
+    immediately followed by the whole process `os._exit()`ing -- every
+    other caller (switching sources mid-session, the app continuing to
+    run) still gets the real, full teardown, since those genuinely need
+    the device released. Two new tests directly on `Microphone.stop()`
+    proving the calls are actually skipped vs. actually made
+    (`test_microphone_stop_abandon_skips_stream_teardown`,
+    `test_microphone_stop_without_abandon_still_tears_down_the_stream`),
+    plus one on `AudioManager` proving only `shutdown()` passes
+    `abandon=True` while a live source switch does not
+    (`test_shutdown_abandons_the_microphone_but_switching_sources_does_not`).
+    Three existing hand-rolled `Microphone` test fakes needed their own
+    `stop()` signature updated to accept the new keyword -- caught by the
+    full suite, not missed.
+  - **Mic-dropout, honestly unresolved**: checked for an obvious
+    lingering cause -- no stale `unicorn_cloak` process, no obviously
+    stuck PipeWire node (the real mic source showed `SUSPENDED`, i.e.
+    idle, not stuck) -- found nothing conclusive. Best working theory,
+    not confirmed: a previous crash-corrupted JACK client registration
+    for this app's own stream, which the crash fix above should prevent
+    from recurring, but this is a hypothesis to be confirmed by the
+    owner actually re-testing with OBS open, not a verified fix in its
+    own right. Could not reproduce the live multi-client contention
+    condition in this environment to test more conclusively.
+
 ---
 
 ## 0. What we're actually replacing

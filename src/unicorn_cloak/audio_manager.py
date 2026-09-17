@@ -189,7 +189,11 @@ class AudioManager(QObject):
             self.switch_to_microphone()
 
     def shutdown(self) -> None:
-        self._stop_microphone()
+        # abandon=True: see Microphone.stop()'s own docstring -- only
+        # safe here because __main__.py's on_quit() (the only caller of
+        # this method) is always immediately followed by the whole
+        # process os._exit()ing, never by the app continuing to run.
+        self._stop_microphone(abandon=True)
         self._stop_file()
         self._stop_loop()
 
@@ -241,9 +245,9 @@ class AudioManager(QObject):
         )
         self._mic.start()
 
-    def _stop_microphone(self) -> None:
+    def _stop_microphone(self, *, abandon: bool = False) -> None:
         if self._mic is not None:
-            self._mic.stop()
+            self._mic.stop(abandon=abandon)
             self._mic = None
 
     def _stop_file(self) -> None:

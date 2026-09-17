@@ -312,6 +312,61 @@ def test_microphone_reconnects_after_read_failure_mid_stream(monkeypatch):
     assert any("disappeared mid-stream" in e for e in errors)
 
 
+def test_microphone_stop_abandon_skips_stream_teardown(monkeypatch):
+    # Regression 2026-09-17, owner's report (real machine, OBS open
+    # sharing the mic): PortAudio's own JACK hostapi hit a hard C-level
+    # assertion inside stream.abort()/close() -- see Microphone.stop()'s
+    # own docstring. abandon=True must skip those calls entirely, not
+    # just attempt-and-ignore-exceptions (a C-level abort() isn't a
+    # Python exception in the first place, so "just catch it" was never
+    # actually an option).
+    close_calls = {"abort": 0, "close": 0}
+
+    class _CountingStream(_FakeStream):
+        def abort(self) -> None:
+            close_calls["abort"] += 1
+
+        def close(self) -> None:
+            close_calls["close"] += 1
+
+    def fake_input_stream(**kwargs):
+        return _CountingStream(["ok"], **kwargs)
+
+    monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+
+    mic = Microphone(on_volume=lambda v: None)
+    mic.start()
+    time.sleep(0.05)
+    mic.stop(abandon=True)
+
+    assert close_calls == {"abort": 0, "close": 0}
+
+
+def test_microphone_stop_without_abandon_still_tears_down_the_stream(monkeypatch):
+    close_calls = {"abort": 0, "close": 0}
+
+    class _CountingStream(_FakeStream):
+        def abort(self) -> None:
+            close_calls["abort"] += 1
+
+        def close(self) -> None:
+            close_calls["close"] += 1
+
+    def fake_input_stream(**kwargs):
+        return _CountingStream(["ok"], **kwargs)
+
+    monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+
+    mic = Microphone(on_volume=lambda v: None)
+    mic.start()
+    time.sleep(0.05)
+    mic.stop()  # default: abandon=False
+
+    assert close_calls == {"abort": 1, "close": 1}
+
+
 def test_microphone_stop_is_prompt_even_mid_poll(monkeypatch):
     # The "ok" behavior streams forever; stop() must still return quickly
     # (bounded by the poll interval, not by waiting for a read to finish).

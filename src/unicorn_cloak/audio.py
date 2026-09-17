@@ -285,6 +285,9 @@ class Microphone:
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
         self._stream: sd.InputStream | None = None
+        # See stop()'s own docstring -- set just before _stop_event, read
+        # by _run_one_connection's finally block on the worker thread.
+        self._abandon_on_stop = False
 
     def start(self) -> None:
         self._stop_event.clear()
@@ -293,7 +296,24 @@ class Microphone:
         )
         self._worker_thread.start()
 
-    def stop(self) -> None:
+    def stop(self, *, abandon: bool = False) -> None:
+        """abandon=True skips this stream's own PortAudio teardown
+        (stream.abort()/close()) entirely -- for the one case where the
+        whole process is about to os._exit() immediately after anyway
+        (see __main__.py's on_quit()), never for an in-app source switch
+        that needs the device actually released while the app keeps
+        running. Real-machine crash, 2026-09-17 (owner's report, with
+        OBS open sharing the same mic): PortAudio's own JACK hostapi hit
+        a hard C-level assertion inside its stream-close path
+        ('pa_jack.c', "Expression 'result' failed") -- not a Python
+        exception, so nothing here can catch it once triggered, and nothing
+        upstream (this app's own os._exit() fix from earlier today) helps
+        either, since this happens synchronously in this normal stop()
+        call, well before that atexit-skipping code ever runs. Skipping
+        the call outright, when the OS is about to reclaim the device
+        handle regardless, is the only way to avoid the crash rather than
+        merely reducing its odds."""
+        self._abandon_on_stop = abandon
         self._stop_event.set()
         if self._worker_thread is not None:
             self._worker_thread.join(timeout=2.0)
@@ -367,14 +387,15 @@ class Microphone:
                 self._on_volume(rms_volume(mono))
         finally:
             self._stream = None
-            try:
-                stream.abort()
-            except Exception:
-                pass
-            try:
-                stream.close()
-            except Exception:
-                pass
+            if not self._abandon_on_stop:
+                try:
+                    stream.abort()
+                except Exception:
+                    pass
+                try:
+                    stream.close()
+                except Exception:
+                    pass
 
 
 # --- File-based playback (alternate volume source) --------------------
