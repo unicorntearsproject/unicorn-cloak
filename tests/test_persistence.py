@@ -108,13 +108,15 @@ def test_avatar_01_save_preserves_every_raw_key(tmp_path):
     sprite_keys = set(original_raw.keys()) - {"__format_version__"}
     assert sprite_keys == set(roundtripped_raw.keys()) - {"__format_version__"}
     # variant, hidden, groupName, stateName, and manualDriven (all added
-    # 2026-09-16, see rig.Sprite) have no legacy counterpart, so they're
-    # expected to be *gained* on every sprite the first time an old real
-    # file round-trips through this app -- that's intentional, not a
-    # dropped-field bug, so they're excluded from "extra" only (never
-    # from "missing": once written, a key must stay written).
+    # 2026-09-16, see rig.Sprite), plus scaleX/scaleY (added 2026-09-17),
+    # have no legacy counterpart, so they're expected to be *gained* on
+    # every sprite the first time an old real file round-trips through
+    # this app -- that's intentional, not a dropped-field bug, so they're
+    # excluded from "extra" only (never from "missing": once written, a
+    # key must stay written).
     _NEW_KEYS_WITH_NO_LEGACY_COUNTERPART = {
         "variant", "hidden", "groupName", "stateName", "manualDriven",
+        "scaleX", "scaleY",
     }
     for sprite_key in sprite_keys:
         original_entry = original_raw[sprite_key]
@@ -291,6 +293,34 @@ def test_save_writes_group_state_and_manual_driven_fields(tmp_path):
     assert raw["0"]["groupName"] == "Mouth"
     assert raw["0"]["stateName"] == "Laughing"
     assert raw["0"]["manualDriven"] is True
+
+
+def test_load_preserves_scale_fields(tmp_path):
+    path = tmp_path / "scaled.save"
+    path.write_text(json.dumps({"0": _sprite_entry(scaleX=1.5, scaleY=0.75)}))
+    rig = load_avatar(path)
+    sprite = rig.sprites[0]
+    assert sprite.scale_x == 1.5
+    assert sprite.scale_y == 0.75
+
+
+def test_load_defaults_scale_to_one_when_absent(tmp_path):
+    path = tmp_path / "no-scale.save"
+    path.write_text(json.dumps({"0": _sprite_entry()}))
+    rig = load_avatar(path)
+    sprite = rig.sprites[0]
+    assert sprite.scale_x == 1.0
+    assert sprite.scale_y == 1.0
+
+
+def test_save_writes_scale_fields(tmp_path):
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png", scale_x=1.5, scale_y=0.75)])
+    path = tmp_path / "out.save"
+    save_avatar(rig, path)
+    with path.open() as f:
+        raw = json.load(f)
+    assert raw["0"]["scaleX"] == 1.5
+    assert raw["0"]["scaleY"] == 0.75
 
 
 def test_save_is_atomic_no_leftover_tmp_file(tmp_path):

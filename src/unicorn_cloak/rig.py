@@ -91,6 +91,19 @@ class Sprite:
     offset: tuple[float, float] = (0.0, 0.0)
     z_index: int = 0
 
+    # Static, authored size multiplier -- added 2026-09-17 (owner's
+    # request: "add scale features to the positioning section... a lock
+    # toggle... that scales x & y maintaining proportions"). 1.0 is the
+    # image's own native size. Deliberately separate from
+    # `stretch_amount` below, which is a *reactive* squash/stretch that
+    # animates with drag velocity and always returns to (1, 1) at rest --
+    # this is a fixed baseline the reactive stretch multiplies on top of,
+    # for permanently resizing a layer (e.g. a smaller/larger prop) or
+    # correcting art that wasn't authored at the same scale as everything
+    # else it's layered with.
+    scale_x: float = 1.0
+    scale_y: float = 1.0
+
     # Secondary motion: idle sway (independent sine per axis)
     sway_x_freq: float = 0.0
     sway_x_amp: float = 0.0

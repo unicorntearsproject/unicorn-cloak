@@ -590,11 +590,18 @@ class RenderWindow(QWidget):
             # gets a fresh QTransform exactly as before; this only skips
             # the call once its own rotation/scale have actually settled
             # back to nothing.
+            # sprite.scale_x/scale_y (static, authored -- see rig.Sprite's
+            # own comment) multiplies on top of rt.scale (the reactive
+            # squash/stretch, which returns to (1, 1) at rest) rather than
+            # replacing it, so a permanently-resized layer still squashes
+            # and stretches normally around its own authored size.
             rot_deg = math.degrees(rt.rotation_rad)
+            combined_scale_x = sprite.scale_x * rt.scale[0]
+            combined_scale_y = sprite.scale_y * rt.scale[1]
             is_identity = (
                 abs(rot_deg) < 1e-6
-                and abs(rt.scale[0] - 1.0) < 1e-6
-                and abs(rt.scale[1] - 1.0) < 1e-6
+                and abs(combined_scale_x - 1.0) < 1e-6
+                and abs(combined_scale_y - 1.0) < 1e-6
             )
             if is_identity:
                 if not rt.transform_is_identity:
@@ -603,7 +610,7 @@ class RenderWindow(QWidget):
             else:
                 transform = QTransform()
                 transform.rotate(rot_deg)
-                transform.scale(rt.scale[0], rt.scale[1])
+                transform.scale(combined_scale_x, combined_scale_y)
                 rt.item.setTransform(transform)
                 rt.transform_is_identity = False
 

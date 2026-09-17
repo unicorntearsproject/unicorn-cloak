@@ -5,6 +5,12 @@ def make_sprite(id, parent_id=None, position=(0.0, 0.0), z_index=0):
     return Sprite(id=id, path=f"/tmp/{id}.png", parent_id=parent_id, position=position, z_index=z_index)
 
 
+def test_sprite_scale_defaults_to_native_size():
+    sprite = make_sprite(1)
+    assert sprite.scale_x == 1.0
+    assert sprite.scale_y == 1.0
+
+
 def test_generate_sprite_id_avoids_collisions():
     existing = {1, 2, 3}
     for _ in range(50):

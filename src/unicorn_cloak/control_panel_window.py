@@ -41,6 +41,7 @@ from PySide6.QtGui import (
     QPixmap,
     QRadialGradient,
     QShortcut,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -155,6 +156,10 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
         self.setPos(*sprite.position)
+        # Edit canvas is a static preview (no rotation/reactive stretch --
+        # see render.py's own comment on those) -- scale is the one
+        # authored-transform property it still needs to show.
+        self.setTransform(QTransform().scale(sprite.scale_x, sprite.scale_y))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._panel.push_undo_snapshot()
@@ -846,6 +851,40 @@ class ControlPanelWindow(QWidget):
         self.property_form.addRow("Offset Y", self.offset_y)
         self.property_form.addRow("Z-index", self.z_index)
         self.property_form.addRow("Parent", self.parent_combo)
+
+        # Scale, owner's request, 2026-09-17: "add scale features to the
+        # positioning section... w/a lock toggle (on by default) that
+        # scales x & y maintaining proportions." A toggle QPushButton, not
+        # a checkbox -- matches Guide/Ghost's own established convention
+        # in this app. Linking is handled in _on_scale_x/y_changed, not
+        # here; this row just lays the three widgets out.
+        self.scale_x = self._spin(0.01, 100.0)
+        self.scale_y = self._spin(0.01, 100.0)
+        self.scale_lock = QPushButton("🔗 Lock proportions")
+        self.scale_lock.setCheckable(True)
+        self.scale_lock.setChecked(True)
+        self.scale_x.setToolTip(
+            "Permanently resizes this sprite horizontally, e.g. for a\n"
+            "prop drawn at the wrong scale relative to everything else\n"
+            "it's layered with. 1.0 is the image's own native size.\n"
+            "Independent of the reactive squash/stretch on the Behavior\n"
+            "tab's Motion section, which multiplies on top of this."
+        )
+        self.scale_y.setToolTip(
+            self.scale_x.toolTip().replace("horizontally", "vertically")
+        )
+        self.scale_lock.setToolTip(
+            "While on (default), editing Scale X or Scale Y updates the\n"
+            "other to match, so the sprite always scales proportionally.\n"
+            "Turn off to stretch width and height independently."
+        )
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(QLabel("X"))
+        scale_row.addWidget(self.scale_x)
+        scale_row.addWidget(QLabel("Y"))
+        scale_row.addWidget(self.scale_y)
+        scale_row.addWidget(self.scale_lock)
+        self.property_form.addRow("Scale", scale_row)
         position_section.body_layout.addLayout(self.property_form)
 
         animation_section = CollapsibleSection("Animation", collapsed=True)
@@ -875,6 +914,7 @@ class ControlPanelWindow(QWidget):
 
         property_fields = (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo,
+            self.scale_x, self.scale_y, self.scale_lock,
             self.frames, self.anim_speed, self.variant,
         )
         for form, fields in (
@@ -887,6 +927,12 @@ class ControlPanelWindow(QWidget):
                     label.setToolTip(field_widget.toolTip())
         for box in (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.variant, self.anim_speed):
             box.valueChanged.connect(self._on_property_changed)
+        # Scale X/Y get their own handlers, not the generic loop above --
+        # each one may also need to update the *other* spinbox's value
+        # when proportions are locked, which _on_property_changed alone
+        # doesn't do.
+        self.scale_x.valueChanged.connect(self._on_scale_x_changed)
+        self.scale_y.valueChanged.connect(self._on_scale_y_changed)
         self.frames.valueChanged.connect(self._on_frames_changed)
         self.parent_combo.currentIndexChanged.connect(self._on_parent_changed)
 
@@ -1528,6 +1574,7 @@ class ControlPanelWindow(QWidget):
         self.ghost_btn.setChecked(cp.show_hidden_ghosted)
         self.canvas_mode_btn.setChecked(cp.canvas_mode == "edit")
         self._on_canvas_mode_toggled(self.canvas_mode_btn.isChecked())
+        self.scale_lock.setChecked(cp.scale_lock_proportions)
         self.tabs.setCurrentIndex(min(cp.active_tab, self.tabs.count() - 1))
         self.tabs.currentChanged.connect(self._on_tab_changed)
         for title, section in self._sections.items():
@@ -1652,6 +1699,7 @@ class ControlPanelWindow(QWidget):
         cp.canvas_mode = "edit" if self.canvas_mode_btn.isChecked() else "live_preview"
         cp.show_origin_guides = self.guide_btn.isChecked()
         cp.show_hidden_ghosted = self.ghost_btn.isChecked()
+        cp.scale_lock_proportions = self.scale_lock.isChecked()
         cp.grid_spacing_px = self.grid_spacing.value()
         cp.collapsed_sections = tuple(
             title for title, section in self._sections.items() if section.is_collapsed()
@@ -1949,6 +1997,8 @@ class ControlPanelWindow(QWidget):
         self.offset_x.setValue(sprite.offset[0])
         self.offset_y.setValue(sprite.offset[1])
         self.z_index.setValue(sprite.z_index)
+        self.scale_x.setValue(sprite.scale_x)
+        self.scale_y.setValue(sprite.scale_y)
         self._populate_group_name_combo(sprite)
         self._populate_state_name_combo(sprite.group_name, sprite.state_name)
         self.manual_driven.setChecked(sprite.manual_driven)
@@ -2018,6 +2068,8 @@ class ControlPanelWindow(QWidget):
         sprite.position = (self.pos_x.value(), self.pos_y.value())
         sprite.offset = (self.offset_x.value(), self.offset_y.value())
         sprite.z_index = int(self.z_index.value())
+        sprite.scale_x = self.scale_x.value()
+        sprite.scale_y = self.scale_y.value()
         sprite.group_name = self.group_name.currentText().strip()
         sprite.state_name = self.state_name.currentText().strip()
         sprite.manual_driven = self.manual_driven.isChecked()
@@ -2031,6 +2083,7 @@ class ControlPanelWindow(QWidget):
         item.setOffset(-item.pixmap().width() / 2 + sprite.offset[0], -item.pixmap().height() / 2 + sprite.offset[1])
         item.setZValue(sprite.z_index)
         item.setFlag(QGraphicsItem.ItemStacksBehindParent, sprite.z_index < 0)
+        item.setTransform(QTransform().scale(sprite.scale_x, sprite.scale_y))
         self._refresh_preview_expression_combo()
         self._refresh_expressions_section()
         self._apply_preview_opacity(item)
@@ -2038,6 +2091,24 @@ class ControlPanelWindow(QWidget):
 
     def _on_manual_driven_toggled(self, _checked: bool) -> None:
         self._update_manual_driven_enabled_state()
+        self._on_property_changed(None)
+
+    def _on_scale_x_changed(self, value: float) -> None:
+        if self._updating_form:
+            return
+        if self.scale_lock.isChecked() and abs(self.scale_y.value() - value) > 1e-9:
+            self.scale_y.blockSignals(True)
+            self.scale_y.setValue(value)
+            self.scale_y.blockSignals(False)
+        self._on_property_changed(None)
+
+    def _on_scale_y_changed(self, value: float) -> None:
+        if self._updating_form:
+            return
+        if self.scale_lock.isChecked() and abs(self.scale_x.value() - value) > 1e-9:
+            self.scale_x.blockSignals(True)
+            self.scale_x.setValue(value)
+            self.scale_x.blockSignals(False)
         self._on_property_changed(None)
 
     def _on_group_name_changed(self, _text: str) -> None:

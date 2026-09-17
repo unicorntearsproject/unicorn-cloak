@@ -1,5 +1,6 @@
 import time
 
+import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem
@@ -676,6 +677,22 @@ def test_static_sprite_transform_stays_a_plain_identity(qapp):
         window._simulate_step()
     window._apply_to_scene()
     assert item.transform().isIdentity()
+
+
+def test_static_scale_produces_a_non_identity_transform_even_at_rest(qapp):
+    png = make_test_png_bytes()
+    sprite = Sprite(id=1, path="a.png", image_data=png, scale_x=1.5, scale_y=0.75)
+    rig = AvatarRig(name="t", sprites=[sprite])
+    window = RenderWindow(rig, MotionConfig())
+    item = window._runtimes[1].item
+
+    window._simulate_step()
+    window._apply_to_scene()
+
+    transform = item.transform()
+    assert not transform.isIdentity()
+    assert transform.m11() == pytest.approx(1.5)
+    assert transform.m22() == pytest.approx(0.75)
 
 
 def test_rotating_sprite_gets_a_real_non_identity_transform(qapp):

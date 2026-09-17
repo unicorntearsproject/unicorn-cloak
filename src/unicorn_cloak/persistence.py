@@ -123,6 +123,11 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
                 position=parse_vector2(entry["pos"]),
                 offset=parse_vector2(entry.get("offset", "Vector2(0, 0)")),
                 z_index=entry.get("zindex", 0),
+                # New 2026-09-17, absent from every file saved before
+                # today -- default to 1.0 (native size) so an older file
+                # loads showing exactly what it always did.
+                scale_x=entry.get("scaleX", 1.0),
+                scale_y=entry.get("scaleY", 1.0),
                 sway_x_freq=entry.get("xFrq", 0.0),
                 sway_x_amp=entry.get("xAmp", 0.0),
                 sway_y_freq=entry.get("yFrq", 0.0),
@@ -178,6 +183,8 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
             "pos": format_vector2(sprite.position),
             "offset": format_vector2(sprite.offset),
             "zindex": sprite.z_index,
+            "scaleX": sprite.scale_x,
+            "scaleY": sprite.scale_y,
             "drag": sprite.drag_speed,
             "xFrq": sprite.sway_x_freq,
             "xAmp": sprite.sway_x_amp,

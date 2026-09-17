@@ -519,6 +519,49 @@ def test_browsing_a_file_shows_the_elided_label(qapp, tmp_path, monkeypatch):
     assert config.audio.file_path == long_path
 
 
+# --- Scale ------------------------------------------------------------------
+
+
+def test_scale_field_loads_the_selected_sprites_values(qapp, tmp_path):
+    png = make_test_png_bytes()
+    sprites = [Sprite(id=1, path="a.png", image_data=png, scale_x=1.5, scale_y=0.75)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    assert panel.scale_x.value() == 1.5
+    assert panel.scale_y.value() == 0.75
+
+
+def test_scale_lock_is_checked_by_default(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.scale_lock.isChecked() is True
+
+
+def test_scale_lock_links_x_and_y_when_checked(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(True)
+    panel.scale_x.setValue(2.0)
+    assert panel.scale_y.value() == 2.0
+    assert panel.rig.by_id(1).scale_x == 2.0
+    assert panel.rig.by_id(1).scale_y == 2.0
+
+
+def test_scale_unlocked_allows_independent_x_and_y(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+    panel.scale_x.setValue(2.0)
+    assert panel.scale_y.value() != 2.0
+    assert panel.rig.by_id(1).scale_x == 2.0
+
+
+def test_scale_lock_proportions_round_trips_through_config(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.scale_lock.setChecked(False)
+    panel._capture_ui_state_into_config()
+    assert config.control_panel.scale_lock_proportions is False
+
+
 # --- Reset/Lock fields ------------------------------------------------------
 
 
@@ -586,6 +629,18 @@ def test_persisted_ui_state_is_applied_on_construction(qapp, tmp_path):
     assert panel.ghost_btn.isChecked() is True
     assert panel.tabs.currentIndex() == 1
     assert panel._sections["Layer List"].is_collapsed() is True
+
+
+def test_persisted_scale_lock_proportions_is_applied_on_construction(qapp, tmp_path):
+    from unicorn_cloak.config import ControlPanelConfig
+
+    config = Config()
+    config.control_panel = ControlPanelConfig(scale_lock_proportions=False)
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    panel = ControlPanelWindow(rig, config, window, state_path=tmp_path / "settings.json")
+
+    assert panel.scale_lock.isChecked() is False
 
 
 def test_canvas_gets_the_majority_of_the_default_width(qapp, tmp_path):
