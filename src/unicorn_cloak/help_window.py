@@ -13,8 +13,15 @@ in OBS) are genuinely new content, not extracted from anywhere. <b>Sprites</b>
 is new practical art-prep advice (canvas size, alignment, transparency,
 consistent line weight across alternate states) -- general guidance for
 *making* the PNGs this app consumes, distinct from the Sprites tab's own
-in-app field reference. <b>Reference</b> is every word of the original,
-single-tab Help window, unchanged -- the exhaustive per-field/per-section
+in-app field reference. <b>Hotkeys</b> (added 2026-09-17, owner's
+request, once Expression hotkeys and the costume/Expression assignment
+editor existed and the old one-paragraph mention inside Reference wasn't
+enough room to explain them properly) is the single source of truth for
+every keyboard/mouse shortcut and how to configure what each one does --
+Reference's own old "Hotkeys" section was cut down to a one-line pointer
+here rather than kept as a second, driftable copy. <b>Reference</b> is
+every word of the original, single-tab Help window (updated in place as
+features change, not left frozen) -- the exhaustive per-field/per-section
 reference tooltips alone don't cover (see control_panel_window.py's own
 tooltips, which this expands on rather than duplicates verbatim). No live
 data of its own anywhere in this file -- if a concept's exact numbers or
@@ -124,10 +131,14 @@ canvas.</p>
 <h3>5. Go live</h3>
 <p>Add the Render Window as an OBS Window Capture (or portal Screen
 Capture) source, matched by its title. Leave Background as Transparent
-unless you're chroma-keying. Save the avatar, then use the 1-9/0 costume
-hotkeys and any Expressions you've set up while actually streaming -- the
-Control Panel can stay closed (double-click the avatar to bring it back)
-so it never ends up in frame.</p>
+unless you're chroma-keying (or set an Image/Video instead). Save the
+avatar, then use the costume hotkeys while actually streaming -- the
+Control Panel can stay closed for these (double-click the avatar to
+bring it back) so it never ends up in frame. Expression hotkeys
+(Shift+number) are the one exception: they need the Control Panel itself
+open and focused, since they're wired to its own Expression buttons --
+keep it open somewhere outside any OBS capture if you plan to use them
+live. See the <b>Hotkeys</b> tab for the full list.</p>
 
 <h3>6. Iterate</h3>
 <p>Hot reload picks up a re-saved avatar file or a re-exported sprite PNG
@@ -195,6 +206,85 @@ top of it.</p>
 """
 )
 
+HOTKEYS_HTML = (
+    _STYLE
+    + """
+<h2>Hotkeys</h2>
+
+<h3>Render Window (needs keyboard focus there)</h3>
+<ul>
+<li><b>1-9, 0</b> — switch costume slot. Remappable per slot from the
+Application tab's <b>Hotkeys — Costumes &amp; Expressions</b> section
+(click a slot's key-capture box, press the key you want). Avoid Escape
+and avoid reusing the same key on two slots — only the first matching
+slot fires.</li>
+<li><b>Escape</b> — quit the app, with confirmation (not remappable).</li>
+</ul>
+<p>These only fire while the <b>Render Window</b> itself has keyboard
+focus, on purpose: a global variant (usable while OBS or another app has
+focus, which would otherwise be the actually-useful case while
+streaming) was considered and rejected -- it would risk colliding with
+whatever else on the system already claims the same keys (games, other
+overlays, DAW shortcuts), and that's not a trade worth making.</p>
+
+<h3>Control Panel (needs keyboard focus there instead)</h3>
+<ul>
+<li><b>Shift+1</b> through <b>Shift+9</b>, <b>Shift+0</b> — toggle an
+Expression on/off. Fixed, not remappable (unlike costume keys).</li>
+<li><b>Ctrl+Z</b> / <b>Ctrl+Shift+Z</b> — undo/redo.</li>
+</ul>
+<p><b>Important difference from costume hotkeys:</b> Expression hotkeys
+work by clicking the exact same buttons the Behavior tab's Expressions
+section already has, so they only fire while the <i>Control Panel</i>
+window has focus -- not the Render Window, and not at all while the
+Control Panel is closed. If you plan to use them live, keep the Control
+Panel open somewhere off to the side, outside whatever OBS is actually
+capturing.</p>
+
+<h3>Setting up what a costume hotkey does</h3>
+<p>Application tab → <b>Hotkeys — Costumes &amp; Expressions</b>
+(collapsed by default -- it's a lot of content). Costumes are laid out
+as two columns of five slots. Each slot has:</p>
+<ul>
+<li>Its own remappable key-capture box (see above).</li>
+<li>Zero or more <b>Hide / Show</b> sprite-pair rows. Pick a sprite in
+<b>Hide</b> -- it's hidden everywhere else and this hotkey shows it. Pick
+a sprite in <b>Show</b> -- it's shown everywhere else and this hotkey
+hides it. Click <b>+ Add swap</b> for another row under the same slot to
+swap several sprites at once (e.g. both halves of a hoodie for a vest,
+under one hotkey).</li>
+</ul>
+<p>A row only takes effect once both boxes are filled in. Clearing either
+box on an already-set-up row removes it and puts both of its sprites back
+to normal (visible everywhere) -- there's no separate delete button.
+This is purely a friendlier way to author what used to need a raw file
+edit (each sprite's own "Costume layers"); nothing about how costumes
+actually render changed.</p>
+
+<h3>Setting up what an Expression hotkey does</h3>
+<p>Same section, below Costumes. Each Shift+number slot has zero or more
+<b>Force</b> rows -- pick an Expression (any Manually-driven Group
+name/State name pair; tag one on the Sprites tab first if none exist
+yet). Add more than one row to force several groups together as one
+combined expression (e.g. a mouth shape and an eye shape at once).
+Clearing a row's dropdown removes it, same gesture as costumes.</p>
+
+<h3>Mouse (Edit-mode canvas)</h3>
+<p>Select a sprite (click it on the canvas or in the Sprites list) to see
+its handles:</p>
+<ul>
+<li>Drag the sprite itself to move it (updates Position live).</li>
+<li>Drag a corner handle to scale it -- respects the Position &amp;
+Hierarchy tab's "🔗 Lock proportions" toggle, same as typing into the
+Scale X/Y fields directly.</li>
+<li>Drag the handle floating above it to rotate it.</li>
+</ul>
+<p>All three write straight into that sprite's Position/Scale/Rotation
+fields, live -- the property panel and the canvas always stay in sync
+with each other, whichever one you just used.</p>
+"""
+)
+
 REFERENCE_HTML = (
     _STYLE
     + """
@@ -238,22 +328,8 @@ for Issues…/Guide/Ghost/Quit.</li>
 </ul>
 
 <h3>Hotkeys</h3>
-<p>These only fire while the <b>Render Window</b> has keyboard focus, on
-purpose: a global variant (usable while OBS or another app has focus,
-which would otherwise be the actually-useful case while streaming) was
-considered and rejected -- it would risk colliding with whatever else on
-the system already claims the same keys (games, other overlays, DAW
-shortcuts), and that's not a trade worth making.</p>
-<ul>
-<li><b>1-9, 0</b> — switch costume slot, by default (see below)</li>
-<li><b>Escape</b> — quit the app, with confirmation (not remappable)</li>
-</ul>
-<p>Costume-slot keys are remappable: the Application tab's <b>Hotkeys —
-costume switching</b> section has one key-capture box per slot — click it
-and press the key you want. Avoid Escape and avoid reusing the same key
-on two slots (only the first matching slot would ever fire).</p>
-<p>In the Control Panel: <b>Ctrl+Z</b> / <b>Ctrl+Shift+Z</b> for
-undo/redo.</p>
+<p>See the <b>Hotkeys</b> tab for the full list and how to set up what
+each one actually does.</p>
 
 <h3>Sprite concepts</h3>
 <p>Every layer in the avatar is a "sprite" — an image plus the rules
@@ -340,12 +416,13 @@ a static preview, not a live one.</li>
 shape, not just its rectangle (edit the file directly for now; not yet a
 field anywhere in this UI). Useful for something that should only ever
 show up inside a silhouette.</li>
-<li><b>Costume layers</b> — which of the 10 costume slots (see the 1-9/0
-hotkeys above) this sprite appears in. Every sprite defaults to "every
-slot" until you deliberately hide it from some — there's no per-slot UI
-for this yet, so it needs a file edit for now. Right now this app uses
-it to hide one broken asset (see below); everything else shows in every
-slot.</li>
+<li><b>Costume layers</b> — which of the 10 costume slots (see the
+<b>Hotkeys</b> tab) this sprite appears in. Every sprite defaults to
+"every slot" until a costume-hotkey assignment hides it from one. Set
+this up from the Application tab's Hotkeys section, not here directly —
+pick two sprites (one hidden by default and shown by this slot, one
+shown by default and hidden by this slot) and both sprites'
+Costume layers update automatically.</li>
 <li><b>Toggle</b> — a hotkey-bindable per-sprite visibility flag, carried
 over from the file format. Nothing reads it yet (no hotkey wiring
 exists), but it survives save/load untouched, so it's safe to leave set
@@ -387,7 +464,10 @@ live, on the real Render Window and in OBS -- click it again to turn it
 off. Only one state per group can be forced at a time; picking a
 different button in the same group automatically turns the previous one
 off. If nothing shows here, no sprite has been marked Manually driven
-yet. Not saved across restarts -- it's a live control, not a setting.</li>
+yet. The <i>currently forced state</i> isn't saved across restarts --
+it's a live control, not a setting -- but you can bind any of these
+buttons to a Shift+number hotkey from the Application tab's Hotkeys
+section (see the <b>Hotkeys</b> tab), which <i>is</i> saved.</li>
 </ul>
 
 <h3>Canvas controls</h3>
@@ -457,8 +537,18 @@ gravity, how often it re-triggers while you keep talking), the random
 blink timer (speed and odds), the idle mouth wobble, and the mouth/eye
 alternate rates (see Variant below).</li>
 <li><b>Position &amp; Hierarchy</b> / <b>Animation</b> sections
-(collapsed by default) — the selected sprite's
-Position/Offset/Z-index/Parent, and its Frames/Anim speed/Variant.</li>
+(collapsed by default) — <b>Zoom</b> (whole-avatar, not per-sprite —
+scales everything around its own center, regardless of which sprite, if
+any, is selected) at the top, then the selected sprite's
+Position/Offset/Z-index/Parent/Rotation/Scale, and its Frames/Anim
+speed/Variant. Rotation and Scale are static/authored values — a
+permanent tilt or resize — independent of the reactive drag-rotation and
+squash/stretch in the Motion section above, which apply on top of
+them. Scale X/Y have a "🔗 Lock proportions" toggle (on by default) so
+editing one updates the other to match. You can also drag a selected
+sprite directly on the Edit-mode canvas: its own body to move it, a
+corner handle to scale (respects the same proportion lock), or the
+handle above it to rotate.</li>
 </ul>
 
 <h3>Audio tab</h3>
@@ -512,15 +602,18 @@ before recording started.</p>
 
 <h3>Application tab</h3>
 <ul>
-<li><b>Display</b> section — Background (transparent for normal OBS use,
-or a solid color for chroma-keying/previewing) and Zoom (scales the
-avatar around its own center within the Render Window, doesn't resize
-it).</li>
+<li><b>Display</b> section — Background: Transparent (normal OBS use), a
+solid color (chroma-keying/previewing), or an Image/Video of your own
+choosing (Browse… appears once selected; video loops continuously and is
+always silent, regardless of its own audio track). Zoom moved to the
+Behavior tab's Position &amp; Hierarchy section — see Behavior tab
+below.</li>
 <li><b>Canvas</b> section — Grid spacing (px): how far apart the
 Edit-mode canvas's grid lines are, toggled on/off with the Guide button
 in the bottom bar.</li>
-<li><b>Hotkeys — costume switching</b> section — one key-capture box per
-costume slot; see Hotkeys above.</li>
+<li><b>Hotkeys — Costumes &amp; Expressions</b> section (collapsed by
+default) — set up what every costume/Expression hotkey actually does;
+see the <b>Hotkeys</b> tab for the full explanation.</li>
 </ul>
 <p>Every field has a tooltip with the short version of its own
 explanation — hover anything you're unsure about.</p>
@@ -544,6 +637,7 @@ class HelpWindow(QDialog):
         tabs.addTab(self._make_browser(OVERVIEW_HTML), "Overview")
         tabs.addTab(self._make_browser(USAGE_HTML), "Usage")
         tabs.addTab(self._make_browser(SPRITES_TIPS_HTML), "Sprites")
+        tabs.addTab(self._make_browser(HOTKEYS_HTML), "Hotkeys")
         tabs.addTab(self._make_browser(REFERENCE_HTML), "Reference")
         layout.addWidget(tabs)
 

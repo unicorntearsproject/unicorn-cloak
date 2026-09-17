@@ -2838,6 +2838,50 @@ list below).
   the undo/redo extension, the hide/show semantics themselves, and the
   Shift+number shortcut wiring.
 
+**Costumes split into two columns; new Help "Hotkeys" tab; doc audit,
+2026-09-17, owner's immediate follow-up.** "That made the window too
+large vertical and it doesn't fit on screen, let's change the costumes
+area to two columns of five costumes each" -- the 10-slot Costumes list
+(each with its own multi-row swap editor) was still too tall as one
+column even collapsed by default. Split into two `QVBoxLayout`s of 5
+slots side by side inside a `QHBoxLayout`; Expressions (also 10 slots)
+left as a single column for now since only Costumes was asked for, but
+it has the identical height problem and is a likely next ask.
+
+Also: "add a 'hotkeys' tab to the help menu and make sure all the
+tooltips are up to date and none are missing." Audited every interactive
+widget in `control_panel_window.py` (`QPushButton`/`QComboBox`/spinbox/
+`QLineEdit`/`QKeySequenceEdit` construction sites) against a nearby
+`setToolTip()` call -- all already covered, nothing missing there. The
+real gap was in `help_window.py`'s prose, several tabs behind this
+session's actual feature set:
+
+- New `HOTKEYS_HTML` tab (Overview, Usage, Sprites, **Hotkeys**,
+  Reference) -- the single source of truth for every keyboard/mouse
+  shortcut and how to configure what each one does. Reference's own old
+  one-paragraph "Hotkeys" section was cut down to a one-line pointer here
+  rather than kept as a second, driftable copy.
+- Flagged prominently, not just mentioned in passing: Expression hotkeys
+  (Shift+number) only fire while the *Control Panel* has focus, not the
+  Render Window -- a real, deliberate difference from costume hotkeys
+  (see that feature's own dated entry for why: they click the Control
+  Panel's own Expression buttons directly, to guarantee they can never
+  drift out of sync with them). The Usage tab's "Go live" step used to
+  say "the Control Panel can stay closed" unconditionally, which is now
+  only true for costumes -- corrected there too, not just in the new tab.
+- Reference tab's stale content fixed to match everything else built
+  this session: "Costume layers" no longer says "needs a file edit for
+  now" (it's the new editor); "Expressions" section now mentions the
+  hotkey binding; "Position & Hierarchy" now covers Rotation/Scale/the
+  Lock-proportions toggle/drag-to-scale-rotate on the canvas; "Application
+  tab" now describes Background's Image/Video modes and Zoom's move to
+  Behavior, and the renamed "Hotkeys — Costumes & Expressions" section.
+- New/updated tests in `test_help_window.py` (tab count/order shifted to
+  5, Reference's own content-check index updated, two new tests on the
+  Hotkeys tab's content including the Control-Panel-focus caveat
+  specifically, so it can't silently regress out of the docs again).
+- Full suite green at 411 tests.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)

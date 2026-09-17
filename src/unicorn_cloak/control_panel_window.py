@@ -1378,6 +1378,15 @@ class ControlPanelWindow(QWidget):
         hotkeys_section.body_layout.addWidget(costumes_label)
 
         self._hotkey_edits: list[QKeySequenceEdit] = []
+        # Two columns of 5, owner's request, 2026-09-17: one column of 10
+        # (each with its own multi-row swap list) made the whole window
+        # too tall to fit on screen.
+        costume_columns = QHBoxLayout()
+        costume_column_layouts = [QVBoxLayout(), QVBoxLayout()]
+        for column_layout in costume_column_layouts:
+            costume_columns.addLayout(column_layout)
+        hotkeys_section.body_layout.addLayout(costume_columns)
+
         for slot, key_text in enumerate(self.config.hotkeys.costume_keys[:NUM_COSTUMES]):
             slot_box = QVBoxLayout()
             header_row = QHBoxLayout()
@@ -1411,7 +1420,7 @@ class ControlPanelWindow(QWidget):
             )
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_costume_row(s))
             slot_box.addWidget(add_btn)
-            hotkeys_section.body_layout.addLayout(slot_box)
+            costume_column_layouts[slot // 5].addLayout(slot_box)
 
         expressions_label = QLabel("Expressions — Shift + number toggles on/off")
         expressions_label.setStyleSheet(f"color: {theme.MAGENTA_500}; font-weight: 600;")
