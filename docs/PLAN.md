@@ -2882,6 +2882,49 @@ session's actual feature set:
   specifically, so it can't silently regress out of the docs again).
 - Full suite green at 411 tests.
 
+**Costumes/Expressions moved to their own tabs, immediately right of
+Sprites, 2026-09-17, owner's immediate follow-up on seeing a screenshot.**
+"That's horrible lmao... let's put costumes & expressions each in their
+own tabs immediately to the right of the sprites tab." Two-columns-of-
+five inside one collapsed Application-tab section was still an awkward
+squeeze (see screenshot in that turn: cramped, key-capture boxes reading
+"Press shortcut" mid-edit). New tab order: Sprites, **Costumes**,
+**Expressions**, Behavior, Audio, Application.
+
+- Each new tab wraps its grid in a `QScrollArea` (new to this app --
+  `theme.py` already had an unused rule for it) instead of the previous
+  "start collapsed" workaround. Verified directly, not assumed:
+  `panel.minimumSizeHint()` measured byte-identical switched to the
+  Sprites tab vs. the Costumes tab (622×702 either way) -- a
+  `QScrollArea`'s own size hint doesn't grow with its content the way a
+  plain nested layout's does, which is what actually caused the previous
+  "every tab got taller" bug in the first place (`QTabWidget` sizes
+  itself to its single largest page, and it doesn't matter which tab is
+  currently showing). This also meant the sections no longer need to
+  start collapsed by default -- removed "Hotkeys — Costumes &
+  Expressions" from `ControlPanelConfig.collapsed_sections`' default
+  without replacing it with the two new titles.
+- Applied the two-column layout to Expressions too, proactively, not
+  just Costumes as literally asked -- identical height problem, and the
+  owner has asked for symmetric treatment between these two features at
+  every step so far ("expressions could work the same way").
+- Test fallout, all mechanical: `test_panel_has_exactly_four_tabs`
+  renamed/updated to the new 6-tab order; several Behavior-tab tests that
+  hardcoded `tabs.setCurrentIndex(1)` (assuming Behavior was tab index 1)
+  switched to a new `_switch_to_tab(panel, name)` test helper that looks
+  up the index by title instead, so tab reordering can't silently break
+  them like this again; the stale "starts collapsed" test for the old
+  section deleted outright (the section no longer exists).
+- Help window's Hotkeys/Reference tabs updated to point at the new
+  **Costumes**/**Expressions** tabs instead of "Application tab's
+  Hotkeys section" everywhere that phrase appeared. Also caught and
+  fixed a pre-existing, unrelated inaccuracy while in there: Reference
+  said Expressions lived on "the Behavior tab" -- it's actually the
+  Sprites tab (moved there in an earlier session, per that section's own
+  comment in `control_panel_window.py`; the help text just never caught
+  up).
+- Full suite green at 410 tests.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)

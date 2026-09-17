@@ -29,10 +29,10 @@ def test_panel_is_a_single_window_with_the_expected_object_name(qapp, tmp_path):
     assert panel.testAttribute(Qt.WidgetAttribute.WA_StyledBackground) is True
 
 
-def test_panel_has_exactly_four_tabs(qapp, tmp_path):
+def test_panel_has_the_six_expected_tabs_in_order(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
-    assert titles == ["Sprites", "Behavior", "Audio", "Application"]
+    assert titles == ["Sprites", "Costumes", "Expressions", "Behavior", "Audio", "Application"]
 
 
 def test_no_tab_has_more_than_three_collapsible_sections(qapp, tmp_path):
@@ -794,11 +794,6 @@ def test_expressions_section_refreshes_after_tagging_a_sprite_manual(qapp, tmp_p
 # --- Costume & Expression hotkey editors -------------------------------------
 
 
-def test_hotkeys_section_starts_collapsed(qapp, tmp_path):
-    config, window, panel, _ = make_panel(tmp_path)
-    assert panel._sections["Hotkeys — Costumes & Expressions"].is_collapsed() is True
-
-
 def test_costume_slots_start_with_no_rows(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     assert all(panel._costume_rows[slot] == [] for slot in range(10))
@@ -1054,6 +1049,11 @@ def _tab_splitter_for(panel, section_title):
     return panel._sections[section_title].parent()
 
 
+def _switch_to_tab(panel, name):
+    titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
+    panel.tabs.setCurrentIndex(titles.index(name))
+
+
 def test_a_tab_that_starts_fully_collapsed_from_persisted_config_stays_pegged_to_top(qapp, tmp_path):
     # Regression 2026-09-17, owner's follow-up report: "the behavior tab
     # started all collapsed & centered" -- distinct from (and found after
@@ -1079,7 +1079,7 @@ def test_a_tab_that_starts_fully_collapsed_from_persisted_config_stays_pegged_to
     panel = ControlPanelWindow(rig, config, window, state_path=tmp_path / "settings.json")
     panel.show()
     qapp.processEvents()
-    panel.tabs.setCurrentIndex(1)  # Behavior -- the actual switch is what exposes the bug
+    _switch_to_tab(panel, "Behavior")  # the actual switch is what exposes the bug
     qapp.processEvents()
 
     splitter = _tab_splitter_for(panel, "Motion")
@@ -1095,7 +1095,7 @@ def test_collapsing_every_section_stays_pegged_to_the_top_even_after_a_prior_exp
     config, window, panel, _ = make_panel(tmp_path)
     panel.show()
     qapp.processEvents()
-    panel.tabs.setCurrentIndex(1)  # Behavior
+    _switch_to_tab(panel, "Behavior")
     qapp.processEvents()
 
     for section in panel._sections.values():
@@ -1121,7 +1121,7 @@ def test_expanding_a_section_auto_collapses_a_sibling_instead_of_growing_the_win
     panel.resize(1600, 700)
     panel.show()
     qapp.processEvents()
-    panel.tabs.setCurrentIndex(1)  # Behavior
+    _switch_to_tab(panel, "Behavior")
     qapp.processEvents()
 
     assert panel._sections["Motion"].is_collapsed() is False
@@ -1154,7 +1154,7 @@ def test_expanding_a_second_section_that_still_fits_does_not_force_further_colla
     panel.resize(1600, 1200)  # tall enough that two sections' real content still fits
     panel.show()
     qapp.processEvents()
-    panel.tabs.setCurrentIndex(1)  # Behavior
+    _switch_to_tab(panel, "Behavior")
     qapp.processEvents()
 
     panel._sections["Position & Hierarchy"].set_collapsed(False)

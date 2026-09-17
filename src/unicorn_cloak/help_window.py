@@ -214,10 +214,9 @@ HOTKEYS_HTML = (
 <h3>Render Window (needs keyboard focus there)</h3>
 <ul>
 <li><b>1-9, 0</b> — switch costume slot. Remappable per slot from the
-Application tab's <b>Hotkeys — Costumes &amp; Expressions</b> section
-(click a slot's key-capture box, press the key you want). Avoid Escape
-and avoid reusing the same key on two slots — only the first matching
-slot fires.</li>
+<b>Costumes</b> tab (click a slot's key-capture box, press the key you
+want). Avoid Escape and avoid reusing the same key on two slots — only
+the first matching slot fires.</li>
 <li><b>Escape</b> — quit the app, with confirmation (not remappable).</li>
 </ul>
 <p>These only fire while the <b>Render Window</b> itself has keyboard
@@ -234,7 +233,7 @@ Expression on/off. Fixed, not remappable (unlike costume keys).</li>
 <li><b>Ctrl+Z</b> / <b>Ctrl+Shift+Z</b> — undo/redo.</li>
 </ul>
 <p><b>Important difference from costume hotkeys:</b> Expression hotkeys
-work by clicking the exact same buttons the Behavior tab's Expressions
+work by clicking the exact same buttons the Sprites tab's Expressions
 section already has, so they only fire while the <i>Control Panel</i>
 window has focus -- not the Render Window, and not at all while the
 Control Panel is closed. If you plan to use them live, keep the Control
@@ -242,9 +241,8 @@ Panel open somewhere off to the side, outside whatever OBS is actually
 capturing.</p>
 
 <h3>Setting up what a costume hotkey does</h3>
-<p>Application tab → <b>Hotkeys — Costumes &amp; Expressions</b>
-(collapsed by default -- it's a lot of content). Costumes are laid out
-as two columns of five slots. Each slot has:</p>
+<p>The <b>Costumes</b> tab, immediately right of Sprites. Costumes are
+laid out as two columns of five slots. Each slot has:</p>
 <ul>
 <li>Its own remappable key-capture box (see above).</li>
 <li>Zero or more <b>Hide / Show</b> sprite-pair rows. Pick a sprite in
@@ -262,11 +260,12 @@ edit (each sprite's own "Costume layers"); nothing about how costumes
 actually render changed.</p>
 
 <h3>Setting up what an Expression hotkey does</h3>
-<p>Same section, below Costumes. Each Shift+number slot has zero or more
-<b>Force</b> rows -- pick an Expression (any Manually-driven Group
-name/State name pair; tag one on the Sprites tab first if none exist
-yet). Add more than one row to force several groups together as one
-combined expression (e.g. a mouth shape and an eye shape at once).
+<p>The <b>Expressions</b> tab, right of Costumes -- same two-column, ten-
+slot layout. Each Shift+number slot has zero or more <b>Force</b> rows --
+pick an Expression (any Manually-driven Group name/State name pair; tag
+one on the Sprites tab first if none exist yet). Add more than one row to
+force several groups together as one combined expression (e.g. a mouth
+shape and an eye shape at once).
 Clearing a row's dropdown removes it, same gesture as costumes.</p>
 
 <h3>Mouse (Edit-mode canvas)</h3>
@@ -317,9 +316,10 @@ read-only) and is the default; Edit Sprites is the interactive canvas --
 drag a sprite to move it, driven by the Preview state controls that
 appear above it instead of live audio. A level meter is always shown
 just below the canvas, in either mode.</li>
-<li><b>Tabs</b> (middle) — Sprites, Behavior, Audio, and Application.
-Each tab is made of a few sections you can collapse (click the header)
-or resize (drag the divider between them) independently.</li>
+<li><b>Tabs</b> (middle) — Sprites, Costumes, Expressions, Behavior,
+Audio, and Application. Each tab is made of a few sections you can
+collapse (click the header) or resize (drag the divider between them)
+independently.</li>
 <li><b>Bottom bar</b> (always visible, never scrolled away) — audio
 source controls on their own row (Source/Play/Browse…/Record, with the
 chosen file's path shown just below, shortened from the middle if it's
@@ -419,10 +419,10 @@ show up inside a silhouette.</li>
 <li><b>Costume layers</b> — which of the 10 costume slots (see the
 <b>Hotkeys</b> tab) this sprite appears in. Every sprite defaults to
 "every slot" until a costume-hotkey assignment hides it from one. Set
-this up from the Application tab's Hotkeys section, not here directly —
-pick two sprites (one hidden by default and shown by this slot, one
-shown by default and hidden by this slot) and both sprites'
-Costume layers update automatically.</li>
+this up from the <b>Costumes</b> tab, not here directly — pick two
+sprites (one hidden by default and shown by this slot, one shown by
+default and hidden by this slot) and both sprites' Costume layers update
+automatically.</li>
 <li><b>Toggle</b> — a hotkey-bindable per-sprite visibility flag, carried
 over from the file format. Nothing reads it yet (no hotkey wiring
 exists), but it survives save/load untouched, so it's safe to leave set
@@ -466,8 +466,9 @@ different button in the same group automatically turns the previous one
 off. If nothing shows here, no sprite has been marked Manually driven
 yet. The <i>currently forced state</i> isn't saved across restarts --
 it's a live control, not a setting -- but you can bind any of these
-buttons to a Shift+number hotkey from the Application tab's Hotkeys
-section (see the <b>Hotkeys</b> tab), which <i>is</i> saved.</li>
+buttons to a Shift+number hotkey from the <b>Expressions</b> tab (see
+the <b>Hotkeys</b> tab for the full explanation), which <i>is</i>
+saved.</li>
 </ul>
 
 <h3>Canvas controls</h3>
@@ -611,10 +612,10 @@ below.</li>
 <li><b>Canvas</b> section — Grid spacing (px): how far apart the
 Edit-mode canvas's grid lines are, toggled on/off with the Guide button
 in the bottom bar.</li>
-<li><b>Hotkeys — Costumes &amp; Expressions</b> section (collapsed by
-default) — set up what every costume/Expression hotkey actually does;
-see the <b>Hotkeys</b> tab for the full explanation.</li>
 </ul>
+<p>Costume/Expression hotkey setup moved to its own <b>Costumes</b>/
+<b>Expressions</b> tabs, immediately right of Sprites -- see the
+<b>Hotkeys</b> tab for the full explanation.</p>
 <p>Every field has a tooltip with the short version of its own
 explanation — hover anything you're unsure about.</p>
 """

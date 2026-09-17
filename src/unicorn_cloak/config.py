@@ -270,12 +270,15 @@ class ControlPanelConfig:
     # tuple unconditionally on construction, so this default, not the
     # CollapsibleSection constructor's own `collapsed=` arg, is what
     # actually controls first-launch state.
-    # "Hotkeys — Costumes & Expressions" joined this default 2026-09-17,
-    # same reasoning: its per-slot editor rows (up to 20 slots' worth of
-    # dropdowns) made the whole panel's minimum size balloon when expanded
-    # by default, since a hidden CollapsibleSection body doesn't count
-    # toward layout size but a big expanded one does.
-    collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation", "Hotkeys — Costumes & Expressions")
+    # Costumes/Expressions briefly joined this default 2026-09-17 (their
+    # per-slot editor rows made the whole panel's minimum size balloon
+    # when expanded, since a hidden CollapsibleSection body doesn't count
+    # toward layout size but a big expanded one does) -- moved to their
+    # own tabs the same day instead, each wrapped in a QScrollArea, which
+    # fixes the same problem without needing to hide the section by
+    # default (a QScrollArea's own sizeHint doesn't grow with its
+    # content).
+    collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation")
 
     # Whether Scale X/Y (Position & Hierarchy) are linked -- editing one
     # updates the other to match, keeping the sprite's proportions.

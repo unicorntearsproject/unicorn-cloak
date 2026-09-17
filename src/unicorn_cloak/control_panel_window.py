@@ -63,6 +63,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -779,6 +780,8 @@ class ControlPanelWindow(QWidget):
     def _build_tabs(self, root: QVBoxLayout) -> None:
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_sprites_tab(), "Sprites")
+        self.tabs.addTab(self._build_costumes_tab(), "Costumes")
+        self.tabs.addTab(self._build_expressions_tab(), "Expressions")
         self.tabs.addTab(self._build_behavior_tab(), "Behavior")
         self.tabs.addTab(self._build_audio_tab(), "Audio")
         self.tabs.addTab(self._build_application_tab(), "Application")
@@ -1362,30 +1365,38 @@ class ControlPanelWindow(QWidget):
         )
         canvas_section.body_layout.addLayout(canvas_form)
 
-        # Costume/Expression hotkeys, redesigned 2026-09-17, owner's
-        # request ("are the costume hotkeys labeled with what they do?
-        # when i went in there i just saw a list of numbers"): each slot
-        # now shows what it actually does -- a list of explicit hide/show
-        # sprite pairs the owner assigns right here, not an opaque number
-        # that only means something by cross-referencing costume_layers
-        # in a raw save file. One CollapsibleSection covers both (see
-        # test_no_tab_has_more_than_three_collapsible_sections -- this
-        # tab is already at its cap of 3).
-        hotkeys_section = CollapsibleSection("Hotkeys — Costumes & Expressions", collapsed=True)
+        tab = QWidget()
+        outer = QVBoxLayout(tab)
+        self._add_tab_splitter(outer, [display_section, canvas_section])
+        return tab
 
-        costumes_label = QLabel("Costumes — press the number to switch")
-        costumes_label.setStyleSheet(f"color: {theme.MAGENTA_500}; font-weight: 600;")
-        hotkeys_section.body_layout.addWidget(costumes_label)
+    def _build_costumes_tab(self) -> QWidget:
+        # Its own tab, immediately right of Sprites -- owner's request,
+        # 2026-09-17, after seeing this squeezed into one collapsed
+        # Application-tab section: "let's put costumes & expressions each
+        # in their own tabs immediately to the right of the sprites tab."
+        # Wrapped in a QScrollArea (new to this app, theme.py already has
+        # a rule for it) rather than just a taller section -- a
+        # QScrollArea's own sizeHint doesn't grow with its content the
+        # way a plain nested layout's does, which is what made the
+        # previous single-section version balloon every *other* tab's
+        # minimum size too (QTabWidget sizes to its largest page). Two
+        # columns of 5 (kept from the previous layout, same reasoning:
+        # one column of 10 multi-row editors is too tall).
+        section = CollapsibleSection("Costumes — press the number to switch")
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        section.body_layout.addWidget(scroll)
 
         self._hotkey_edits: list[QKeySequenceEdit] = []
-        # Two columns of 5, owner's request, 2026-09-17: one column of 10
-        # (each with its own multi-row swap list) made the whole window
-        # too tall to fit on screen.
         costume_columns = QHBoxLayout()
         costume_column_layouts = [QVBoxLayout(), QVBoxLayout()]
         for column_layout in costume_column_layouts:
             costume_columns.addLayout(column_layout)
-        hotkeys_section.body_layout.addLayout(costume_columns)
+        content_layout.addLayout(costume_columns)
 
         for slot, key_text in enumerate(self.config.hotkeys.costume_keys[:NUM_COSTUMES]):
             slot_box = QVBoxLayout()
@@ -1421,10 +1432,27 @@ class ControlPanelWindow(QWidget):
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_costume_row(s))
             slot_box.addWidget(add_btn)
             costume_column_layouts[slot // 5].addLayout(slot_box)
+        content_layout.addStretch(1)
 
-        expressions_label = QLabel("Expressions — Shift + number toggles on/off")
-        expressions_label.setStyleSheet(f"color: {theme.MAGENTA_500}; font-weight: 600;")
-        hotkeys_section.body_layout.addWidget(expressions_label)
+        tab = QWidget()
+        outer = QVBoxLayout(tab)
+        self._add_tab_splitter(outer, [section])
+        return tab
+
+    def _build_expressions_tab(self) -> QWidget:
+        section = CollapsibleSection("Expressions — Shift + number toggles on/off")
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        section.body_layout.addWidget(scroll)
+
+        expression_columns = QHBoxLayout()
+        expression_column_layouts = [QVBoxLayout(), QVBoxLayout()]
+        for column_layout in expression_column_layouts:
+            expression_columns.addLayout(column_layout)
+        content_layout.addLayout(expression_columns)
 
         for slot in range(NUM_COSTUMES):
             slot_box = QVBoxLayout()
@@ -1444,11 +1472,12 @@ class ControlPanelWindow(QWidget):
             )
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_expression_hotkey_row(s))
             slot_box.addWidget(add_btn)
-            hotkeys_section.body_layout.addLayout(slot_box)
+            expression_column_layouts[slot // 5].addLayout(slot_box)
+        content_layout.addStretch(1)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        self._add_tab_splitter(outer, [display_section, canvas_section, hotkeys_section])
+        self._add_tab_splitter(outer, [section])
         return tab
 
     # =====================================================================
