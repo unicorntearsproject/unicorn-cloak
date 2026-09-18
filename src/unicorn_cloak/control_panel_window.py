@@ -63,7 +63,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -451,10 +450,21 @@ class ControlPanelWindow(QWidget):
         # expression_hotkeys, initialized before any tab is built since
         # _rebuild_scene() (called at the end of __init__) rebuilds these
         # too and must find real lists/layouts here, not missing keys.
+        # Each swap/force row is its own QListWidgetItem, immediately
+        # before that slot's "+ Add" item -- not one item per slot holding
+        # a variable-length inner layout (a QListWidgetItem's size hint
+        # doesn't reliably refresh when its embedded widget gains a child
+        # after the fact, confirmed empirically, 2026-09-17). _costume_rows
+        # is the row *widgets* (what the rest of this app already reads,
+        # e.g. row.hide_combo); _costume_row_items is the parallel list of
+        # their QListWidgetItems, same order, needed only to remove the
+        # right item from the list.
         self._costume_rows: dict[int, list[QWidget]] = {slot: [] for slot in range(NUM_COSTUMES)}
-        self._costume_rows_layout: dict[int, QVBoxLayout] = {}
+        self._costume_row_items: dict[int, list[QListWidgetItem]] = {slot: [] for slot in range(NUM_COSTUMES)}
+        self._costume_add_button_items: dict[int, QListWidgetItem] = {}
         self._expression_hotkey_rows: dict[int, list[QWidget]] = {slot: [] for slot in range(NUM_COSTUMES)}
-        self._expression_hotkey_rows_layout: dict[int, QVBoxLayout] = {}
+        self._expression_row_items: dict[int, list[QListWidgetItem]] = {slot: [] for slot in range(NUM_COSTUMES)}
+        self._expression_add_button_items: dict[int, QListWidgetItem] = {}
         self._sections: dict[str, CollapsibleSection] = {}
         self._tab_splitters: list[QSplitter] = []
         self._obs_connected = False
@@ -1383,35 +1393,37 @@ class ControlPanelWindow(QWidget):
         # 2026-09-17, after seeing this squeezed into one collapsed
         # Application-tab section: "let's put costumes & expressions each
         # in their own tabs immediately to the right of the sprites tab."
-        # Wrapped in a QScrollArea (new to this app, theme.py already has
-        # a rule for it) rather than just a taller section -- a
-        # QScrollArea's own sizeHint doesn't grow with its content the
-        # way a plain nested layout's does, which is what made the
-        # previous single-section version balloon every *other* tab's
-        # minimum size too (QTabWidget sizes to its largest page).
         #
-        # Single column, not the two-columns-of-5 tried first: a swap row
-        # is two full sprite-name dropdowns wide, and two of those side by
-        # side needed more width than a realistic panel width actually
-        # has, forcing an ugly *horizontal* scrollbar on top of vertical
-        # (found from the owner's own screenshot, 2026-09-17, not caught
-        # by an earlier check with a wider test window than the panel
-        # actually gets). Two columns only ever existed to save vertical
-        # space for the old collapsed-section approach -- the QScrollArea
-        # here already handles unlimited vertical content, so there's
-        # nothing left for columns to buy.
+        # A QListWidget, not a QScrollArea over a plain QVBoxLayout (tried
+        # first) -- the QScrollArea version showed real, hard-to-pin-down
+        # rendering corruption in the owner's own real, themed app
+        # (patches of the wrong background color, misaligned/overlapping
+        # rows) that a from-scratch isolated repro of a themed QScrollArea
+        # alone did *not* reproduce, meaning it was something about this
+        # exact nested combination, not a generic Qt gotcha with a known
+        # one-line fix to reach for with confidence. Same technique the
+        # Sprites tab's own Layer List already uses -- proven correct in
+        # this exact app/theme/tab context.
+        #
+        # One QListWidgetItem *per swap row*, not one item per slot
+        # containing a variable-length inner layout (tried second): a
+        # QListWidgetItem's size hint does not reliably refresh when a
+        # child is added to its embedded widget after the fact --
+        # confirmed empirically (stale sizeHint even after
+        # updateGeometry()/layout().activate()), not assumed. A header
+        # item, an item per existing row, and a trailing "+ Add" item are
+        # each a stable, never-resized item instead -- adding/removing a
+        # row means adding/removing a whole list item (a plain, native
+        # QListWidget operation), never resizing one in place.
         section = CollapsibleSection("Costumes — press the number to switch")
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        scroll.setWidget(content)
-        section.body_layout.addWidget(scroll)
+        self.costume_list = QListWidget()
+        self.costume_list.setToolTip("One row per costume slot -- see the Hotkeys Help tab for the full explanation.")
+        section.body_layout.addWidget(self.costume_list)
 
         self._hotkey_edits: list[QKeySequenceEdit] = []
         for slot, key_text in enumerate(self.config.hotkeys.costume_keys[:NUM_COSTUMES]):
-            slot_box = QVBoxLayout()
-            header_row = QHBoxLayout()
+            header = QWidget()
+            header_row = QHBoxLayout(header)
             header_row.addWidget(QLabel(f"Costume {slot + 1}"))
             edit = QKeySequenceEdit()
             edit.setMaximumSequenceLength(1)
@@ -1427,11 +1439,7 @@ class ControlPanelWindow(QWidget):
             edit.keySequenceChanged.connect(self._hotkey_setter(slot, edit))
             self._hotkey_edits.append(edit)
             header_row.addWidget(edit, stretch=1)
-            slot_box.addLayout(header_row)
-
-            rows_layout = QVBoxLayout()
-            self._costume_rows_layout[slot] = rows_layout
-            slot_box.addLayout(rows_layout)
+            self._add_list_item_widget(self.costume_list, header)
 
             add_btn = QPushButton("+ Add swap")
             add_btn.setToolTip(
@@ -1441,9 +1449,7 @@ class ControlPanelWindow(QWidget):
                 "sprites at once (e.g. both halves of a hoodie for a vest)."
             )
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_costume_row(s))
-            slot_box.addWidget(add_btn)
-            content_layout.addLayout(slot_box)
-        content_layout.addStretch(1)
+            self._costume_add_button_items[slot] = self._add_list_item_widget(self.costume_list, add_btn)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -1452,20 +1458,13 @@ class ControlPanelWindow(QWidget):
 
     def _build_expressions_tab(self) -> QWidget:
         section = CollapsibleSection("Expressions — Shift + number toggles on/off")
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        scroll.setWidget(content)
-        section.body_layout.addWidget(scroll)
+        self.expression_hotkey_list = QListWidget()
+        self.expression_hotkey_list.setToolTip("One row per hotkey slot -- see the Hotkeys Help tab for the full explanation.")
+        section.body_layout.addWidget(self.expression_hotkey_list)
 
         for slot in range(NUM_COSTUMES):
-            slot_box = QVBoxLayout()
-            slot_box.addWidget(QLabel(f"Shift+{EXPRESSION_HOTKEY_LABELS[slot]}"))
-
-            rows_layout = QVBoxLayout()
-            self._expression_hotkey_rows_layout[slot] = rows_layout
-            slot_box.addLayout(rows_layout)
+            header = QLabel(f"Shift+{EXPRESSION_HOTKEY_LABELS[slot]}")
+            self._add_list_item_widget(self.expression_hotkey_list, header)
 
             add_btn = QPushButton("+ Add expression")
             add_btn.setToolTip(
@@ -1476,9 +1475,7 @@ class ControlPanelWindow(QWidget):
                 "expression)."
             )
             add_btn.clicked.connect(lambda _checked=False, s=slot: self._add_expression_hotkey_row(s))
-            slot_box.addWidget(add_btn)
-            content_layout.addLayout(slot_box)
-        content_layout.addStretch(1)
+            self._expression_add_button_items[slot] = self._add_list_item_widget(self.expression_hotkey_list, add_btn)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -3054,12 +3051,24 @@ class ControlPanelWindow(QWidget):
 
     def _add_costume_row(self, slot: int, hide_id: int | None = None, show_id: int | None = None) -> None:
         row = self._build_costume_pair_row(slot, hide_id, show_id)
+        # Inserted as a whole new list item, immediately before this
+        # slot's "+ Add swap" item -- not appended into a variable-length
+        # inner layout inside an existing item (see _build_costumes_tab's
+        # own comment for why that was dropped).
+        insert_at = self.costume_list.row(self._costume_add_button_items[slot])
+        item = QListWidgetItem()
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.costume_list.insertItem(insert_at, item)
+        item.setSizeHint(row.sizeHint())
+        self.costume_list.setItemWidget(item, row)
         self._costume_rows[slot].append(row)
-        self._costume_rows_layout[slot].addWidget(row)
+        self._costume_row_items[slot].append(item)
 
     def _remove_costume_row(self, slot: int, row: QWidget) -> None:
-        self._costume_rows[slot].remove(row)
-        self._costume_rows_layout[slot].removeWidget(row)
+        index = self._costume_rows[slot].index(row)
+        self._costume_rows[slot].pop(index)
+        item = self._costume_row_items[slot].pop(index)
+        self.costume_list.takeItem(self.costume_list.row(item))
         row.setParent(None)
         row.deleteLater()
 
@@ -3123,12 +3132,20 @@ class ControlPanelWindow(QWidget):
 
     def _add_expression_hotkey_row(self, slot: int, pair: tuple[str, str] | None = None) -> None:
         row = self._build_expression_hotkey_row(slot, pair)
+        insert_at = self.expression_hotkey_list.row(self._expression_add_button_items[slot])
+        item = QListWidgetItem()
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.expression_hotkey_list.insertItem(insert_at, item)
+        item.setSizeHint(row.sizeHint())
+        self.expression_hotkey_list.setItemWidget(item, row)
         self._expression_hotkey_rows[slot].append(row)
-        self._expression_hotkey_rows_layout[slot].addWidget(row)
+        self._expression_row_items[slot].append(item)
 
     def _remove_expression_hotkey_row(self, slot: int, row: QWidget) -> None:
-        self._expression_hotkey_rows[slot].remove(row)
-        self._expression_hotkey_rows_layout[slot].removeWidget(row)
+        index = self._expression_hotkey_rows[slot].index(row)
+        self._expression_hotkey_rows[slot].pop(index)
+        item = self._expression_row_items[slot].pop(index)
+        self.expression_hotkey_list.takeItem(self.expression_hotkey_list.row(item))
         row.setParent(None)
         row.deleteLater()
 
@@ -3150,6 +3167,19 @@ class ControlPanelWindow(QWidget):
                 self.rig.assign_expression_hotkey(slot, group, state)
         self._mark_dirty()
 
+    def _add_list_item_widget(self, list_widget: QListWidget, widget: QWidget) -> QListWidgetItem:
+        """Same technique the Sprites tab's own Layer List already uses
+        (QListWidgetItem + setItemWidget) -- see _build_costumes_tab's own
+        comment for why this replaced an earlier QScrollArea-based
+        attempt. Not selectable: these rows aren't things to select, just
+        containers."""
+        item = QListWidgetItem()
+        item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        list_widget.addItem(item)
+        item.setSizeHint(widget.sizeHint())
+        list_widget.setItemWidget(item, widget)
+        return item
+
     def _trigger_expression_hotkey(self, slot: int) -> None:
         """Shift+<number> (see the QShortcut wiring in __init__) --
         toggles every Expression button assigned to this slot, reusing
@@ -3170,17 +3200,11 @@ class ControlPanelWindow(QWidget):
         currently exists in the rig."""
         for slot in range(NUM_COSTUMES):
             for row in list(self._costume_rows[slot]):
-                self._costume_rows[slot].remove(row)
-                self._costume_rows_layout[slot].removeWidget(row)
-                row.setParent(None)
-                row.deleteLater()
+                self._remove_costume_row(slot, row)
             for hide_id, show_id in self.rig.costume_assignments[slot]:
                 self._add_costume_row(slot, hide_id, show_id)
 
             for row in list(self._expression_hotkey_rows[slot]):
-                self._expression_hotkey_rows[slot].remove(row)
-                self._expression_hotkey_rows_layout[slot].removeWidget(row)
-                row.setParent(None)
-                row.deleteLater()
+                self._remove_expression_hotkey_row(slot, row)
             for group, state in self.rig.expression_hotkeys[slot]:
                 self._add_expression_hotkey_row(slot, (group, state))

@@ -3005,6 +3005,55 @@ Sprites-tab section, 2026-09-17, same-day follow-up.**
   define/fire vs. bind distinction, rather than leaving it implicit.
 - Full suite green at 410 tests.
 
+**Costume/Expression Hotkeys tabs rebuilt a third time on QListWidget,
+2026-09-17, same-day follow-up.** Owner, with fresh real screenshots:
+"dude ur just not nailin' this lol.. ugly, no alignment, cropping,
+WHIIIIITE." The QScrollArea-based fix (same day, earlier entry) still
+showed real corruption in the owner's own actual themed app -- patches
+of the wrong (light) background color, misaligned/overlapping rows --
+that this session could not reproduce with a from-scratch isolated
+QScrollArea+theme repro, meaning it was something about that exact
+nested combination (CollapsibleSection body -> QScrollArea -> plain
+QWidget content -> per-slot QVBoxLayouts), not a generic, confidently-
+fixable Qt gotcha. Rather than keep guessing at QScrollArea internals
+this session couldn't reliably reproduce, switched to the technique the
+Sprites tab's own Layer List already uses successfully in this exact
+app/theme/tab context: `QListWidget` + `setItemWidget`.
+
+- First pass at this (one `QListWidgetItem` per *slot*, holding a
+  variable-length inner layout of swap/force rows) hit a second, more
+  subtle bug, caught before it shipped by measuring rather than
+  eyeballing: a `QListWidgetItem`'s size hint does not reliably refresh
+  when its embedded widget gains a child afterward, even after
+  `updateGeometry()`/`layout().activate()` -- confirmed with real
+  `sizeHint()` printouts showing a stale, too-small value after adding a
+  row. Fixed by matching Layer List's own granularity exactly: one
+  `QListWidgetItem` *per swap/force row*, plus one static header item and
+  one static "+ Add" item per slot -- adding/removing a row means
+  adding/removing a whole list item (a plain, native, well-supported
+  QListWidget operation, inserted immediately before that slot's "+ Add"
+  item) rather than ever resizing one in place.
+- Verified this time with real measurements, not just a screenshot at
+  one window size: printed every item's actual `sizeHint()` after adding
+  three rows to a slot and confirmed each new row is its own correctly-
+  sized item; scrolled the real `QListWidget` (native scrollbar, not a
+  `QScrollArea`) and confirmed clean rendering at both ends of the list;
+  re-ran the narrow-panel stress test (650px) from the previous QScrollArea
+  fix and confirmed no white patches, no overlap, no cropping there
+  either. `minimumSizeHint()` is no longer byte-identical switching tabs
+  (`QListWidget` carries a small built-in minimum a `QScrollArea` didn't,
+  ~70px) but stays flat regardless of content -- nowhere near the
+  hundreds-of-pixels-per-slot growth that started this whole chain of
+  fixes.
+- `_costume_rows`/`_expression_hotkey_rows` (the row *widgets* --
+  `row.hide_combo` etc., what the rest of this app already reads) are
+  unchanged; only their container went from "layout position" to "list
+  item", tracked in parallel by the new `_costume_row_items`/
+  `_expression_row_items`.
+- Full suite green at 410 tests, all pre-existing costume/expression
+  tests passing unmodified -- confirms the swap was contained to how rows
+  are *displayed*, not how they're read or how the underlying data works.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)
