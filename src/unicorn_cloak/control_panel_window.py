@@ -688,27 +688,46 @@ class ControlPanelWindow(QWidget):
     def _add_tab_splitter(self, outer: QVBoxLayout, sections: list[CollapsibleSection]) -> None:
         splitter = self._tab_splitter(sections)
         outer.addWidget(splitter)
+        # Initial value only -- _apply_persisted_ui_state()'s own
+        # set_collapsed() calls (right after every tab is built) already
+        # fire collapsed_changed for each section, which recomputes this
+        # for real against whatever the persisted state actually is. See
+        # _update_splitter_top_alignment for what this is and why it must
+        # stay conditional, not permanent.
+        self._update_splitter_top_alignment(splitter)
+
+    def _update_splitter_top_alignment(self, splitter: QSplitter) -> None:
         # Root cause, 2026-09-17, owner's report ("the behavior tab
         # started all collapsed & centered"): once every section in a
         # splitter is collapsed, QSplitter's own effective maximumHeight
         # shrinks to the sum of its (now Maximum-policy) children's
         # sizeHints -- a plain QVBoxLayout, with no alignment set,
         # centers a child that can't grow to fill the space it's given
-        # rather than pegging it to the top. This only actually shows up
-        # once QTabWidget performs a real layout pass on the page (i.e.
-        # once that tab is actually switched to) -- confirmed empirically
-        # by comparing the splitter's own geometry before vs. after
-        # switching to it, not assumed. AlignTop is a no-op whenever the
-        # splitter *can* fill the available height (any section
-        # expanded), since alignment only matters once a widget is
-        # smaller than its allotted space -- so this doesn't affect the
-        # normal, mostly-expanded case at all.
-        outer.setAlignment(splitter, Qt.AlignmentFlag.AlignTop)
+        # rather than pegging it to the top.
+        #
+        # This must be conditional, not a permanent AlignTop set once at
+        # construction (what the first version of this fix did) --
+        # confirmed empirically, 2026-09-17, owner's report on the new
+        # single-section Costume/Expression Hotkeys tabs ("sooo much room
+        # and clipping them"): Qt's setAlignment() on a layout item
+        # overrides that item's own size policy entirely, permanently
+        # capping it to its sizeHint and aligning within the leftover
+        # space -- it is *not* the "no-op once the widget can already
+        # fill the space" behavior the original comment assumed, that
+        # assumption was simply wrong. A splitter with anything expanded
+        # must keep zero alignment (Qt's own default -- fill the cell) to
+        # actually grow into real extra space; only an all-collapsed
+        # splitter, which by definition can never fill that space anyway,
+        # should get AlignTop instead of centering.
+        all_collapsed = all(splitter.widget(i).is_collapsed() for i in range(splitter.count()))
+        outer = splitter.parentWidget().layout()
+        outer.setAlignment(splitter, Qt.AlignmentFlag.AlignTop if all_collapsed else Qt.AlignmentFlag(0))
 
     def _on_section_collapsed_changed(
         self, splitter: QSplitter, section: CollapsibleSection, collapsed: bool
     ) -> None:
         self._resync_tab_splitter_sizes(splitter)
+        self._update_splitter_top_alignment(splitter)
         if not collapsed:
             self._make_room_if_needed(splitter, section)
 

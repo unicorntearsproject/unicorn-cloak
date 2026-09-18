@@ -3054,6 +3054,56 @@ app/theme/tab context: `QListWidget` + `setItemWidget`.
   tests passing unmodified -- confirms the swap was contained to how rows
   are *displayed*, not how they're read or how the underlying data works.
 
+**Real root cause of the empty-space bug finally found: a mislabeled
+`setAlignment` from three days-worth of comments back, 2026-09-17, same-
+day follow-up.** The white/cropping corruption from the QScrollArea
+attempts was gone (owner confirmed, screenshot clean) -- but the new
+QListWidget-based tabs left "sooo much room" empty below a tiny list on
+their own. Root-caused by measurement, not another guess: printed the
+actual widget hierarchy's geometry top to bottom and found the *splitter*
+itself stuck at ~244px inside a ~677px-tall page, even after manually
+calling `setSizes()` with a huge value -- meaning the constraint was
+above the splitter's own children entirely.
+
+Tracked it to `_add_tab_splitter`'s `outer.setAlignment(splitter,
+Qt.AlignmentFlag.AlignTop)`, added earlier the same day for a *different*
+bug (all-collapsed sections centering instead of pegging to the top).
+That fix's own comment claimed AlignTop "is a no-op whenever the splitter
+can fill the available height" -- confirmed by direct, isolated testing
+to be simply **wrong**: `QLayout::setAlignment()` on an item overrides
+that item's size policy entirely for the layout's main axis, permanently
+capping it to its own `sizeHint()` and aligning within whatever's left,
+regardless of whether the widget's policy is Expanding. It was never a
+no-op; it just happened not to matter for every earlier multi-section tab
+(their sections' combined sizeHints already summed to nearly the whole
+window). A one-section tab with modest content (exactly what Costume/
+Expression Hotkeys are) was the first case where the difference actually
+showed up.
+
+Fix: `_update_splitter_top_alignment(splitter)` computes this
+dynamically -- `AlignTop` only while *every* section in that splitter is
+actually collapsed (the case the original fix targeted), plain `Qt.
+AlignmentFlag(0)` (Qt's own default, fill-the-cell behavior) the moment
+anything is expanded. Called once at construction and again on every
+`collapsed_changed` (the same signal `_resync_tab_splitter_sizes` already
+listens to), so it can never go stale relative to a section's real state.
+Verified two ways: (1) the specific splitter/page/list heights from the
+bug report, confirmed with the fix in place (splitter grew from 244px to
+659px in a 677px page); (2) reverted the fix and confirmed the exact
+existing regression tests for the *original* all-collapsed-centering bug
+still pass unmodified -- this didn't just trade one bug for the other.
+New regression test
+(`test_a_single_expanded_section_fills_the_tab_instead_of_leaving_it_mostly_empty`)
+added and confirmed it actually fails against the pre-fix code (235 vs.
+required ~530), not just written to pass.
+
+An earlier, now-removed attempt at this same turn added a resync call to
+`_on_tab_changed` on the theory that a not-yet-shown tab's page had stale
+geometry the one time `showEvent()` resyncs every splitter. Measured
+directly and found the *alignment* fix alone was sufficient without it
+(same 659px either way) -- removed rather than leave unexplained,
+unneeded defensive code sitting next to the real fix.
+
 ---
 
 ## Open questions / liberties taken (flag if any of these are wrong)

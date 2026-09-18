@@ -1164,3 +1164,27 @@ def test_expanding_a_second_section_that_still_fits_does_not_force_further_colla
 
     assert panel._sections["Position & Hierarchy"].is_collapsed() is False
     assert panel._sections["Animation"].is_collapsed() is False
+
+
+def test_a_single_expanded_section_fills_the_tab_instead_of_leaving_it_mostly_empty(qapp, tmp_path):
+    # Regression 2026-09-17, owner's report on the new single-section
+    # Costume/Expression Hotkeys tabs: "sooo much room and clipping
+    # them." Root cause: outer.setAlignment(splitter, AlignTop) -- added
+    # for the *all-collapsed* centering bug above -- overrides a layout
+    # item's own size policy entirely, permanently capping it to its
+    # sizeHint instead of letting it grow to fill real extra space. That
+    # was fine for every earlier multi-section tab (their combined
+    # sizeHints already filled most of the window anyway) but made an
+    # expanded single-section tab with modest content get stuck small
+    # while the rest of the tab sat empty below it. Must only apply
+    # AlignTop while every section in the splitter is actually collapsed.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.resize(1000, 900)
+    panel.show()
+    qapp.processEvents()
+    _switch_to_tab(panel, "Costume Hotkeys")
+    qapp.processEvents()
+
+    splitter = _tab_splitter_for(panel, "Costumes — press the number to switch")
+    page_height = panel.tabs.currentWidget().height()
+    assert splitter.height() > page_height * 0.8
