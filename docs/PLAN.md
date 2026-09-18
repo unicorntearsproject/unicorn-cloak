@@ -9,7 +9,7 @@ few genuinely embarrassing internal identifiers, and a rigid single-window
 edit/view toggle. This plan replaces it, in three phases, without carrying
 the mess forward.
 
-Status (last refreshed 2026-09-17): **Phase 1 nearly done, three of
+Status (last refreshed 2026-09-18): **Phase 1 nearly done, three of
 Phase 2's five milestones pulled forward, running end-to-end on real
 hardware.** Phase 2: design tokens (Milestone 1) and the live capture
 preview (Milestone 3) are done; the performance pass (Milestone 4) is
@@ -45,17 +45,49 @@ Editor preview controls extended to force a specific variant or
 expression, and a heuristic `rig_lint.find_rig_issues` sanity-check pass
 ("Check for Issues…"). Then, 2026-09-17: the separate Editor and Settings
 windows (a drift from the original "two-window" decision, never
-reconfirmed) were merged into one **Control Panel** window -- tabs
-(Sprites/Behavior/Audio/Application) of resizable, collapsible sections,
-a canvas with a Live Preview/Edit Sprites toggle and an always-visible
-level meter, a persistent bottom bar (audio source controls, Save/Save
-As/Load/Export/Check for Issues/Guide/Ghost/Quit), a grid replacing the
-old origin crosshair, dirty-tracking with a real quit confirmation
-(Escape and Quit both warn about unsaved changes now, which nothing did
-before), and full window/tab/toggle state persistence. Canvas zoom/pan
-and multi-select are still not built. 314 tests total. See each dated
-entry below for the actual work and the bugs found doing it — this
-paragraph is a current snapshot, not a chronological record.
+reconfirmed) were merged into one **Control Panel** window -- originally
+four tabs (Sprites/Behavior/Audio/Application) of resizable, collapsible
+sections, a canvas with a Live Preview/Edit Sprites toggle and an
+always-visible level meter, a persistent bottom bar (audio source
+controls, Save/Save As/Load/Export/Check for Issues/Guide/Ghost/Quit), a
+grid replacing the old origin crosshair, dirty-tracking with a real quit
+confirmation (Escape and Quit both warn about unsaved changes now, which
+nothing did before), and full window/tab/toggle state persistence.
+
+Still 2026-09-17, in a long same-day follow-up series (owner iterating
+against real screenshots): whole-avatar **Zoom** moved from Application
+to Behavior's Position & Hierarchy; **image/video backgrounds** added
+(`QGraphicsVideoItem`/`QMediaPlayer` via PySide6's bundled FFmpeg
+backend, no new dependency); the edit canvas gained real **drag-to-
+scale/rotate** handles (not just spinboxes), backed by new authored
+`scale_x/y`/`rotation_deg` fields; and costume/expression switching was
+reworked from raw numbered hotkeys into **explicit sprite-pair
+assignments** (`AvatarRig.costume_assignments`/`expression_hotkeys`,
+Shift+1..0 for expressions) with their own dedicated tabs. Those tabs
+were rebuilt several times the same day chasing layout bugs (two-column
+→ single-column → `QScrollArea` → finally `QListWidget`+`setItemWidget`,
+matching the Sprites tab's own Layer List technique) and renamed twice to
+stop "Expressions" from meaning two different things a tab apart. The
+**Control Panel is now six tabs**: Sprites, **Costume Hotkeys**,
+**Expression Hotkeys**, Behavior, Audio, Application. Canvas zoom/pan,
+multi-select, and an action-log toast panel are still not built --
+Milestone 5's only genuinely open items. **411 tests total** (see the
+per-file breakdown implicit in each dated entry below).
+
+**2026-09-18 — docs reorg (this update).** The 2026-09-17 "docs reorg"
+entry below only moved `PLAN.md` itself into `docs/`; two more
+Unicorn-Cloak-specific docs that had been left behind in the parent `obs`
+repo -- `docs/avatar-lipsync-setup.md` (the superseded PNGTuber-Plus
+setup doc) and `docs/decisions/0004-avatar-lipsync-tooling.md` (the
+decision to build this app in the first place) -- are now moved here too,
+at `avatar-lipsync-setup.md` and `decisions/0001-avatar-lipsync-tooling.md`
+respectively (renumbered as this project's own first decision record).
+Every cross-reference to their old locations, in both repos, was updated
+to match; see the `obs` repo's own README changelog for that side of it.
+No code changed in this pass.
+
+See each dated entry below for the actual work and the bugs found doing
+it — this paragraph is a current snapshot, not a chronological record.
 
 `rig.py`/`persistence.py` load and save both `.save` (legacy) and `.uc`
 (this app's own extension, with automatic version-upgrade-and-backup)
@@ -2456,11 +2488,12 @@ packaging/distribution, anything from v2/v3.
    likely to collide with whatever else already claims the same key
    system-wide. Costume hotkeys are focus-only and remappable from
    Settings (see PLAN.md's dated entry).
-5. **Editor UI.** Add/replace/duplicate/link/unlink, sprite list with
-   visibility toggles [DONE 2026-09-16] and origin guides
-   [DONE 2026-09-16], canvas zoom, action-log toast panel. Add
-   basic **undo/redo** here — cheap to include now, painful to retrofit
-   later, and it's a real usability gap in the original.
+5. **Editor UI.** Add/replace/duplicate/link/unlink [DONE], sprite list
+   with visibility toggles [DONE 2026-09-16] and origin guides
+   [DONE 2026-09-16], undo/redo [DONE — cheap to include, painful to
+   retrofit, a real usability gap in the original]. **Still open:**
+   canvas zoom/pan, multi-select, and an action-log toast panel — see
+   the top status paragraph, last refreshed 2026-09-18.
 6. **[DONE 2026-09-16] Persistence.** Save/load in the self-contained JSON shape described
    above. No legacy-avatar migration tool — nothing from PNGTuber-Plus is
    being carried forward. Ship
@@ -2482,8 +2515,10 @@ packaging/distribution, anything from v2/v3.
    confirmed PNGTuber-Plus deprecation is final: "this is hot garbage!
    ... done & dusted." `~/Repos/pngtuber-plus` and the Godot install are
    left on disk, untouched, not deleted (removal wasn't asked for) --
-   see the `obs` repo's `docs/decisions/0004-avatar-lipsync-tooling.md`
-   and `README.md` changelog for the parent-repo side of this record.
+   see `decisions/0001-avatar-lipsync-tooling.md` (moved here 2026-09-18
+   from the parent `obs` repo's `docs/decisions/0004-...`) and the `obs`
+   repo's own `README.md` changelog for the parent-repo side of this
+   record.
 
 ---
 
