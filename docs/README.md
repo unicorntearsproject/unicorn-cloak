@@ -9,5 +9,4 @@
 Related, outside `docs/`:
 
 - [../README.md](../README.md) — project overview, how to run it, layout
-- [../../CLAUDE.md](../../CLAUDE.md) — the parent `obs` repo's rules (this
-  app is exempt from its OBS-specific sections; see "Repository Layout")
+- [../CLAUDE.md](../CLAUDE.md) — this repo's agent rules and operating standards

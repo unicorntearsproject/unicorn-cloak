@@ -6,11 +6,11 @@ source. Two windows — a permanently-transparent **Render Window** (the
 only thing OBS ever targets) and a **Control Panel** for building the rig,
 tuning motion/audio, and going live.
 
-Currently developed inside the [`obs`](..) repo (jj's OBS Studio management
-repo) as a companion app, not an OBS config artifact — see that repo's
-`CLAUDE.md` "Repository Layout" for why. It is headed for its own repo;
-until then, `git log -- unicorn-cloak/` in the parent checkout is this
-project's real history.
+Split out 2026-09-19 into its own repo from the [`obs`](https://github.com/iDoMeteor/obs-config)
+repo (jj's OBS Studio management repo), where it started life as a
+companion app. History from that period is preserved here via a
+subdirectory rewrite; `obs`'s own git log still has the combined
+pre-split history for context.
 
 ## Status
 
