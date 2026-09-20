@@ -37,6 +37,7 @@ from PySide6.QtGui import (
     QIcon,
     QKeySequence,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QRadialGradient,
@@ -211,12 +212,45 @@ class EditableSpriteItem(QGraphicsPixmapItem):
     def boundingRect(self) -> QRectF:  # noqa: N802 (Qt override)
         rect = self._pixmap_rect()
         if self.isSelected():
-            # Extended upward to include the rotate handle, which floats
-            # above the pixmap's own top edge -- Qt clips paint()/hit-
-            # testing to whatever boundingRect() reports, so the handle
-            # would otherwise be half-invisible and half-unclickable.
-            rect = rect.adjusted(0, -(_ROTATE_HANDLE_DISTANCE + _HANDLE_HALF), 0, 0)
+            # Extended on every side, not just upward -- corner handles
+            # are centered exactly ON the pixmap's own corners (see
+            # _handle_rects), so half of each one -- the outer half,
+            # the natural place to actually click one -- sticks out past
+            # the pixmap's own edges on all four sides, not just the top
+            # (top additionally needs room for the rotate handle, further
+            # out still). Qt clips both paint() and hit-testing to
+            # whatever this reports, so a boundingRect that only grew
+            # upward left the other three handles half-invisible on
+            # move (paint sticking out past the region Qt knows to
+            # invalidate/erase, leaving trail artifacts behind a drag)
+            # and half-unclickable (owner's report, 2026-09-19: "click on
+            # the resize or rotate handles [and] the guides disappear and
+            # nothing happens" -- a click landing in that outer half fell
+            # through to the empty canvas instead, deselecting the
+            # sprite). See shape() below for the other half of this fix.
+            rect = rect.adjusted(
+                -_HANDLE_HALF, -(_ROTATE_HANDLE_DISTANCE + _HANDLE_HALF), _HANDLE_HALF, _HANDLE_HALF
+            )
         return rect
+
+    def shape(self) -> QPainterPath:  # noqa: N802 (Qt override)
+        path = super().shape()
+        if self.isSelected():
+            # QGraphicsPixmapItem.shape() (unlike boundingRect()) traces
+            # the pixmap's actual opaque pixels by default -- lets a click
+            # on a fully-transparent part of a sprite fall through to
+            # whatever's stacked underneath it, instead of selecting this
+            # one. But a handle drawn past the pixmap's edge (see
+            # boundingRect()'s own comment) almost always lands over a
+            # transparent pixel near that edge, which would make it
+            # unclickable via the inherited mask-based shape() alone even
+            # once boundingRect() is big enough to receive the event in
+            # the first place. Only the handle areas get an explicit
+            # rectangular carve-out here -- the rest of the sprite keeps
+            # its normal click-through-transparency behavior.
+            for hrect in self._handle_rects().values():
+                path.addRect(hrect)
+        return path
 
     def _handle_rects(self) -> dict[str, QRectF]:
         rect = self._pixmap_rect()

@@ -178,6 +178,36 @@ open" scenario as a regression test, one confirming a growable section
 still fills its tab, and one confirming the Expressions section's cap
 tracks its content immediately after a live add.
 
+**2026-09-19, same-day follow-up: edit-canvas handles unclickable, drag
+left artifacts.** Owner's report: clicking a selected sprite's corner/
+rotate handles on the Edit canvas "the guides disappear and nothing
+happens", and dragging a sprite left visible trail marks behind it.
+Both from the same root cause in `EditableSpriteItem`: `boundingRect()`
+only grew upward (to fit the rotate handle, a 2026-09-17 fix) -- but
+each corner handle is centered exactly ON the pixmap's own corner (see
+`_handle_rects`), so its outer half sticks out past the pixmap's edge
+on the *other* three sides too, which the old boundingRect() never
+accounted for. Qt clips both painting and hit-testing to boundingRect():
+clipped painting on move left stale handle fragments behind (Qt didn't
+know to invalidate/erase a region it didn't think the item occupied --
+the drag artifacts), and clipped hit-testing meant a click landing in
+that outer half -- the natural place to click a handle -- fell through
+to the empty canvas instead, deselecting the sprite (the "nothing
+happens"). Fixed by extending boundingRect() on all four sides, not
+just up. A second, related issue: `QGraphicsPixmapItem.shape()` traces
+actual opaque pixels by default (so a click on a transparent part of a
+sprite falls through to whatever's underneath) -- a handle sitting past
+the pixmap's edge almost always lands on a transparent pixel there,
+which would still make it unclickable via the inherited shape() even
+with a big-enough boundingRect(), since Qt's hit-testing consults
+shape(), not just boundingRect(). Fixed by overriding shape() to carve
+out explicit rectangles for the handle areas only when selected,
+leaving the rest of the sprite's normal click-through-transparency
+behavior untouched. 433 tests (431 -> 433); both new ones confirmed to
+actually fail against the pre-fix code before being confirmed to pass
+against the fix, not just written to match whatever the fix happened
+to produce.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

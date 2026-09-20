@@ -693,6 +693,45 @@ def test_handle_hit_test_finds_each_corner_and_the_rotate_handle(qapp, tmp_path)
     assert item._handle_at(rect.center()) is None
 
 
+def test_bounding_rect_when_selected_fully_contains_every_handle(qapp, tmp_path):
+    # Regression 2026-09-19, owner's report: clicking a corner/rotate
+    # handle "the guides disappear and nothing happens", and dragging a
+    # sprite left trail artifacts behind it. Root cause: boundingRect()
+    # only grew upward (for the rotate handle) -- half of each corner
+    # handle sits outside the pixmap's own edge on the other three sides
+    # too (see _handle_rects: they're centered ON the corners), so Qt
+    # both clipped painting there (drag artifacts, since it didn't know
+    # to invalidate/erase that region on move) and refused to deliver
+    # clicks landing in that outer half (falls through to the empty
+    # canvas, deselecting the sprite) before this fix.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    bounds = item.boundingRect()
+    for name, hrect in item._handle_rects().items():
+        assert bounds.contains(hrect), f"{name} handle sticks out of boundingRect()"
+
+
+def test_shape_when_selected_covers_every_handle_even_on_a_fully_transparent_sprite(qapp, tmp_path):
+    # QGraphicsPixmapItem.shape() traces opaque pixels by default -- a
+    # handle drawn past a fully-transparent pixmap's edge would be
+    # unclickable via the inherited shape() alone even with a big-enough
+    # boundingRect(), since Qt's hit-testing consults shape(), not just
+    # boundingRect(). A fully transparent test pixmap isolates exactly
+    # this: super().shape() alone would be empty everywhere.
+    png = make_test_png_bytes(color=(255, 0, 0, 0), size=100)
+    sprite = Sprite(id=1, path="a.png", image_data=png)
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=[sprite]))
+    panel._select(1)
+    item = panel._items[1]
+    shape = item.shape()
+    for name, hrect in item._handle_rects().items():
+        # The handle's own outer corner -- the point furthest from the
+        # pixmap's opaque interior, and so the hardest case for a
+        # mask-based shape() to cover.
+        assert shape.contains(hrect.topLeft()), f"{name} handle's outer corner isn't in shape()"
+
+
 def test_dragging_a_corner_handle_scales_independently_when_unlocked(qapp, tmp_path):
     config, window, panel, _ = _make_square_sprite_panel(tmp_path)
     panel._select(1)
