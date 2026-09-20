@@ -272,6 +272,20 @@ straight into the sprite fields) so undo, dirty-tracking, lock-
 proportions, and the live canvas update all come for free from the
 handlers those spinboxes already have. 449 tests (440 -> 449).
 
+**Same day, also added: Edit canvas scroll-to-zoom** (owner's request,
+explicitly scoped as "the other zoom situation" -- distinct from
+`AvatarRig.zoom`, the authored whole-avatar Render Window scale added
+earlier the same day -- and "keep it simple for now"). Scrolling over
+`GridCanvasView` (Edit Sprites only, never Live Preview's `PreviewView`,
+which must keep showing the avatar at its real Render Window size)
+scales the view via `QGraphicsView.scale()`, anchored under the cursor
+(`AnchorUnderMouse`) so it zooms toward whatever you're pointing at, not
+the viewport center. Clamped to 0.1x-10x of whatever `refit_to_content`
+last fit, and reset back to that baseline on the next refit (a resize,
+reload, or re-entering Edit mode) -- purely a transient "look closer"
+aid, never touches any authored field or anything persisted, matching
+the "simple" scope asked for. 455 tests (449 -> 455).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

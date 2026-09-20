@@ -1,8 +1,8 @@
 import math
 
 import pytest
-from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QKeySequence, QWheelEvent
 from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent
 
 from unicorn_cloak import control_panel_window as cpw_module
@@ -341,6 +341,70 @@ def test_grid_spacing_field_updates_the_edit_view(qapp, tmp_path):
     assert panel.edit_view.grid_spacing_px == 100
     panel.grid_spacing.setValue(50)
     assert panel.edit_view.grid_spacing_px == 50
+
+
+# --- Edit canvas scroll-to-zoom (owner's request, 2026-09-19) ---------------
+
+
+def _wheel_event(angle_delta_y: int) -> QWheelEvent:
+    return QWheelEvent(
+        QPointF(0, 0), QPointF(0, 0), QPoint(0, 0), QPoint(0, angle_delta_y),
+        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase, False,
+    )
+
+
+def test_scrolling_up_on_the_edit_canvas_zooms_in(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    scale_before = panel.edit_view.transform().m11()
+    panel.edit_view.wheelEvent(_wheel_event(120))
+    assert panel.edit_view.transform().m11() > scale_before
+
+
+def test_scrolling_down_on_the_edit_canvas_zooms_out(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    scale_before = panel.edit_view.transform().m11()
+    panel.edit_view.wheelEvent(_wheel_event(-120))
+    assert panel.edit_view.transform().m11() < scale_before
+
+
+def test_edit_canvas_zoom_is_clamped_at_the_top_end(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    for _ in range(200):
+        panel.edit_view.wheelEvent(_wheel_event(120))
+    # A rejected step leaves _viewport_zoom at the last value still
+    # within bounds -- generally just *under* the limit, not snapped
+    # exactly to it (each multiplicative step can overshoot it).
+    assert panel.edit_view._viewport_zoom <= cpw_module._MAX_VIEWPORT_ZOOM
+    assert panel.edit_view._viewport_zoom > cpw_module._MAX_VIEWPORT_ZOOM / cpw_module._VIEWPORT_ZOOM_STEP
+
+
+def test_edit_canvas_zoom_is_clamped_at_the_bottom_end(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    for _ in range(200):
+        panel.edit_view.wheelEvent(_wheel_event(-120))
+    assert panel.edit_view._viewport_zoom >= cpw_module._MIN_VIEWPORT_ZOOM
+    assert panel.edit_view._viewport_zoom < cpw_module._MIN_VIEWPORT_ZOOM * cpw_module._VIEWPORT_ZOOM_STEP
+
+
+def test_edit_canvas_zoom_resets_on_refit(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.edit_view.wheelEvent(_wheel_event(120))
+    assert panel.edit_view._viewport_zoom != pytest.approx(1.0)
+
+    panel.edit_view.refit_to_content()
+
+    assert panel.edit_view._viewport_zoom == pytest.approx(1.0)
+
+
+def test_live_preview_does_not_zoom_on_scroll(qapp, tmp_path):
+    # Owner's request: viewport zoom only for the Edit canvas -- Live
+    # Preview must always show the avatar at its real Render Window
+    # size, so scrolling there is left at Qt's own default (no zoom).
+    config, window, panel, _ = make_panel(tmp_path)
+    scale_before = panel.live_view.transform().m11()
+    panel.live_view.wheelEvent(_wheel_event(120))
+    assert panel.live_view.transform().m11() == pytest.approx(scale_before)
 
 
 # --- Dirty tracking / Save / Save As / Load -------------------------------

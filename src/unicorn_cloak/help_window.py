@@ -301,6 +301,13 @@ Scale X/Y fields directly.</li>
 <p>All three write straight into that sprite's Position/Scale/Rotation
 fields, live -- the property panel and the canvas always stay in sync
 with each other, whichever one you just used.</p>
+<p>Scroll the mouse wheel over the canvas to zoom the <i>view</i> in and
+out, centered on the cursor -- a "look closer while editing" aid only.
+It never changes the avatar's own Scale/Rotation/Zoom fields or
+anything saved, and resets the next time the canvas re-fits (resizing
+the window, loading a different avatar, or switching back from Live
+Preview). Live Preview doesn't zoom on scroll -- it always shows the
+avatar at its real Render Window size.</p>
 """
 )
 

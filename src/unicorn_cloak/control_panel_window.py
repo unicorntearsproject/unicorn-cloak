@@ -416,6 +416,11 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         return super().itemChange(change, value)
 
 
+_VIEWPORT_ZOOM_STEP = 1.15
+_MIN_VIEWPORT_ZOOM = 0.1
+_MAX_VIEWPORT_ZOOM = 10.0
+
+
 class GridCanvasView(QGraphicsView):
     """The edit canvas, plus an optional grid overlay -- replaces the
     earlier single-crosshair "origin guides" (owner's request,
@@ -425,10 +430,37 @@ class GridCanvasView(QGraphicsView):
     accidentally selected or dragged like a real item could. The origin
     axes (through scene (0, 0), where a root-level sprite's own Position
     of (0, 0) sits) are still drawn, brighter than the rest of the grid,
-    so that reference point stays easy to find at a glance."""
+    so that reference point stays easy to find at a glance.
+
+    Scroll-to-zoom (owner's request, 2026-09-19: viewport zoom for this
+    editor screen specifically, "keep it simple for now") is purely a
+    "look closer while editing" aid on top of whatever refit_to_content
+    already fit to the viewport -- it never touches AvatarRig.zoom (the
+    authored, whole-avatar Render Window scale -- see the Zoom field on
+    the Behavior tab) or anything persisted, and resets on the next
+    refit (a resize, a reload, or re-entering Edit mode), same as
+    refit_to_content's own fit-to-content transform already does. Live
+    Preview (PreviewView) has no equivalent, deliberately -- it must
+    always show the avatar at its real Render Window size, so scrolling
+    there is left alone."""
 
     show_grid = False
     grid_spacing_px = 100
+
+    def __init__(self, scene, parent=None) -> None:
+        super().__init__(scene, parent)
+        # Zoom centered on the cursor, not the viewport center -- the
+        # natural feel for scroll-to-zoom.
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self._viewport_zoom = 1.0
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        factor = _VIEWPORT_ZOOM_STEP if event.angleDelta().y() > 0 else 1 / _VIEWPORT_ZOOM_STEP
+        new_zoom = self._viewport_zoom * factor
+        if _MIN_VIEWPORT_ZOOM <= new_zoom <= _MAX_VIEWPORT_ZOOM:
+            self._viewport_zoom = new_zoom
+            self.scale(factor, factor)
+        event.accept()
 
     def drawForeground(self, painter, rect) -> None:  # noqa: N802 (Qt override)
         super().drawForeground(painter, rect)
@@ -466,6 +498,11 @@ class GridCanvasView(QGraphicsView):
             return
         padded = bounds.adjusted(-60, -60, 60, 60)
         self.fitInView(padded, Qt.AspectRatioMode.KeepAspectRatio)
+        # fitInView sets its own transform outright, unrelated to
+        # whatever scroll-zoom had accumulated -- reset the baseline so
+        # the min/max clamp in wheelEvent stays relative to *this* fit,
+        # not a stale one from before a resize/reload/mode switch.
+        self._viewport_zoom = 1.0
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         super().resizeEvent(event)
