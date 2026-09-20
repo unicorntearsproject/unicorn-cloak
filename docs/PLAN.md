@@ -701,6 +701,50 @@ back a fresh `SpeakingState`, including while muted (confirmed it
 doesn't fight `set_muted`'s own, separate path); Rewind's new position
 and shortened label.
 
+**2026-09-20, same-day follow-up: Stop sometimes didn't stop the mouth
+talking; Rewind no longer auto-plays a stopped file.** Owner's report:
+Play/Stop/Rewind "not working properly" -- Stop sometimes left the
+character talking even on file source with the mic muted (correctly
+ruled out as a cause; OBS mute is a separate, independent path -- see
+`effective_talk_level`), and Rewind while stopped unexpectedly started
+playback.
+
+Root cause of the Stop bug, found by tracing `FilePlayback.stop()`
+(yesterday's fix, see above): it signals the background decode thread
+and returns immediately, without waiting for that thread to actually
+exit. `AudioManager.play_file()` doesn't wait for that either -- so
+Rewind, or a fast Stop-then-Play, could start a *new* `FilePlayback`
+while the *old* one's thread was still winding down in the background.
+When that old thread finally called its `on_finished` callback,
+`AudioManager._handle_file_finished` blindly nulled out `self._file`
+and fired `file_playback_stopped` -- even when a newer file had since
+taken over as the one actually playing. That closed the mouth on a
+false signal, and, worse, orphaned the real, still-playing file: with
+`self._file` now `None` (or pointing at nothing), nothing in the UI,
+including the Stop button, had a reference left to reach it -- it just
+kept decoding and driving the mouth on its own, unstoppable short of
+quitting the app. Fixed by having `FilePlayback` hand its *own
+instance* to `on_finished` (`on_finished(self)`, not a bare call), so
+`_handle_file_finished` can check `self._file is finished_file` and
+ignore a stale callback from an instance that's already been replaced.
+
+Root cause of the Rewind bug: simply working as designed from
+yesterday's addition ("works the same whether a file is mid-playback or
+already stopped") -- but the owner now wants Rewind to be a genuine
+no-op while stopped, not an unrequested auto-play. Sensible either way:
+a stopped file is already sitting at 0:00 for the next Play
+(`play_file()` always decodes from the start), so there was never
+really anything to rewind in that state.
+`_on_rewind_file_clicked` now checks `is_file_playing` first and does
+nothing if it's false; only restarts-and-plays while actually playing.
+
+503 tests (501 -> 503): a fake-`FilePlayback` regression test drives a
+late, stale `on_finished` callback from a replaced instance and
+confirms the current, actually-playing file survives it untouched and
+`file_playback_stopped` doesn't fire; the existing Rewind test now
+covers the playing case explicitly, plus a new one confirms it's a
+no-op while stopped.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

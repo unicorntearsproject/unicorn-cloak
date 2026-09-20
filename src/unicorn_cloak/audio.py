@@ -434,9 +434,15 @@ class FilePlayback:
     source material already has some overlap/slop in it regardless.
 
     One-shot, not looping: reaching the end of the file (or a decode
-    failure) calls on_finished() once and stops, the same as a manual
+    failure) calls on_finished(self) once and stops, the same as a manual
     stop() -- unlike Microphone, a failure here is not retried, since a
     bad file isn't a transient condition like a disconnected mic.
+
+    on_finished is handed *this instance*, not called bare -- so a
+    caller that's since moved on to a newer FilePlayback (Rewind, or a
+    quick Stop-then-Play) can tell a stale, late-arriving callback from
+    an old, already-replaced instance apart from the current one. See
+    AudioManager._handle_file_finished, which is exactly that caller.
     """
 
     def __init__(
@@ -444,7 +450,7 @@ class FilePlayback:
         path: str,
         on_volume: Callable[[float], None],
         on_error: Callable[[str], None] | None = None,
-        on_finished: Callable[[], None] | None = None,
+        on_finished: Callable[["FilePlayback"], None] | None = None,
         blocksize: int = DEFAULT_FILE_BLOCKSIZE,
         samplerate: int = DEFAULT_FILE_SAMPLERATE,
     ) -> None:
@@ -524,7 +530,7 @@ class FilePlayback:
                 "ffmpeg is not installed -- required to decode audio/video files."
             )
             if self._on_finished is not None:
-                self._on_finished()
+                self._on_finished(self)
             return
 
         self._process = process
@@ -555,7 +561,7 @@ class FilePlayback:
                     f"decoding {self.path!r} -- is this a valid audio/video file?"
                 )
             if self._on_finished is not None:
-                self._on_finished()
+                self._on_finished(self)
 
     def _report_error(self, message: str) -> None:
         if self._on_error is not None:

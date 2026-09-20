@@ -2083,17 +2083,24 @@ class ControlPanelWindow(QWidget):
         # first landed to Play's right the day before). FilePlayback
         # (audio.py) is a one-shot ffmpeg pipe decode with no seek
         # support -- there's no such thing as "resume from where it
-        # was," only "start over from 0:00" -- so this just restarts
-        # playback via the exact same AudioManager.play_file() a Play
-        # click uses, which already stops whatever's currently playing
-        # first. Works the same whether a file is mid-playback or
-        # already stopped.
+        # was," only "start over from 0:00" -- so this restarts playback
+        # via the exact same AudioManager.play_file() a Play click uses,
+        # which already stops whatever's currently playing first.
+        #
+        # Same-day reversal, still 2026-09-20: only does that while a
+        # file is actually mid-playback. It used to also fire while
+        # stopped -- restarting playback the owner hadn't asked for --
+        # but a stopped file is already sitting at 0:00 for the next
+        # Play (play_file() always decodes from the start), so there was
+        # never really anything to "rewind" in that state; a no-op is
+        # the correct rewind, not an unexpected auto-play.
         self._rewind_file_btn = QPushButton("Rewind")
         self._rewind_file_btn.setToolTip(
-            "Restarts the chosen file from the beginning -- whether it's\n"
-            "currently playing or already stopped. Playback can't seek\n"
-            "mid-file, so this is the only way back to 0:00 short of\n"
-            "Stop then Play again."
+            "While playing, restarts the chosen file from the beginning --\n"
+            "playback can't seek mid-file, so this is the only way back to\n"
+            "0:00 short of Stop then Play again. Does nothing while\n"
+            "stopped, since a stopped file already starts over from 0:00\n"
+            "on the next Play."
         )
         self._rewind_file_btn.clicked.connect(self._on_rewind_file_clicked)
         self.source_row.addWidget(self._rewind_file_btn)
@@ -3552,6 +3559,12 @@ class ControlPanelWindow(QWidget):
 
     def _on_rewind_file_clicked(self) -> None:
         if self.audio_manager is None:
+            return
+        # Only while actually playing -- see the button's own comment
+        # above. A stopped file is already sitting at 0:00 for the next
+        # Play, so restarting playback here would be an unrequested
+        # auto-play, not a rewind.
+        if not self.audio_manager.is_file_playing:
             return
         self.audio_manager.play_file()
         self._update_play_button_text()

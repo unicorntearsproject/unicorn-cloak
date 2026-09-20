@@ -470,7 +470,7 @@ def test_file_playback_reports_nonzero_volume_for_a_tone(tmp_path):
     playback = FilePlayback(
         str(path),
         on_volume=volumes.append,
-        on_finished=finished.set,
+        on_finished=lambda _f: finished.set(),
         blocksize=512,
         samplerate=8000,
     )
@@ -489,7 +489,7 @@ def test_file_playback_is_not_playing_after_it_finishes(tmp_path):
 
     finished = threading.Event()
     playback = FilePlayback(
-        str(path), on_volume=lambda v: None, on_finished=finished.set,
+        str(path), on_volume=lambda v: None, on_finished=lambda _f: finished.set(),
         blocksize=512, samplerate=8000,
     )
     playback.start()
@@ -561,7 +561,7 @@ def test_file_playback_reports_an_error_for_a_nonexistent_file(tmp_path):
         str(tmp_path / "does-not-exist.wav"),
         on_volume=lambda v: None,
         on_error=errors.append,
-        on_finished=finished.set,
+        on_finished=lambda _f: finished.set(),
     )
     playback.start()
     assert finished.wait(timeout=10.0)
@@ -578,7 +578,7 @@ def test_file_playback_reports_an_error_when_ffmpeg_is_missing(monkeypatch, tmp_
         str(tmp_path / "irrelevant.wav"),
         on_volume=lambda v: None,
         on_error=errors.append,
-        on_finished=finished.set,
+        on_finished=lambda _f: finished.set(),
     )
     playback.start()
     assert finished.wait(timeout=2.0)

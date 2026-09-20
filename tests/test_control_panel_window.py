@@ -727,12 +727,11 @@ def test_rewind_button_text_is_just_rewind(qapp, tmp_path):
     assert panel._rewind_file_btn.text() == "Rewind"
 
 
-def test_rewind_button_restarts_playback_from_the_beginning(qapp, tmp_path, monkeypatch):
+def test_rewind_button_restarts_playback_while_playing(qapp, tmp_path, monkeypatch):
     # Owner's request, 2026-09-20: a rewind-to-beginning button next to
     # Play. FilePlayback (audio.py) can't seek, so "rewind" is just
     # AudioManager.play_file() again -- it already stops whatever's
-    # currently playing and restarts fresh from 0:00, whether a file was
-    # already mid-playback or already stopped.
+    # currently playing and restarts fresh from 0:00.
     from unicorn_cloak.audio_manager import AudioManager
 
     config = Config()
@@ -743,6 +742,7 @@ def test_rewind_button_restarts_playback_from_the_beginning(qapp, tmp_path, monk
     manager = AudioManager(config)
     calls = []
     monkeypatch.setattr(manager, "play_file", lambda: calls.append(True))
+    monkeypatch.setattr(AudioManager, "is_file_playing", property(lambda self: True))
     panel = ControlPanelWindow(
         rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
     )
@@ -750,6 +750,34 @@ def test_rewind_button_restarts_playback_from_the_beginning(qapp, tmp_path, monk
     panel._rewind_file_btn.click()
 
     assert calls == [True]
+
+
+def test_rewind_button_does_nothing_while_stopped(qapp, tmp_path, monkeypatch):
+    # Same-day reversal, 2026-09-20: rewind used to restart-and-play even
+    # from a stopped state, which the owner reported as an unwanted
+    # auto-play ("hitting rewind when a selected track is stopped does
+    # rewind, but starts it playing"). A stopped file is already sitting
+    # at 0:00 for the next Play (play_file() always decodes from the
+    # start), so there was never really anything to rewind in that
+    # state -- a no-op is correct, not a restart.
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    config.audio.source = "file"
+    config.audio.file_path = "/tmp/whatever.wav"
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    calls = []
+    monkeypatch.setattr(manager, "play_file", lambda: calls.append(True))
+    monkeypatch.setattr(AudioManager, "is_file_playing", property(lambda self: False))
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    panel._rewind_file_btn.click()
+
+    assert calls == []
 
 
 def test_rewind_button_enabled_state_matches_play(qapp, tmp_path):

@@ -116,6 +116,56 @@ def test_stop_file_emits_file_playback_stopped_even_with_nothing_playing(qapp):
     assert received == [True]
 
 
+def test_late_finish_from_a_replaced_file_does_not_stop_the_new_one(qapp, monkeypatch):
+    # Regression, owner's report 2026-09-20: "hitting stop sometimes
+    # doesn't stop the character from talking." FilePlayback.stop()
+    # doesn't wait for the background thread to actually exit (see its
+    # own docstring), so a Rewind -- or a fast Stop-then-Play -- can
+    # start a new FilePlayback while the old one's thread is still
+    # winding down. When that old thread finally calls on_finished, it
+    # must be recognized as stale (the old instance, not the current
+    # self._file) and ignored -- otherwise it wrongly nulls out and
+    # "stops" the file that's actually still playing: file_playback_
+    # stopped fires and closes the mouth while the orphaned old instance
+    # keeps decoding real audio that self._file no longer references, so
+    # nothing in the UI (including Stop) can reach it anymore.
+    instances = []
+
+    class _FakeFilePlayback:
+        def __init__(self, path, on_volume, on_error=None, on_finished=None):
+            self.path = path
+            self.on_finished = on_finished
+            self.is_playing = True
+            instances.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            self.is_playing = False
+
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", _FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+    manager.play_file()
+    old_file = instances[0]
+
+    manager.play_file()  # e.g. Rewind, or a fast Stop-then-Play
+    new_file = instances[1]
+    assert manager._file is new_file
+
+    stopped_events = []
+    manager.file_playback_stopped.connect(lambda: stopped_events.append(True))
+
+    old_file.on_finished(old_file)  # the old thread's late, stale callback
+    qapp.processEvents()  # QueuedConnection -- deliver it before asserting
+
+    assert manager._file is new_file  # still the current, actually-playing file
+    assert manager.is_file_playing is True
+    assert stopped_events == []  # no false "stopped" for the file still playing
+
+
 def test_blocksize_and_samplerate_default_when_nothing_active(qapp):
     manager = AudioManager(Config())
     assert manager.blocksize > 0

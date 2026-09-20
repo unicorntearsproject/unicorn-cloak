@@ -66,8 +66,18 @@ class AudioManager(QObject):
     recording_finished = Signal()
     # Private/internal: see the module and class docstrings for why
     # FilePlayback's on_finished (a background-thread callback) routes
-    # through this instead of touching self._file directly.
-    _file_finished_from_bg_thread = Signal()
+    # through this instead of touching self._file directly. Carries the
+    # FilePlayback instance that actually finished (not just a bare
+    # trigger) -- see _handle_file_finished for why: a background
+    # thread's stop() doesn't join (see FilePlayback.stop's own
+    # docstring), so its finish can still be in flight after a Rewind or
+    # a quick Stop-then-Play has already moved self._file on to a newer
+    # instance; without the identity check this stale callback would
+    # wrongly null out and "stop" the file that's actually still
+    # playing, orphaning the real one with nothing left able to reach it
+    # (owner's report, 2026-09-20: "hitting stop sometimes doesn't stop
+    # the character from talking").
+    _file_finished_from_bg_thread = Signal(object)
 
     def __init__(self, config: Config) -> None:
         super().__init__()
@@ -228,10 +238,19 @@ class AudioManager(QObject):
             self._loop.stop()
             self._loop = None
 
-    def _handle_file_finished(self) -> None:
+    def _handle_file_finished(self, finished_file: FilePlayback) -> None:
         # Runs on the Qt thread (see __init__'s QueuedConnection) even
         # though it was triggered by FilePlayback's background thread
-        # reaching end-of-file or a decode error.
+        # reaching end-of-file or a decode error. Identity check against
+        # finished_file (not a bare "clear self._file"): stop() doesn't
+        # wait for the background thread to actually exit, so this can
+        # still fire after self._file has already moved on to a newer
+        # instance (Rewind, or a fast Stop-then-Play) -- treating that
+        # late callback as "the current file stopped" would wrongly
+        # close the mouth while the real, current file keeps playing,
+        # *and* null out the only reference able to stop it.
+        if self._file is not finished_file:
+            return
         self._file = None
         self.file_playback_stopped.emit()
 
