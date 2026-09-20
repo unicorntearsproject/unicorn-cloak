@@ -626,6 +626,43 @@ matching its `property_form`/`animation_form` siblings (both already
 (`QFormLayout.getWidgetPosition`, not a screenshot-only check), and
 still writes through to the sprite from its new location.
 
+**2026-09-20, same-day follow-up: a Rewind-to-Start button, and a real
+fix for file playback's unreliable Stop.** Owner's report: "for some
+reason it's not stopping every time i press stop.. sometimes it keeps
+going till i toggle it a couple times." Root cause: `FilePlayback.stop()`
+(`audio.py`) used to `thread.join(timeout=2.0)` on whichever thread
+called it -- always the Qt thread, per `AudioManager`'s own documented
+threading contract. `Microphone`'s and `EnvelopeLoopPlayback`'s own
+`stop()`s do the same join safely, because their read loops poll a
+stream or an interruptible `Event.wait()` and so notice the stop event
+within one short interval regardless -- but `FilePlayback._run`'s loop
+sits inside a single blocking `process.stdout.read()` call that can't be
+interrupted, only unblocked by ffmpeg actually exiting after
+`terminate()`, which is normally fast but genuinely unbounded (ffmpeg's
+own signal handling, worse under load). The join froze the entire
+Control Panel for however long that took -- including the very Stop
+button just clicked -- and an impatient second click landed the instant
+the freeze lifted, by which point the file had *already* stopped, so
+that click's `is_file_playing` read `False` and restarted it via `Play`
+instead. Fixed by dropping the join entirely: `stop()` now only signals
+the thread and terminates the process, both non-blocking, and returns
+immediately; the thread finishes and reports itself on its own time via
+`on_finished`, already routed through `AudioManager`'s existing
+`QueuedConnection` back to the Qt thread specifically so a background-
+thread callback never needs anything to wait on it.
+
+Also added the Rewind-to-Start button the owner asked for, right next
+to Play -- `FilePlayback` is a one-shot ffmpeg pipe decode with no seek
+support, so "rewind" is just `AudioManager.play_file()` again, which
+already stops whatever's currently playing and restarts fresh from
+0:00, whether a file was mid-playback or already stopped.
+498 tests (494 -> 498): `stop()` returns in well under 100ms even while
+mid-playback (confirmed failing pre-fix, ~185ms and climbing under
+load); the existing early-stop test now polls for the background thread
+to actually finish instead of asserting immediately; the Rewind button
+sits right after Play, restarts playback, and matches Play's own
+enabled/disabled state.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

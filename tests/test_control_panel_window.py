@@ -713,6 +713,49 @@ def test_file_label_hidden_when_no_file_chosen(qapp, tmp_path):
     assert panel.audio_file_label.isVisible() is False
 
 
+def test_rewind_button_sits_next_to_play(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    play_index = panel.source_row.indexOf(panel.play_file_btn)
+    rewind_index = panel.source_row.indexOf(panel._rewind_file_btn)
+    assert rewind_index == play_index + 1
+
+
+def test_rewind_button_restarts_playback_from_the_beginning(qapp, tmp_path, monkeypatch):
+    # Owner's request, 2026-09-20: a rewind-to-beginning button next to
+    # Play. FilePlayback (audio.py) can't seek, so "rewind" is just
+    # AudioManager.play_file() again -- it already stops whatever's
+    # currently playing and restarts fresh from 0:00, whether a file was
+    # already mid-playback or already stopped.
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    config.audio.source = "file"
+    config.audio.file_path = "/tmp/whatever.wav"
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    calls = []
+    monkeypatch.setattr(manager, "play_file", lambda: calls.append(True))
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    panel._rewind_file_btn.click()
+
+    assert calls == [True]
+
+
+def test_rewind_button_enabled_state_matches_play(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._rewind_file_btn.isEnabled() is False  # source defaults to microphone
+
+    config.audio.source = "file"
+    config.audio.file_path = "/tmp/whatever.wav"
+    panel._update_source_controls_enabled()
+    assert panel._rewind_file_btn.isEnabled() is True
+    assert panel._rewind_file_btn.isEnabled() == panel.play_file_btn.isEnabled()
+
+
 def test_browsing_a_file_shows_the_elided_label(qapp, tmp_path, monkeypatch):
     config, window, panel, _ = make_panel(tmp_path)
     panel.show()

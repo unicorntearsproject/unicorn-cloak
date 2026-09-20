@@ -514,8 +514,43 @@ def test_file_playback_stop_ends_it_early_without_reporting_an_error(tmp_path):
 
     playback.stop()
 
+    # stop() no longer blocks waiting for the background thread/ffmpeg to
+    # actually finish (2026-09-20 fix -- see stop()'s own docstring: it
+    # used to block whichever thread called it, always the Qt thread in
+    # practice, for however long that took), so give it a moment to wind
+    # down instead of asserting immediately.
+    deadline = time.monotonic() + 2.0
+    while playback.is_playing and time.monotonic() < deadline:
+        time.sleep(0.02)
     assert playback.is_playing is False
     assert errors == []  # a deliberate stop is not a failure
+
+
+@needs_ffmpeg
+def test_file_playback_stop_does_not_block_the_caller(tmp_path):
+    # Regression 2026-09-20, owner's report: "it's not stopping every
+    # time i press stop... sometimes it keeps going till i toggle it a
+    # couple times." Root cause: stop() used to join() the background
+    # thread -- which can be sitting inside a single blocking
+    # process.stdout.read() call for an unbounded stretch -- on whatever
+    # thread called stop(), always the Qt thread in the real app,
+    # freezing the whole UI. An impatient second click during that freeze
+    # landed *after* the file had already stopped, restarting it. stop()
+    # itself must now return immediately, regardless of how long the
+    # background thread/ffmpeg actually take to wind down.
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=5.0)
+
+    playback = FilePlayback(
+        str(path), on_volume=lambda v: None,
+        blocksize=512, samplerate=8000,
+    )
+    playback.start()
+    time.sleep(0.2)
+
+    started = time.monotonic()
+    playback.stop()
+    assert time.monotonic() - started < 0.1
 
 
 @needs_ffmpeg

@@ -472,15 +472,35 @@ class FilePlayback:
         self._thread.start()
 
     def stop(self) -> None:
+        """Signals the background thread and its ffmpeg subprocess to
+        stop, but does not wait for them to actually finish -- unlike
+        Microphone's own stop(), whose read loop polls a stream and so
+        notices the stop event within one short sleep interval,
+        _run's loop can be sitting inside a single blocking
+        process.stdout.read() call for as long as ffmpeg takes to
+        actually exit after terminate() (normally a handful of ms, but
+        not bounded -- ffmpeg's own signal handling and the '-re'
+        real-time pacing this class relies on both affect it, and it
+        gets worse under system load).
+
+        Used to join(timeout=2.0) here, on whatever thread called stop()
+        -- always the Qt thread, since AudioManager's own docstring
+        requires it. That blocked the entire UI, including the very Stop
+        button just clicked, for however long the background thread took
+        to unblock -- and a second, impatient click during that freeze
+        landed *after* the file had actually already stopped, restarting
+        it (owner's report, 2026-09-20: "it's not stopping every time i
+        press stop... sometimes it keeps going till i toggle it a couple
+        times"). The thread finishes and reports itself on its own time
+        instead, via on_finished -- already routed through AudioManager's
+        QueuedConnection back to the Qt thread specifically so a
+        background-thread callback never needs anything to wait on it."""
         self._stop_event.set()
         if self._process is not None:
             try:
                 self._process.terminate()
             except Exception:
                 pass
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-            self._thread = None
 
     def _run(self) -> None:
         bytes_per_block = self.blocksize * 4  # float32 mono

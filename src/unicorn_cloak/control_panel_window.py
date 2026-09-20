@@ -2062,7 +2062,7 @@ class ControlPanelWindow(QWidget):
         # Owner's request, 2026-09-17: audio source controls live in the
         # always-visible global area too, on their own bar, with the
         # chosen file's path shown (middle-elided) just below it.
-        source_row = QHBoxLayout()
+        self.source_row = QHBoxLayout()
         self.audio_source = QComboBox()
         self.audio_source.addItem("Microphone", "microphone")
         self.audio_source.addItem("File (play a recording instead)", "file")
@@ -2077,7 +2077,7 @@ class ControlPanelWindow(QWidget):
         index = self.audio_source.findData(self.config.audio.source)
         self.audio_source.setCurrentIndex(max(index, 0))
         self.audio_source.currentIndexChanged.connect(self._on_audio_source_changed)
-        source_row.addWidget(self.audio_source, stretch=1)
+        self.source_row.addWidget(self.audio_source, stretch=1)
 
         self.play_file_btn = QPushButton("Play")
         self.play_file_btn.setToolTip(
@@ -2086,7 +2086,24 @@ class ControlPanelWindow(QWidget):
             "the volume envelope from it in real time."
         )
         self.play_file_btn.clicked.connect(self._on_play_file_clicked)
-        source_row.addWidget(self.play_file_btn)
+        self.source_row.addWidget(self.play_file_btn)
+
+        # Owner's request, 2026-09-20. FilePlayback (audio.py) is a
+        # one-shot ffmpeg pipe decode with no seek support -- there's no
+        # such thing as "resume from where it was," only "start over from
+        # 0:00" -- so this just restarts playback via the exact same
+        # AudioManager.play_file() a Play click uses, which already stops
+        # whatever's currently playing first. Works the same whether a
+        # file is mid-playback or already stopped.
+        self._rewind_file_btn = QPushButton("Rewind to Start")
+        self._rewind_file_btn.setToolTip(
+            "Restarts the chosen file from the beginning -- whether it's\n"
+            "currently playing or already stopped. Playback can't seek\n"
+            "mid-file, so this is the only way back to 0:00 short of\n"
+            "Stop then Play again."
+        )
+        self._rewind_file_btn.clicked.connect(self._on_rewind_file_clicked)
+        self.source_row.addWidget(self._rewind_file_btn)
 
         self._browse_file_btn = QPushButton("Browse…")
         self._browse_file_btn.setToolTip(
@@ -2096,7 +2113,7 @@ class ControlPanelWindow(QWidget):
             "recording you want captured separately (e.g. in OBS)."
         )
         self._browse_file_btn.clicked.connect(self._on_browse_audio_file)
-        source_row.addWidget(self._browse_file_btn)
+        self.source_row.addWidget(self._browse_file_btn)
 
         self.record_loop_btn = QPushButton("Record 10s & loop")
         self.record_loop_btn.setToolTip(
@@ -2107,8 +2124,8 @@ class ControlPanelWindow(QWidget):
             "back to whatever was active before."
         )
         self.record_loop_btn.clicked.connect(self._on_record_loop_clicked)
-        source_row.addWidget(self.record_loop_btn)
-        root.addLayout(source_row)
+        self.source_row.addWidget(self.record_loop_btn)
+        root.addLayout(self.source_row)
 
         self.audio_file_label = QLabel(self._elided_file_label())
         self.audio_file_label.setToolTip(self.config.audio.file_path or "No file chosen yet -- click Browse….")
@@ -3449,7 +3466,9 @@ class ControlPanelWindow(QWidget):
     def _update_source_controls_enabled(self) -> None:
         is_file = self.config.audio.source == "file"
         self._browse_file_btn.setEnabled(is_file)
-        self.play_file_btn.setEnabled(is_file and bool(self.config.audio.file_path))
+        has_file = is_file and bool(self.config.audio.file_path)
+        self.play_file_btn.setEnabled(has_file)
+        self._rewind_file_btn.setEnabled(has_file)
 
     def _update_play_button_text(self) -> None:
         playing = self.audio_manager is not None and self.audio_manager.is_file_playing
@@ -3527,6 +3546,12 @@ class ControlPanelWindow(QWidget):
             self.audio_manager.stop_file()
         else:
             self.audio_manager.play_file()
+        self._update_play_button_text()
+
+    def _on_rewind_file_clicked(self) -> None:
+        if self.audio_manager is None:
+            return
+        self.audio_manager.play_file()
         self._update_play_button_text()
 
     def _on_file_playback_stopped(self) -> None:
