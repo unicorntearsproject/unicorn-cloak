@@ -308,6 +308,10 @@ anything saved, and resets the next time the canvas re-fits (resizing
 the window, loading a different avatar, or switching back from Live
 Preview). Live Preview doesn't zoom on scroll -- it always shows the
 avatar at its real Render Window size.</p>
+<p>Hold <b>Ctrl</b> and drag to pan the view -- takes priority over the
+usual click-to-select/drag-to-move-a-sprite behavior, even if the drag
+starts on top of a sprite, so it's always available once zoomed in far
+enough that part of the avatar is off-screen.</p>
 """
 )
 

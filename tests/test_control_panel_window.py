@@ -2,7 +2,7 @@ import math
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QKeySequence, QWheelEvent
+from PySide6.QtGui import QKeySequence, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent
 
 from unicorn_cloak import control_panel_window as cpw_module
@@ -448,6 +448,80 @@ def test_live_preview_does_not_zoom_on_scroll(qapp, tmp_path):
     scale_before = panel.live_view.transform().m11()
     panel.live_view.wheelEvent(_wheel_event(120))
     assert panel.live_view.transform().m11() == pytest.approx(scale_before)
+
+
+# --- Edit canvas Ctrl+drag pan (owner's request, 2026-09-19) ----------------
+
+
+def _mouse_event(event_type, pos, modifiers=Qt.KeyboardModifier.NoModifier):
+    buttons = Qt.MouseButton.NoButton if event_type == QEvent.Type.MouseButtonRelease else Qt.MouseButton.LeftButton
+    return QMouseEvent(event_type, pos, buttons, buttons, modifiers)
+
+
+def test_ctrl_drag_pans_the_edit_canvas(qapp, tmp_path):
+    # A real, sizable sprite (_make_square_sprite_panel's 100x100, not
+    # make_panel's default tiny 4x4 test rig) and a real, shown window --
+    # the scrollbar range calculation needs a real (non-degenerate)
+    # viewport size, which an unshown widget doesn't reliably have, and
+    # enough content that a modest zoom-in actually exceeds the viewport.
+    # At the default fit-to-content baseline the view exactly matches the
+    # content size, so the scrollbar range is [0, 0] and there is nothing
+    # to pan *to* regardless of drag handling.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel.resize(1000, 800)
+    panel.edit_sprites_btn.setChecked(True)
+    panel.show()
+    for _ in range(5):
+        qapp.processEvents()
+    for _ in range(10):
+        panel.edit_view.wheelEvent(_wheel_event(120))
+        qapp.processEvents()
+    hbar = panel.edit_view.horizontalScrollBar()
+    vbar = panel.edit_view.verticalScrollBar()
+    assert hbar.maximum() > hbar.minimum(), "test setup: nothing to pan to"
+    before = (hbar.value(), vbar.value())
+
+    panel.edit_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, QPointF(100, 100), Qt.KeyboardModifier.ControlModifier)
+    )
+    panel.edit_view.mouseMoveEvent(
+        _mouse_event(QEvent.Type.MouseMove, QPointF(60, 80), Qt.KeyboardModifier.ControlModifier)
+    )
+    panel.edit_view.mouseReleaseEvent(_mouse_event(QEvent.Type.MouseButtonRelease, QPointF(60, 80)))
+
+    # Dragged left 40px, up 20px -- standard hand-tool convention is the
+    # *content* sticks to the cursor (Photoshop/Figma/browsers), so
+    # dragging left must scroll further right into the document, i.e.
+    # the scrollbar *value* increases, not decreases.
+    assert hbar.value() == before[0] + 40
+    assert vbar.value() == before[1] + 20
+    assert panel.edit_view._panning is False  # cleared on release
+
+
+def test_plain_drag_without_ctrl_does_not_pan(qapp, tmp_path):
+    # Regression guard: only Ctrl+drag pans -- an ordinary drag (moving a
+    # sprite, or clicking empty canvas) must never scroll the view.
+    config, window, panel, _ = make_panel(tmp_path)
+    hbar = panel.edit_view.horizontalScrollBar()
+    vbar = panel.edit_view.verticalScrollBar()
+    before = (hbar.value(), vbar.value())
+
+    panel.edit_view.mousePressEvent(_mouse_event(QEvent.Type.MouseButtonPress, QPointF(10, 10)))
+    panel.edit_view.mouseMoveEvent(_mouse_event(QEvent.Type.MouseMove, QPointF(60, 80)))
+    panel.edit_view.mouseReleaseEvent(_mouse_event(QEvent.Type.MouseButtonRelease, QPointF(60, 80)))
+
+    assert (hbar.value(), vbar.value()) == before
+    assert panel.edit_view._panning is False
+
+
+def test_ctrl_drag_shows_a_closed_hand_cursor_while_panning(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.edit_view.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, QPointF(100, 100), Qt.KeyboardModifier.ControlModifier)
+    )
+    assert panel.edit_view.cursor().shape() == Qt.CursorShape.ClosedHandCursor
+    panel.edit_view.mouseReleaseEvent(_mouse_event(QEvent.Type.MouseButtonRelease, QPointF(100, 100)))
+    assert panel.edit_view.cursor().shape() != Qt.CursorShape.ClosedHandCursor
 
 
 # --- Dirty tracking / Save / Save As / Load -------------------------------

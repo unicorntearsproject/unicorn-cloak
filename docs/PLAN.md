@@ -330,6 +330,30 @@ geometry timing this headless platform doesn't reproduce the same way
 even without the fix), so it would have been a false sense of coverage.
 457 tests (455 -> 457).
 
+**Same day, final addition for this session: Ctrl+drag pans the Edit
+canvas.** Owner's request, once zoom made panning around while zoomed
+in actually useful ("i think we're pretty much done for a while!"). Checked
+on the mouse event's own modifiers in `mousePressEvent`/`mouseMoveEvent`/
+`mouseReleaseEvent` -- not tracked via separate key press/release
+handlers, so it works regardless of whatever widget currently has
+keyboard focus -- and takes priority over the normal click-to-select/
+drag-to-move-a-sprite behavior even when the drag starts on top of a
+sprite. Drives the same (invisible, `ScrollBarAlwaysOff`) scrollbars the
+zoom fix a moment ago turned off the *display* of, not their function --
+QGraphicsView's scrollbars keep working as the view's actual offset
+regardless of that policy, which is exactly what makes this safe without
+reintroducing the earlier feedback loop. Content sticks to the cursor
+while dragging (the standard hand-tool convention -- Photoshop, Figma,
+browsers), confirmed by first getting a test's own expected sign
+backwards and having it catch its own mistake.
+Two real test-setup gaps surfaced getting this covered, both fixed:
+`make_panel`'s default test rig is a 4x4 test pixmap, nowhere near big
+enough to exceed even a heavily zoomed-in viewport (switched to the
+existing 100x100 `_make_square_sprite_panel` helper instead); and the
+scrollbar range genuinely stays `[0, 0]` -- nothing to pan to -- unless
+the window has actually been shown, not just constructed. 460 tests
+(457 -> 460).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

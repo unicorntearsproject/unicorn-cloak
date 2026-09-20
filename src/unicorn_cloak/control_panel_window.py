@@ -449,7 +449,11 @@ class GridCanvasView(QGraphicsView):
     refit_to_content's own fit-to-content transform already does. Live
     Preview (PreviewView) has no equivalent, deliberately -- it must
     always show the avatar at its real Render Window size, so scrolling
-    there is left alone."""
+    there is left alone.
+
+    Ctrl+drag pans the viewport (owner's request, same day, once zoom
+    made panning around while zoomed in actually useful) -- see
+    mousePressEvent."""
 
     show_grid = False
     grid_spacing_px = 100
@@ -471,13 +475,51 @@ class GridCanvasView(QGraphicsView):
         # forward real quick and snaps back... a horizontal scroll bar
         # appears" -- exactly this feedback loop, and exactly why zooming
         # out (content only ever shrinks, no scrollbar, no loop) "worked
-        # fine" while zooming in didn't. No pan-by-scrollbar is lost by
-        # turning them off -- this view was never actually pannable that
-        # way to begin with (dragging moves the selected sprite, not the
-        # view); re-scrolling anchors the zoom whereever the cursor is if
-        # you need to look elsewhere while zoomed in.
+        # fine" while zooming in didn't. Never *visible* again below, but
+        # still driven programmatically by Ctrl+drag panning (see
+        # mousePressEvent) -- QGraphicsView's scrollbars keep working as
+        # the view's actual horizontal/vertical offset even at
+        # ScrollBarAlwaysOff, which is exactly what makes that safe to
+        # use for panning without reintroducing this same feedback loop.
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._panning = False
+        self._pan_last_pos = QPointF()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        # Ctrl+drag pans the viewport (owner's request, 2026-09-19) --
+        # checked on the mouse event's own modifiers, not tracked via
+        # separate key press/release handlers, so it works regardless of
+        # whatever widget currently has keyboard focus. Takes priority
+        # over the normal click-to-select/drag-to-move-a-sprite behavior
+        # below it (event.accept() + early return, never reaching
+        # super()) -- Ctrl held is an explicit, unambiguous request to
+        # pan, even if the press happens to land on a sprite.
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.button() == Qt.MouseButton.LeftButton:
+            self._panning = True
+            self._pan_last_pos = event.position()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._panning:
+            delta = event.position() - self._pan_last_pos
+            self._pan_last_pos = event.position()
+            self.horizontalScrollBar().setValue(round(self.horizontalScrollBar().value() - delta.x()))
+            self.verticalScrollBar().setValue(round(self.verticalScrollBar().value() - delta.y()))
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._panning:
+            self._panning = False
+            self.unsetCursor()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event) -> None:  # noqa: N802 (Qt override)
         factor = _VIEWPORT_ZOOM_STEP if event.angleDelta().y() > 0 else 1 / _VIEWPORT_ZOOM_STEP
