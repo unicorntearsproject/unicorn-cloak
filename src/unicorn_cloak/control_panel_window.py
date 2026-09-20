@@ -811,6 +811,35 @@ class ControlPanelWindow(QWidget):
         mode_row.addWidget(self.live_preview_btn)
         mode_row.addWidget(self.edit_sprites_btn)
 
+        # Guide/Ghost, right of Edit Sprites and left of Reset Size/
+        # Reset Rotation -- owner's request, 2026-09-20 (they'd landed at
+        # the row's far end, after Undo/Redo, the day before). Toggle
+        # buttons, not checkboxes with paragraph-long labels (owner's
+        # request, 2026-09-17) -- the detail lives in the tooltip
+        # instead. Hidden outside Edit mode (see _on_canvas_mode_toggled)
+        # since both only ever affect the Edit canvas.
+        self.guide_btn = QPushButton("Guide")
+        self.guide_btn.setCheckable(True)
+        self.guide_btn.setToolTip(
+            "Shows a grid on the Edit canvas (spacing set on the\n"
+            "Application tab), plus the origin axes through (0, 0) -- where\n"
+            "a root-level sprite's own Position of (0, 0) sits. Off by\n"
+            "default."
+        )
+        self.guide_btn.toggled.connect(self._on_guide_toggled)
+        mode_row.addWidget(self.guide_btn)
+
+        self.ghost_btn = QPushButton("Ghost")
+        self.ghost_btn.setCheckable(True)
+        self.ghost_btn.setToolTip(
+            "Shows hidden layers and sprites not visible in the current\n"
+            "Preview state at 40% opacity on the Edit canvas, so you can\n"
+            "see where they are. Never affects the Render Window/OBS,\n"
+            "which always renders them at true 0%. Off by default."
+        )
+        self.ghost_btn.toggled.connect(self._on_ghost_toggled)
+        mode_row.addWidget(self.ghost_btn)
+
         # Owner's request, 2026-09-19: two buttons next to Edit Sprites to
         # reset the selected sprite's Scale/Rotation back to native --
         # hidden outside Edit mode (nothing to reset in Live Preview,
@@ -828,11 +857,11 @@ class ControlPanelWindow(QWidget):
         self._per_sprite_widgets.extend((self.reset_size_btn, self.reset_rotation_btn))
 
         # The trailing stretch is added once, in _build_bottom_bar, after
-        # Undo/Redo/Guide/Ghost are appended below -- owner's request,
-        # 2026-09-19: keep this whole row as one contiguous group rather
-        # than a stretch splitting it into two clusters (which is what
-        # happened when Undo/Redo were first added here, pushed off to
-        # the far right on their own).
+        # Undo/Redo are appended below -- owner's request, 2026-09-19:
+        # keep this whole row as one contiguous group rather than a
+        # stretch splitting it into two clusters (which is what happened
+        # when Undo/Redo were first added here, pushed off to the far
+        # right on their own).
         canvas_layout.addLayout(mode_row)
 
         # --- Edit-mode preview-state controls (only meaningful in Edit
@@ -1636,38 +1665,83 @@ class ControlPanelWindow(QWidget):
         tab = QWidget()
         outer = QVBoxLayout(tab)
         # Owner's request, 2026-09-19, alongside moving this tab to 2nd
-        # position (right after Sprites): a header naming which layer
+        # position (right after Sprites): something naming which layer
         # Position & Hierarchy/Animation below are actually editing --
         # those sections only ever act on self._selected_id, but nothing
         # on this tab itself said so, easy to lose track of after
-        # switching sprites on the Sprites tab and back. Kept updated
-        # from the single _select() choke point, not duplicated per
-        # section.
-        self.behavior_header = QLabel()
-        self.behavior_header.setObjectName("BehaviorHeader")
-        self._update_behavior_header(None)
-        # Fixed vertical size policy, not just AlignTop -- setAlignment()
-        # alone only repositions/clips the *widget* within whatever cell
-        # QVBoxLayout's own space-distribution math hands it, and with no
-        # maximumSize of its own a QLabel's cell can still be inflated
-        # with leftover space (confirmed empirically: the label's own
-        # rendered geometry stayed a correct 17px tall, but the splitter
-        # below it still landed ~330px down the page, i.e. after that
-        # inflated, mostly-empty cell). Fixed makes sizeHint() double as
-        # maximumSize, so the cell itself can't grow past one line of
-        # text -- caught by test_a_tab_that_starts_fully_collapsed_from_
-        # persisted_config_stays_pegged_to_top.
-        self.behavior_header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        outer.addWidget(self.behavior_header)
+        # switching sprites on the Sprites tab and back. Upgraded to a
+        # combo the next day (still owner's request) so it also *drives*
+        # selection for quick switching, not just displaying it -- kept
+        # in sync both ways through the single _select() choke point
+        # (see _sync_behavior_layer_combo) and its own currentIndexChanged
+        # (see _on_behavior_layer_combo_changed), guarding against the
+        # obvious feedback loop with blockSignals the same way sprite_
+        # list already does in _select.
+        self.behavior_layer_combo = QComboBox()
+        self.behavior_layer_combo.setToolTip(
+            "Quick-switch which layer's Position & Hierarchy/Animation\n"
+            "you're editing below -- the same selection as the Sprites\n"
+            "tab's Layer List and the Edit canvas, just reachable from\n"
+            "here too. Locked layers are shown dimmed."
+        )
+        self.behavior_layer_combo.currentIndexChanged.connect(self._on_behavior_layer_combo_changed)
+        # QComboBox is already Fixed-height by default -- unlike the
+        # QLabel this replaced, which needed an explicit QSizePolicy.
+        # Fixed to stop it silently absorbing leftover vertical space and
+        # pushing the splitter below it down the page (see git history
+        # for that bug, caught by test_a_tab_that_starts_fully_collapsed_
+        # from_persisted_config_stays_pegged_to_top).
+        outer.addWidget(self.behavior_layer_combo)
         self._add_tab_splitter(outer, [motion_section, position_section, animation_section])
         return tab
 
-    def _update_behavior_header(self, sprite: Sprite | None) -> None:
-        if sprite is None:
-            self.behavior_header.setText("No layer selected — select one on the Sprites tab.")
-        else:
+    def _populate_behavior_layer_combo(self) -> None:
+        self.behavior_layer_combo.blockSignals(True)
+        self.behavior_layer_combo.clear()
+        self.behavior_layer_combo.addItem("(no layer selected)", None)
+        for sprite, _depth in self.rig.sprites_in_stacking_order():
             name = sprite.path.rsplit("/", 1)[-1]
-            self.behavior_header.setText(f"Editing layer: {name}")
+            self.behavior_layer_combo.addItem(name, sprite.id)
+        self._refresh_behavior_layer_combo_styles()
+        self._sync_behavior_layer_combo(self.rig.by_id(self._selected_id) if self._selected_id is not None else None)
+        self.behavior_layer_combo.blockSignals(False)
+
+    def _refresh_behavior_layer_combo_styles(self) -> None:
+        # Owner's request, 2026-09-20: "show locked layers as slightly
+        # greyed out" -- GREY_500 is this theme's existing disabled/
+        # placeholder color (theme.py), reused here rather than
+        # inventing a new one. Re-applied whenever lock state changes
+        # (see _on_sprite_lock_toggled), not just on a full repopulate.
+        dim = QColor(theme.GREY_500)
+        for i in range(self.behavior_layer_combo.count()):
+            sprite_id = self.behavior_layer_combo.itemData(i)
+            sprite = self.rig.by_id(sprite_id) if sprite_id is not None else None
+            self.behavior_layer_combo.setItemData(
+                i, dim if sprite is not None and sprite.locked else None, Qt.ItemDataRole.ForegroundRole
+            )
+
+    def _sync_behavior_layer_combo(self, sprite: Sprite | None) -> None:
+        # The read half of the two-way sync -- called from _select()
+        # (the single choke point every selection change already goes
+        # through, whether from the Sprites tab's Layer List or clicking
+        # a sprite directly on the Edit canvas), so this combo always
+        # reflects "whatever's actually selected" without needing to
+        # duplicate that logic. blockSignals guards against the obvious
+        # feedback loop back into _on_behavior_layer_combo_changed.
+        target_id = sprite.id if sprite is not None else None
+        self.behavior_layer_combo.blockSignals(True)
+        index = self.behavior_layer_combo.findData(target_id)
+        self.behavior_layer_combo.setCurrentIndex(max(index, 0))
+        self.behavior_layer_combo.blockSignals(False)
+
+    def _on_behavior_layer_combo_changed(self, index: int) -> None:
+        # The write half -- picking a layer here drives selection exactly
+        # like clicking it in the Layer List or on the canvas would,
+        # through the same _select() choke point (which then calls
+        # _sync_behavior_layer_combo right back, a no-op here since
+        # they already agree).
+        sprite_id = self.behavior_layer_combo.itemData(index)
+        self._select(sprite_id)
 
     def _build_audio_tab(self) -> QWidget:
         envelope_section = CollapsibleSection("Envelope")
@@ -2071,6 +2145,12 @@ class ControlPanelWindow(QWidget):
         # self.undo/self.redo to already exist) could still land there.
         self.mode_row.addWidget(self._undo_btn)
         self.mode_row.addWidget(self._redo_btn)
+        # The trailing stretch, added last so it comes after every button
+        # in this row (Guide/Ghost are built earlier, in _build_canvas_
+        # area) -- owner's request, 2026-09-19: keep the whole row as one
+        # contiguous left-aligned group, not split into two clusters by a
+        # stretch in the middle.
+        self.mode_row.addStretch(1)
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo)
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo)
 
@@ -2151,36 +2231,6 @@ class ControlPanelWindow(QWidget):
         )
         check_issues_btn.clicked.connect(self._on_check_for_issues)
         actions_row_2.addWidget(check_issues_btn)
-
-        # Toggle buttons, not checkboxes with paragraph-long labels
-        # (owner's request, 2026-09-17) -- the detail lives in the
-        # tooltip instead. Moved into the Live Preview/Edit Sprites row
-        # (self.mode_row), not the bottom action bar, and hidden outside
-        # Edit mode -- owner's request, 2026-09-19: both only affect the
-        # Edit canvas, so they're meaningless in Live Preview, same
-        # reasoning as Reset Size/Reset Rotation and Undo/Redo above.
-        self.guide_btn = QPushButton("Guide")
-        self.guide_btn.setCheckable(True)
-        self.guide_btn.setToolTip(
-            "Shows a grid on the Edit canvas (spacing set on the\n"
-            "Application tab), plus the origin axes through (0, 0) -- where\n"
-            "a root-level sprite's own Position of (0, 0) sits. Off by\n"
-            "default."
-        )
-        self.guide_btn.toggled.connect(self._on_guide_toggled)
-        self.mode_row.addWidget(self.guide_btn)
-
-        self.ghost_btn = QPushButton("Ghost")
-        self.ghost_btn.setCheckable(True)
-        self.ghost_btn.setToolTip(
-            "Shows hidden layers and sprites not visible in the current\n"
-            "Preview state at 40% opacity on the Edit canvas, so you can\n"
-            "see where they are. Never affects the Render Window/OBS,\n"
-            "which always renders them at true 0%. Off by default."
-        )
-        self.ghost_btn.toggled.connect(self._on_ghost_toggled)
-        self.mode_row.addWidget(self.ghost_btn)
-        self.mode_row.addStretch(1)
 
         actions_row_2.addStretch(1)
 
@@ -2749,6 +2799,7 @@ class ControlPanelWindow(QWidget):
             list_item.setSizeHint(row.sizeHint())
             self.sprite_list.setItemWidget(list_item, row)
         self.sprite_list.blockSignals(False)
+        self._populate_behavior_layer_combo()
 
     def _build_group_header_row(self, group_name: str, depth: int) -> QWidget:
         row = QWidget()
@@ -2863,6 +2914,8 @@ class ControlPanelWindow(QWidget):
             canvas_item.setFlag(QGraphicsItem.ItemIsMovable, not locked)
             canvas_item.update()  # handles disappear/reappear immediately, not just on next repaint
 
+        self._refresh_behavior_layer_combo_styles()
+
         if sprite_id == self._selected_id:
             self.lock_position_btn.blockSignals(True)
             self.lock_position_btn.setChecked(locked)
@@ -2935,7 +2988,7 @@ class ControlPanelWindow(QWidget):
         self.sprite_list.blockSignals(False)
 
         sprite = self.rig.by_id(sprite_id) if sprite_id is not None else None
-        self._update_behavior_header(sprite)
+        self._sync_behavior_layer_combo(sprite)
         if sprite is None:
             self._set_property_form_enabled(False)
         else:

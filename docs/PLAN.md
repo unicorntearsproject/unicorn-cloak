@@ -496,6 +496,41 @@ and header (including the deselect/reselect text and the pre-existing
 "pegged to top" regression test, updated for the header's own height
 rather than an absolute page offset).
 
+**2026-09-20: Guide/Ghost repositioned again, Behavior tab's header
+upgraded to a quick-switch layer combo.** Two follow-ups, same day as
+the above:
+  - **Guide/Ghost moved once more**, from the mode row's end (yesterday)
+    to right after Edit Sprites, left of Reset Size/Reset Rotation --
+    owner's request: "to the left of the reset buttons, right of the
+    edit button." Moved their whole construction out of
+    `_build_bottom_bar` into `_build_canvas_area`, right after the mode-
+    toggle buttons, rather than fighting with `insertWidget` index math
+    against a row built in another method -- construction order is
+    layout order for this row now, matching how Reset Size/Reset
+    Rotation/Undo/Redo are already built in the order they appear.
+  - **The Behavior tab's header became a combo.** Still names the active
+    layer, but now also *drives* selection -- picking a different sprite
+    from `self.behavior_layer_combo` selects it exactly like clicking it
+    in the Sprites tab's Layer List or on the Edit canvas would, and
+    vice versa: changing the selection either of those ways updates the
+    combo too. Both directions go through the existing single choke
+    points -- `_select()` for the read half (`_sync_behavior_layer_
+    combo`), the combo's own `currentIndexChanged` for the write half
+    (`_on_behavior_layer_combo_changed`) -- each blocking the other's
+    signals while it updates, the same guard `_select` already uses for
+    `sprite_list`. Locked layers render dimmed (`theme.GREY_500`, the
+    same color already used for a locked sprite's canvas selection box),
+    via `Qt.ItemDataRole.ForegroundRole` on each combo item, refreshed
+    from `_on_sprite_lock_toggled` (live, not just on rebuild) and from
+    `_populate_behavior_layer_combo` (full rebuild, called from
+    `_rebuild_list` so structural changes -- add/remove/reorder sprites
+    -- stay in sync too). A `QComboBox` is Fixed-height by default, so
+    the "cell absorbs leftover space" layout bug the plain `QLabel`
+    version hit yesterday didn't recur here.
+489 tests (484 -> 489): Guide/Ghost's new position in the mode row, and
+the behavior combo's population/two-way sync/lock-greying, replacing
+the old header's now-removed text-based tests.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

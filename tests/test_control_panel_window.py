@@ -973,23 +973,85 @@ def test_parent_combo_is_populated_before_any_sprite_is_selected(qapp, tmp_path)
 # --- Behavior tab header (owner's request, 2026-09-19) -----------------------
 
 
-def test_behavior_header_shows_no_selection_by_default(qapp, tmp_path):
+def test_behavior_layer_combo_shows_no_selection_by_default(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
-    assert "No layer selected" in panel.behavior_header.text()
+    assert panel.behavior_layer_combo.currentText() == "(no layer selected)"
+    assert panel.behavior_layer_combo.currentData() is None
 
 
-def test_behavior_header_names_the_selected_layer(qapp, tmp_path):
+def test_behavior_layer_combo_lists_every_sprite(qapp, tmp_path):
+    sprites = [
+        Sprite(id=1, path="assets/mouth_open.png", image_data=make_test_png_bytes()),
+        Sprite(id=2, path="assets/eyes_open.png", image_data=make_test_png_bytes()),
+    ]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    texts = [panel.behavior_layer_combo.itemText(i) for i in range(panel.behavior_layer_combo.count())]
+    assert "mouth_open.png" in texts
+    assert "eyes_open.png" in texts
+
+
+def test_behavior_layer_combo_follows_the_selected_layer(qapp, tmp_path):
+    # Owner's request, 2026-09-20: "show the active layer whatever it
+    # is... if they change layers from the sprites tab, it will be the
+    # active one on the behaviors drop down." _select() is the single
+    # choke point both the Sprites tab's Layer List and a canvas click
+    # already go through, so driving it directly here exercises both.
     sprites = [Sprite(id=1, path="assets/mouth_open.png", image_data=make_test_png_bytes())]
     config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
     panel._select(1)
-    assert panel.behavior_header.text() == "Editing layer: mouth_open.png"
+    assert panel.behavior_layer_combo.currentText() == "mouth_open.png"
+    assert panel.behavior_layer_combo.currentData() == 1
 
 
-def test_behavior_header_reverts_on_deselect(qapp, tmp_path):
+def test_behavior_layer_combo_reverts_on_deselect(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     panel._select(1)
     panel._select(None)
-    assert "No layer selected" in panel.behavior_header.text()
+    assert panel.behavior_layer_combo.currentText() == "(no layer selected)"
+
+
+def test_picking_a_layer_in_the_behavior_combo_selects_it(qapp, tmp_path):
+    # The write half of the two-way sync: picking a different layer here
+    # must drive selection exactly like clicking it in the Layer List.
+    sprites = [
+        Sprite(id=1, path="a.png", image_data=make_test_png_bytes()),
+        Sprite(id=2, path="b.png", image_data=make_test_png_bytes()),
+    ]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    index = panel.behavior_layer_combo.findData(2)
+
+    panel.behavior_layer_combo.setCurrentIndex(index)
+
+    assert panel._selected_id == 2
+    assert panel.pos_x.isEnabled() is True  # property form followed the new selection
+
+
+def test_locked_layers_are_greyed_out_in_the_behavior_combo(qapp, tmp_path):
+    # Owner's request, 2026-09-20: "drop box should show locked layers as
+    # slightly greyed out."
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), locked=True)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    index = panel.behavior_layer_combo.findData(1)
+    color = panel.behavior_layer_combo.itemData(index, Qt.ItemDataRole.ForegroundRole)
+    assert color is not None
+
+
+def test_unlocked_layers_are_not_greyed_out_in_the_behavior_combo(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    index = panel.behavior_layer_combo.findData(1)
+    color = panel.behavior_layer_combo.itemData(index, Qt.ItemDataRole.ForegroundRole)
+    assert color is None
+
+
+def test_toggling_lock_updates_the_behavior_combos_greying_live(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    index = panel.behavior_layer_combo.findData(1)
+
+    panel._on_sprite_lock_toggled(1, True)
+    assert panel.behavior_layer_combo.itemData(index, Qt.ItemDataRole.ForegroundRole) is not None
+
+    panel._on_sprite_lock_toggled(1, False)
+    assert panel.behavior_layer_combo.itemData(index, Qt.ItemDataRole.ForegroundRole) is None
 
 
 def test_behavior_tab_is_second_right_after_sprites(qapp, tmp_path):
@@ -1056,19 +1118,24 @@ def test_undo_redo_buttons_visible_in_edit_mode(qapp, tmp_path):
 def test_undo_redo_buttons_live_at_the_end_of_the_mode_row(qapp, tmp_path):
     # Owner's request: "put those buttons at the end of the preview/edit
     # row when in edit mode" -- rather than the bottom action bar they
-    # used to live in. Guide/Ghost joined them there the same day, so
-    # this checks relative order among the trailing widgets rather than
-    # assuming Undo/Redo are the literal last two items (the row's own
-    # trailing stretch is the actual last item -- see
-    # test_mode_row_is_not_split_by_an_internal_stretch below).
+    # used to live in. Guide/Ghost joined them there the same day, then
+    # moved again the next day to sit right after Edit Sprites (owner's
+    # request, 2026-09-20: "to the left of the reset buttons, right of
+    # the edit button") -- so this checks the row's full order, not just
+    # that Undo/Redo are last (they no longer are; the trailing stretch
+    # is -- see test_mode_row_is_not_split_by_an_internal_stretch below).
     config, window, panel, _ = make_panel(tmp_path)
     widgets = [
         panel.mode_row.itemAt(i).widget()
         for i in range(panel.mode_row.count())
         if panel.mode_row.itemAt(i).widget() is not None
     ]
-    trailing = widgets[-4:]
-    assert trailing == [panel._undo_btn, panel._redo_btn, panel.guide_btn, panel.ghost_btn]
+    assert widgets == [
+        panel.live_preview_btn, panel.edit_sprites_btn,
+        panel.guide_btn, panel.ghost_btn,
+        panel.reset_size_btn, panel.reset_rotation_btn,
+        panel._undo_btn, panel._redo_btn,
+    ]
 
 
 def test_mode_row_is_not_split_by_an_internal_stretch(qapp, tmp_path):
@@ -1842,13 +1909,13 @@ def test_a_tab_that_starts_fully_collapsed_from_persisted_config_stays_pegged_to
     _switch_to_tab(panel, "Behavior")  # the actual switch is what exposes the bug
     qapp.processEvents()
 
-    # Threshold is relative to the Behavior tab's own header (added
-    # 2026-09-19, naming the layer being edited), not an absolute page
-    # offset -- the splitter is now expected to peg to just below that
-    # header rather than to y=0.
+    # Threshold is relative to the Behavior tab's own layer combo (added
+    # 2026-09-19 as a header, upgraded to a combo 2026-09-20), not an
+    # absolute page offset -- the splitter is now expected to peg to
+    # just below it rather than to y=0.
     splitter = _tab_splitter_for(panel, "Motion")
-    header_bottom = panel.behavior_header.geometry().bottom()
-    assert splitter.geometry().y() < header_bottom + 20
+    combo_bottom = panel.behavior_layer_combo.geometry().bottom()
+    assert splitter.geometry().y() < combo_bottom + 20
 
 
 def test_collapsing_every_section_stays_pegged_to_the_top_even_after_a_prior_expand(qapp, tmp_path):
