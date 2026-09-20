@@ -45,7 +45,7 @@ DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "settings.json"
 # owner never hand-edits or is shown a message about -- migrations here
 # are silent, applied on load, before _merge ever sees the dict.
 _CONFIG_VERSION_KEY = "__config_version__"
-CURRENT_CONFIG_VERSION = 2
+CURRENT_CONFIG_VERSION = 3
 
 # One entry per version bump: raw settings dict at that version -> raw
 # dict at version + 1. _migrate_raw_config applies them in sequence, so a
@@ -66,8 +66,25 @@ def _migrate_window_zoom_to_avatar(raw: dict) -> dict:
     return raw
 
 
+def _migrate_scale_lock_to_sprite_locked(raw: dict) -> dict:
+    """v2 -> v3, 2026-09-19: the "Lock proportions" button's own
+    control_panel.scale_lock_proportions (a global, session-only
+    preference) was repurposed into AvatarRig.Sprite.locked (per-sprite,
+    saved with the avatar -- see that field's own comment) as "Lock
+    Position" -- strip it from an old settings.json's control_panel
+    block so _merge doesn't reject it as an unknown field. The value
+    itself isn't carried over: it meant "keep Scale X/Y proportional
+    while editing," a different concept from the per-sprite lock that
+    replaced it, so there's nothing sensible to migrate it *to*."""
+    control_panel = raw.get("control_panel")
+    if isinstance(control_panel, dict):
+        control_panel.pop("scale_lock_proportions", None)
+    return raw
+
+
 _CONFIG_MIGRATIONS: dict[int, Callable[[dict], dict]] = {
     1: _migrate_window_zoom_to_avatar,
+    2: _migrate_scale_lock_to_sprite_locked,
 }
 
 
@@ -295,11 +312,6 @@ class ControlPanelConfig:
     # default (a QScrollArea's own sizeHint doesn't grow with its
     # content).
     collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation")
-
-    # Whether Scale X/Y (Position & Hierarchy) are linked -- editing one
-    # updates the other to match, keeping the sprite's proportions.
-    # On by default per the owner's own request, 2026-09-17.
-    scale_lock_proportions: bool = True
 
 
 @dataclass

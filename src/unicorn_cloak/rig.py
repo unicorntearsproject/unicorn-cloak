@@ -199,6 +199,17 @@ class Sprite:
     # layer in the Editor's sprite list; defaults to visible.
     hidden: bool = False
 
+    # Prevents Position/Scale/Rotation from being changed, either by
+    # dragging on the Edit canvas (moving the sprite, or its resize/
+    # rotate handles) or via the Position & Hierarchy tab's own Position
+    # X/Y, Rotation, and Scale X/Y fields -- everything else (Offset,
+    # Z-index, Parent, Frames/Anim speed/Variant, State Assignment...)
+    # stays editable regardless. Toggled from either the padlock icon
+    # next to each layer in the Sprites tab's Layer List, or the
+    # Position & Hierarchy tab's own "Lock Position" button -- both
+    # control this same field and stay in sync with each other.
+    locked: bool = False
+
     # A hotkey-bindable per-sprite visibility toggle, independent of
     # costume/talk/blink. "null" (the literal string, not JSON null) is
     # legacy's "unbound" value and is what every sprite in avatar-01

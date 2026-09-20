@@ -354,6 +354,49 @@ scrollbar range genuinely stays `[0, 0]` -- nothing to pan to -- unless
 the window has actually been shown, not just constructed. 460 tests
 (457 -> 460).
 
+**2026-09-19, next session: per-sprite Lock Position, Parent confirmed
+already a select box, bigger boxed handles.** Owner asked for four
+things:
+  - **Lock Position.** New `Sprite.locked` (saved with the avatar):
+    prevents Position/Rotation/Scale from changing, via canvas drag
+    (moving the sprite, or its resize/rotate handles -- `EditableSprite
+    Item._handle_rects()` returns `{}` when locked, a single choke point
+    that also empties out hit-testing and the handle-drawing loop) or
+    the Position &amp; Hierarchy tab's own fields (disabled via a new,
+    narrower `_lockable_transform_widgets` tuple -- deliberately not all
+    of `_per_sprite_widgets`, since Offset/Z-index/Parent/Frames/Anim
+    speed/Variant/State Assignment stay editable regardless). Exposed
+    two ways -- a padlock icon per row in the Sprites tab's Layer List,
+    and that same tab's old "🔗 Lock proportions" button, repurposed and
+    relabeled "🔒 Lock Position" per the owner's explicit ask -- both
+    calling the same `_on_sprite_lock_toggled`, so either one updates
+    both (and the canvas item's own `ItemIsMovable` flag, and a locked
+    sprite's selection box drawing gray instead of magenta). The old
+    "keep Scale X/Y proportional while dragging/editing" behavior that
+    button used to control is retired outright, not preserved alongside
+    the new meaning -- corner-drag and the Scale X/Y fields both always
+    scale independently now. Config's own `control_panel.
+    scale_lock_proportions` (a global, session-only preference) is
+    gone too, replaced by the per-sprite, per-avatar field -- needed a
+    real migration (config version 2 -> 3, same shape as the zoom one
+    a few commits back) since the owner's actual settings.json already
+    had that key; verified the app still launches clean against it.
+  - **Parent field.** Owner asked for "a select box with all available
+    *other* sprites" instead of free-form text -- turns out this was
+    already exactly that (`_populate_parent_combo`, non-editable,
+    "None (root)" plus every other sprite excluding this one and its
+    own descendants). Nothing to build; said so rather than silently
+    doing nothing or re-implementing something that already existed.
+  - **Bigger, boxed handles.** `_HANDLE_HALF` 6.0 -> 10.0 (both the
+    click-target rects and the drawn markers, since `_handle_rects()`
+    already backs both) plus a dark outline box drawn around each
+    handle before its colored fill, for contrast against whatever part
+    of the art it happens to sit over, not just the plain canvas
+    background.
+468 tests (460 -> 468): Sprite.locked's own default/round-trip/
+persistence coverage, the config migration, and the shared-state/
+canvas-flag/disabled-fields/undo behavior of the lock feature itself.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

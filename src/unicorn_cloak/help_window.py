@@ -290,12 +290,12 @@ remove it, same as costumes.</p>
 
 <h3>Mouse (Edit-mode canvas)</h3>
 <p>Select a sprite (click it on the canvas or in the Sprites list) to see
-its handles:</p>
+its handles -- a boxed square at each corner to scale, and one floating
+above it to rotate. Not shown at all, and not draggable, on a sprite
+that's locked (see "Lock Position" below):</p>
 <ul>
 <li>Drag the sprite itself to move it (updates Position live).</li>
-<li>Drag a corner handle to scale it -- respects the Position &amp;
-Hierarchy tab's "🔗 Lock proportions" toggle, same as typing into the
-Scale X/Y fields directly.</li>
+<li>Drag a corner handle to scale it independently on X/Y.</li>
 <li>Drag the handle floating above it to rotate it.</li>
 </ul>
 <p>All three write straight into that sprite's Position/Scale/Rotation
@@ -486,9 +486,10 @@ copies the selected sprite, nudged slightly; <b>Delete</b> removes it
 Down</b> steps it toward the front/back among its siblings. The Sprites
 list itself is always ordered front-to-back with parent/child
 indentation; each row has an eye icon to show/hide that layer (see
-Hidden, below). Drag a sprite directly on the Edit-mode canvas to move
-it (updates Position live); clicking a sprite (on the canvas or in the
-list) selects it.</li>
+Hidden, below) and a padlock icon to lock its Position/Rotation/Scale
+(see "Lock Position" below -- same lock, either toggles both). Drag a
+sprite directly on the Edit-mode canvas to move it (updates Position
+live); clicking a sprite (on the canvas or in the list) selects it.</li>
 <li><b>State Assignment</b> section — the selected sprite's Group
 name/State name/Manually driven/Talk state/Blink state (see Sprite
 concepts above).</li>
@@ -576,15 +577,19 @@ alternate rates (see Variant below).</li>
 (collapsed by default) — <b>Zoom</b> (whole-avatar, not per-sprite —
 scales everything around its own center, regardless of which sprite, if
 any, is selected) at the top, then the selected sprite's
-Position/Offset/Z-index/Parent/Rotation/Scale, and its Frames/Anim
-speed/Variant. Rotation and Scale are static/authored values — a
-permanent tilt or resize — independent of the reactive drag-rotation and
-squash/stretch in the Motion section above, which apply on top of
-them. Scale X/Y have a "🔗 Lock proportions" toggle (on by default) so
-editing one updates the other to match. You can also drag a selected
-sprite directly on the Edit-mode canvas: its own body to move it, a
-corner handle to scale (respects the same proportion lock), or the
-handle above it to rotate.</li>
+Position/Offset/Z-index/Parent (a dropdown of every other sprite, plus
+"None (root)")/Rotation/Scale, its own "Lock Position" toggle, and its
+Frames/Anim speed/Variant. Rotation and Scale are static/authored values
+— a permanent tilt or resize — independent of the reactive drag-rotation
+and squash/stretch in the Motion section above, which apply on top of
+them. <b>Lock Position</b> prevents Position/Rotation/Scale from being
+changed at all -- by these fields or by dragging on the canvas --
+everything else (Offset, Z-index, Parent, Frames/Anim speed/Variant,
+State Assignment...) stays editable regardless; same lock as the
+padlock icon next to this sprite in the Sprites tab's Layer List, either
+toggles both. You can also drag a selected, unlocked sprite directly on
+the Edit-mode canvas: its own body to move it, a corner handle to scale
+it independently on X/Y, or the handle above it to rotate.</li>
 </ul>
 
 <h3>Audio tab</h3>

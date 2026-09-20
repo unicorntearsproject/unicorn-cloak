@@ -125,7 +125,7 @@ def test_avatar_01_save_preserves_every_raw_key(tmp_path):
     # key must stay written).
     _NEW_KEYS_WITH_NO_LEGACY_COUNTERPART = {
         "variant", "hidden", "groupName", "stateName", "manualDriven",
-        "scaleX", "scaleY", "rotationDeg",
+        "scaleX", "scaleY", "rotationDeg", "locked",
     }
     for sprite_key in sprite_keys:
         original_entry = original_raw[sprite_key]
@@ -266,6 +266,29 @@ def test_save_writes_hidden_field(tmp_path):
     with path.open() as f:
         raw = json.load(f)
     assert raw["0"]["hidden"] is True
+
+
+def test_load_preserves_locked_field(tmp_path):
+    path = tmp_path / "locked.save"
+    path.write_text(json.dumps({"0": _sprite_entry(locked=True)}))
+    rig = load_avatar(path)
+    assert rig.sprites[0].locked is True
+
+
+def test_load_defaults_locked_to_false_when_absent(tmp_path):
+    path = tmp_path / "no-locked.save"
+    path.write_text(json.dumps({"0": _sprite_entry()}))
+    rig = load_avatar(path)
+    assert rig.sprites[0].locked is False
+
+
+def test_save_writes_locked_field(tmp_path):
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png", locked=True)])
+    path = tmp_path / "out.save"
+    save_avatar(rig, path)
+    with path.open() as f:
+        raw = json.load(f)
+    assert raw["0"]["locked"] is True
 
 
 def test_load_preserves_group_state_and_manual_driven_fields(tmp_path):

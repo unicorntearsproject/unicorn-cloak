@@ -71,6 +71,24 @@ def test_load_state_strips_old_window_zoom(tmp_path):
     assert not hasattr(config.window, "zoom")
 
 
+def test_load_state_strips_old_scale_lock_proportions(tmp_path):
+    # control_panel.scale_lock_proportions was repurposed into
+    # AvatarRig.Sprite.locked 2026-09-19 (the "Lock proportions" button
+    # became "Lock Position") -- a settings.json written before that
+    # (version 2, no migration yet applied) had a real
+    # "control_panel": {"scale_lock_proportions": ...} key that _merge
+    # would otherwise reject as unknown now that ControlPanelConfig no
+    # longer has that field.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({
+        "__config_version__": 2,
+        "control_panel": {"scale_lock_proportions": True, "active_tab": 2},
+    }))
+    config = load_state(path)  # must not raise
+    assert config.control_panel.active_tab == 2
+    assert not hasattr(config.control_panel, "scale_lock_proportions")
+
+
 def test_save_then_load_round_trips(tmp_path):
     path = tmp_path / "settings.json"
     original = Config()

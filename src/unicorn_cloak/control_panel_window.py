@@ -151,6 +151,30 @@ def _eye_icon(visible: bool) -> QIcon:
     return QIcon(pixmap)
 
 
+def _lock_icon(locked: bool) -> QIcon:
+    """A tiny hand-drawn padlock, same dependency-free-stand-in approach
+    as _eye_icon above -- shackle swung open to one side when unlocked,
+    not just a color change, so the two states still read apart in
+    grayscale."""
+    pixmap = QPixmap(18, 18)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = QColor(theme.MAGENTA_500) if locked else QColor(theme.GREY_500)
+    pen = QPen(color)
+    pen.setWidth(2)
+    painter.setPen(pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    if locked:
+        painter.drawArc(5, 2, 8, 9, 0, 180 * 16)
+    else:
+        painter.drawArc(2, 2, 8, 9, 30 * 16, 180 * 16)
+    painter.setBrush(color)
+    painter.drawRoundedRect(4, 8, 10, 8, 2, 2)
+    painter.end()
+    return QIcon(pixmap)
+
+
 class _LayerNameLabel(QLabel):
     """A sprite-list row's name text -- plain QLabel plus "clicking it
     selects this sprite", since setItemWidget() replaces the row's own
@@ -170,7 +194,7 @@ class _LayerNameLabel(QLabel):
 # local (unscaled) pixels rather than compensated for the edit canvas's own
 # zoom, since GridCanvasView has no zoom feature of its own to compensate
 # for (confirmed 2026-09-17: it's a plain 1:1 QGraphicsView).
-_HANDLE_HALF = 6.0
+_HANDLE_HALF = 10.0
 _ROTATE_HANDLE_DISTANCE = 28.0
 
 
@@ -187,7 +211,10 @@ class EditableSpriteItem(QGraphicsPixmapItem):
             self.setFlag(QGraphicsItem.ItemClipsChildrenToShape, True)
             self.setShapeMode(QGraphicsPixmapItem.ShapeMode.MaskShape)
         self.setTransformationMode(Qt.SmoothTransformation)
-        self.setFlag(QGraphicsItem.ItemIsMovable, True)
+        # Kept in sync afterward by _on_sprite_lock_toggled -- sprite.
+        # locked can change any time after construction, from either the
+        # Layer List's padlock or Lock Position (see that method).
+        self.setFlag(QGraphicsItem.ItemIsMovable, not sprite.locked)
         self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsItem.ItemSendsGeometryChanges, True)
         self.setAcceptHoverEvents(True)
@@ -253,6 +280,12 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         return path
 
     def _handle_rects(self) -> dict[str, QRectF]:
+        if self.sprite.locked:
+            # Single choke point for "this sprite can't be transformed" --
+            # an empty dict here also makes _handle_at() (hit-testing),
+            # paint()'s own handle-drawing loop, and shape()'s handle
+            # carve-out all correctly no-op, with nothing else to guard.
+            return {}
         rect = self._pixmap_rect()
         centers = {
             "tl": rect.topLeft(), "tr": rect.topRight(),
@@ -283,7 +316,11 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         super().paint(painter, plain_option, widget)
         if not self.isSelected():
             return
-        accent = QColor(theme.MAGENTA_500)
+        # Muted gray, not magenta, while locked -- still shows this
+        # sprite is selected, but reads as "can't transform" rather than
+        # implying the normal drag/scale/rotate affordance that (per
+        # _handle_rects) isn't there anymore.
+        accent = QColor(theme.GREY_500) if self.sprite.locked else QColor(theme.MAGENTA_500)
         pen = QPen(accent)
         pen.setWidth(2)
         pen.setCosmetic(True)
@@ -292,8 +329,23 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         rect = self._pixmap_rect()
         painter.drawRect(rect)
         handles = self._handle_rects()
+        if not handles:
+            return
         top_center = QPointF(rect.center().x(), rect.top())
         painter.drawLine(top_center, handles["rotate"].center())
+        # A dark box outline around each handle first, then the colored
+        # marker on top -- owner's request, 2026-09-19, alongside a
+        # bigger click target (_HANDLE_HALF): makes the now-larger
+        # handles read clearly against any part of the art underneath,
+        # not just whichever happens to contrast with plain magenta.
+        outline_pen = QPen(QColor(theme.INK_900))
+        outline_pen.setWidth(1)
+        outline_pen.setCosmetic(True)
+        painter.setPen(outline_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for hrect in handles.values():
+            painter.drawRect(hrect.adjusted(-2, -2, 2, 2))
+        painter.setPen(pen)
         painter.setBrush(accent)
         for name, hrect in handles.items():
             if name == "rotate":
@@ -383,13 +435,6 @@ class EditableSpriteItem(QGraphicsPixmapItem):
             return  # a zero-size pixmap dimension has no meaningful corner to scale from
         new_scale_x = pre_scale_pos.x() / corner.x()
         new_scale_y = pre_scale_pos.y() / corner.y()
-        if self._panel.scale_lock.isChecked():
-            # Same lock the Scale spinboxes already honor (see
-            # _on_scale_x/y_changed) -- reused here rather than a second,
-            # separate lock concept for the same idea.
-            ratio = (abs(new_scale_x) + abs(new_scale_y)) / 2
-            new_scale_x = math.copysign(ratio, new_scale_x)
-            new_scale_y = math.copysign(ratio, new_scale_y)
         # Dragging a corner across the origin would otherwise flip the
         # sprite (a negative scale) -- the Scale spinboxes only ever go
         # positive (0.01-100.0), so clamp here too rather than showing a
@@ -597,6 +642,13 @@ class ControlPanelWindow(QWidget):
 
         # --- sprite-editing state (was EditorWindow) ---
         self._items: dict[int, EditableSpriteItem] = {}
+        # Layer List row lock buttons, keyed by sprite id -- lets
+        # _on_sprite_lock_toggled update a specific row's icon/checked
+        # state directly (same safe pattern _on_visibility_toggled
+        # already uses for the eye icon) when the toggle came from the
+        # *other* control (Lock Position), without rebuilding the whole
+        # list mid-signal from a button that list rebuild would delete.
+        self._lock_row_buttons: dict[int, QToolButton] = {}
         self._rebuilding_scene = False
         self._selected_id: int | None = None
         self._updating_form = False
@@ -1420,16 +1472,10 @@ class ControlPanelWindow(QWidget):
         self.property_form.addRow("Rotation (deg)", self.rotation)
 
         # Scale, owner's request, 2026-09-17: "add scale features to the
-        # positioning section... w/a lock toggle (on by default) that
-        # scales x & y maintaining proportions." A toggle QPushButton, not
-        # a checkbox -- matches Guide/Ghost's own established convention
-        # in this app. Linking is handled in _on_scale_x/y_changed, not
-        # here; this row just lays the three widgets out.
+        # positioning section." A toggle QPushButton, not a checkbox --
+        # matches Guide/Ghost's own established convention in this app.
         self.scale_x = self._spin(0.01, 100.0)
         self.scale_y = self._spin(0.01, 100.0)
-        self.scale_lock = QPushButton("🔗 Lock proportions")
-        self.scale_lock.setCheckable(True)
-        self.scale_lock.setChecked(True)
         self.scale_x.setToolTip(
             "Permanently resizes this sprite horizontally, e.g. for a\n"
             "prop drawn at the wrong scale relative to everything else\n"
@@ -1440,18 +1486,34 @@ class ControlPanelWindow(QWidget):
         self.scale_y.setToolTip(
             self.scale_x.toolTip().replace("horizontally", "vertically")
         )
-        self.scale_lock.setToolTip(
-            "While on (default), editing Scale X or Scale Y updates the\n"
-            "other to match, so the sprite always scales proportionally.\n"
-            "Turn off to stretch width and height independently."
-        )
         scale_row = QHBoxLayout()
         scale_row.addWidget(QLabel("X"))
         scale_row.addWidget(self.scale_x)
         scale_row.addWidget(QLabel("Y"))
         scale_row.addWidget(self.scale_y)
-        scale_row.addWidget(self.scale_lock)
         self.property_form.addRow("Scale", scale_row)
+
+        # Lock Position (owner's request, 2026-09-19; was "🔗 Lock
+        # proportions" -- a global, session-only "keep Scale X/Y
+        # proportional while editing" preference, repurposed into this:
+        # a per-sprite, saved-with-the-avatar lock on Position/Scale/
+        # Rotation entirely -- see Sprite.locked's own comment). Fires
+        # the exact same code as the padlock icon next to this sprite in
+        # the Sprites tab's Layer List (see _on_sprite_lock_toggled) and
+        # stays in sync with it regardless of which one was clicked.
+        self.lock_position_btn = QPushButton("🔒 Lock Position")
+        self.lock_position_btn.setCheckable(True)
+        self.lock_position_btn.setToolTip(
+            "Prevents this sprite's Position, Rotation, and Scale from\n"
+            "being changed -- by dragging on the Edit canvas (moving it,\n"
+            "or its resize/rotate handles) or these fields directly.\n"
+            "Everything else (Offset, Z-index, Parent, Frames/Anim\n"
+            "speed/Variant, State Assignment...) stays editable. Same\n"
+            "lock as the padlock icon next to this sprite in the Layer\n"
+            "List -- either one toggles both."
+        )
+        self.lock_position_btn.toggled.connect(self._on_lock_position_btn_toggled)
+        self.property_form.addRow(self.lock_position_btn)
         position_section.body_layout.addLayout(self.property_form)
         position_section.body_layout.addStretch(1)
 
@@ -1483,7 +1545,7 @@ class ControlPanelWindow(QWidget):
 
         property_fields = (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo,
-            self.rotation, self.scale_x, self.scale_y, self.scale_lock,
+            self.rotation, self.scale_x, self.scale_y, self.lock_position_btn,
             self.frames, self.anim_speed, self.variant,
         )
         for form, fields in (
@@ -1494,18 +1556,24 @@ class ControlPanelWindow(QWidget):
                 label = form.labelForField(field_widget)
                 if label is not None:
                     label.setToolTip(field_widget.toolTip())
-        for box in (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.rotation, self.variant, self.anim_speed):
+        for box in (
+            self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index,
+            self.rotation, self.scale_x, self.scale_y, self.variant, self.anim_speed,
+        ):
             box.valueChanged.connect(self._on_property_changed)
-        # Scale X/Y get their own handlers, not the generic loop above --
-        # each one may also need to update the *other* spinbox's value
-        # when proportions are locked, which _on_property_changed alone
-        # doesn't do.
-        self.scale_x.valueChanged.connect(self._on_scale_x_changed)
-        self.scale_y.valueChanged.connect(self._on_scale_y_changed)
         self.frames.valueChanged.connect(self._on_frames_changed)
         self.parent_combo.currentIndexChanged.connect(self._on_parent_changed)
 
         self._per_sprite_widgets.extend(property_fields)
+        # Position/Rotation/Scale specifically -- disabled independently
+        # of the rest of property_fields above when the selected sprite
+        # is locked (see _update_locked_transform_fields_enabled), so
+        # this list needs to be its own thing, not reused from
+        # property_fields (which also has Offset/Z-index/Parent, which
+        # stay editable even when locked).
+        self._lockable_transform_widgets = (
+            self.pos_x, self.pos_y, self.rotation, self.scale_x, self.scale_y,
+        )
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -2301,7 +2369,6 @@ class ControlPanelWindow(QWidget):
         else:
             self.live_preview_btn.setChecked(True)
         self._on_canvas_mode_toggled(self.edit_sprites_btn.isChecked())
-        self.scale_lock.setChecked(cp.scale_lock_proportions)
         self.tabs.setCurrentIndex(min(cp.active_tab, self.tabs.count() - 1))
         self.tabs.currentChanged.connect(self._on_tab_changed)
         for title, section in self._sections.items():
@@ -2426,7 +2493,6 @@ class ControlPanelWindow(QWidget):
         cp.canvas_mode = "edit" if self.edit_sprites_btn.isChecked() else "live_preview"
         cp.show_origin_guides = self.guide_btn.isChecked()
         cp.show_hidden_ghosted = self.ghost_btn.isChecked()
-        cp.scale_lock_proportions = self.scale_lock.isChecked()
         cp.grid_spacing_px = self.grid_spacing.value()
         cp.collapsed_sections = tuple(
             title for title, section in self._sections.items() if section.is_collapsed()
@@ -2555,6 +2621,7 @@ class ControlPanelWindow(QWidget):
         # being contiguous in stacking order without any extra tracking.
         self.sprite_list.blockSignals(True)
         self.sprite_list.clear()
+        self._lock_row_buttons.clear()
         current_group: str | None = None
         for sprite, depth in self.rig.sprites_in_stacking_order():
             group_name = sprite.group_name or None
@@ -2621,6 +2688,24 @@ class ControlPanelWindow(QWidget):
         )
         row_layout.addWidget(eye_btn)
 
+        lock_btn = QToolButton()
+        lock_btn.setCheckable(True)
+        lock_btn.setChecked(sprite.locked)
+        lock_btn.setAutoRaise(True)
+        lock_btn.setIcon(_lock_icon(sprite.locked))
+        lock_btn.setIconSize(QSize(16, 16))
+        lock_btn.setToolTip(
+            "Lock this sprite's Position, Rotation, and Scale -- by\n"
+            "dragging on the Edit canvas or the Position & Hierarchy\n"
+            "tab's own fields. Everything else stays editable. Same lock\n"
+            "as that tab's \"Lock Position\" button -- either toggles both."
+        )
+        lock_btn.toggled.connect(
+            lambda checked, sid=sprite.id: self._on_sprite_lock_toggled(sid, checked)
+        )
+        self._lock_row_buttons[sprite.id] = lock_btn
+        row_layout.addWidget(lock_btn)
+
         label = _LayerNameLabel("    " * depth + name, sprite.id, self)
         row_layout.addWidget(label, stretch=1)
         return row
@@ -2643,6 +2728,50 @@ class ControlPanelWindow(QWidget):
         item = self._items.get(sprite_id)
         if item is not None:
             self._apply_preview_opacity(item)
+
+    def _on_sprite_lock_toggled(self, sprite_id: int, locked: bool) -> None:
+        """Shared by both the Layer List's padlock icon (see
+        _build_layer_row) and the Position & Hierarchy tab's "Lock
+        Position" button (see _on_lock_position_btn_toggled) -- owner's
+        request, 2026-09-19: "both... will both fire the same code and
+        share state." Whichever one the user actually clicked has
+        already updated its own checked state before this fires (Qt);
+        this brings the *other* one (and the canvas item's own
+        ItemIsMovable flag, and the property form's own field-disabling)
+        into sync with it."""
+        sprite = self.rig.by_id(sprite_id)
+        if sprite is None:
+            return
+        self.push_undo_snapshot()
+        sprite.locked = locked
+        self._mark_dirty()
+
+        row_btn = self._lock_row_buttons.get(sprite_id)
+        if row_btn is not None:
+            row_btn.blockSignals(True)
+            row_btn.setChecked(locked)
+            row_btn.blockSignals(False)
+            row_btn.setIcon(_lock_icon(locked))
+
+        canvas_item = self._items.get(sprite_id)
+        if canvas_item is not None:
+            canvas_item.setFlag(QGraphicsItem.ItemIsMovable, not locked)
+            canvas_item.update()  # handles disappear/reappear immediately, not just on next repaint
+
+        if sprite_id == self._selected_id:
+            self.lock_position_btn.blockSignals(True)
+            self.lock_position_btn.setChecked(locked)
+            self.lock_position_btn.blockSignals(False)
+            self._update_locked_transform_fields_enabled(locked)
+
+    def _on_lock_position_btn_toggled(self, checked: bool) -> None:
+        if self._updating_form or self._selected_id is None:
+            return
+        self._on_sprite_lock_toggled(self._selected_id, checked)
+
+    def _update_locked_transform_fields_enabled(self, locked: bool) -> None:
+        for widget in self._lockable_transform_widgets:
+            widget.setEnabled(not locked)
 
     # =====================================================================
     # Selection
@@ -2752,7 +2881,14 @@ class ControlPanelWindow(QWidget):
         self.frames.setValue(sprite.frames)
         self.anim_speed.setValue(sprite.anim_speed)
         self._populate_parent_combo(sprite)
+        self.lock_position_btn.setChecked(sprite.locked)
         self._updating_form = False
+        # Outside the _updating_form guard above -- this disables/enables
+        # real widgets (not a value a signal handler would otherwise
+        # react to), and _set_property_form_enabled(True) (called by
+        # _select() right before this) would have just re-enabled these
+        # same widgets, so it must run after that, not before.
+        self._update_locked_transform_fields_enabled(sprite.locked)
 
     def _group_names_in_rig(self) -> list[str]:
         return sorted({s.group_name for s in self.rig.sprites if s.group_name})
@@ -2837,23 +2973,6 @@ class ControlPanelWindow(QWidget):
         self._update_manual_driven_enabled_state()
         self._on_property_changed(None)
 
-    def _on_scale_x_changed(self, value: float) -> None:
-        if self._updating_form:
-            return
-        if self.scale_lock.isChecked() and abs(self.scale_y.value() - value) > 1e-9:
-            self.scale_y.blockSignals(True)
-            self.scale_y.setValue(value)
-            self.scale_y.blockSignals(False)
-        self._on_property_changed(None)
-
-    def _on_scale_y_changed(self, value: float) -> None:
-        if self._updating_form:
-            return
-        if self.scale_lock.isChecked() and abs(self.scale_x.value() - value) > 1e-9:
-            self.scale_x.blockSignals(True)
-            self.scale_x.setValue(value)
-            self.scale_x.blockSignals(False)
-        self._on_property_changed(None)
 
     def _on_reset_size_clicked(self) -> None:
         # Routed through the spinboxes, not straight into sprite.scale_x/

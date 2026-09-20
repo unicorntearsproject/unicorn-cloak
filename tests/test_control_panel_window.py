@@ -3,7 +3,7 @@ import math
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QKeySequence, QMouseEvent, QWheelEvent
-from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent
+from PySide6.QtWidgets import QApplication, QGraphicsItem, QGraphicsSceneMouseEvent
 
 from unicorn_cloak import control_panel_window as cpw_module
 from unicorn_cloak import motion
@@ -799,35 +799,115 @@ def test_scale_field_loads_the_selected_sprites_values(qapp, tmp_path):
     assert panel.scale_y.value() == 0.75
 
 
-def test_scale_lock_is_checked_by_default(qapp, tmp_path):
+def test_dragging_a_corner_handle_allows_independent_x_and_y(qapp, tmp_path):
+    # Corner-drag proportional locking (the old "Lock proportions"
+    # meaning) was retired 2026-09-19 when that same toggle was
+    # repurposed into "Lock Position" (see the Lock Position tests
+    # below) -- dragging a corner now always scales X/Y independently.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    item._active_handle = "br"
+    item._drag_handle(QPointF(150.0, 75.0))
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == pytest.approx(3.0)  # 150 / 50
+    assert sprite.scale_y == pytest.approx(1.5)  # 75 / 50
+
+
+# --- Lock Position (owner's request, 2026-09-19; was "Lock proportions") ----
+
+
+def test_lock_position_unchecked_by_default(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
-    assert panel.scale_lock.isChecked() is True
+    assert panel.lock_position_btn.isChecked() is False
 
 
-def test_scale_lock_links_x_and_y_when_checked(qapp, tmp_path):
+def test_lock_position_round_trips_through_the_avatar_file(qapp, tmp_path):
+    # Per-sprite and saved with the avatar now (Sprite.locked), not a
+    # global control_panel.scale_lock_proportions session preference.
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), locked=True)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    assert panel.lock_position_btn.isChecked() is True
+
+
+def test_checking_lock_position_disables_position_rotation_and_scale(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     panel._select(1)
-    panel.scale_lock.setChecked(True)
-    panel.scale_x.setValue(2.0)
-    assert panel.scale_y.value() == 2.0
-    assert panel.rig.by_id(1).scale_x == 2.0
-    assert panel.rig.by_id(1).scale_y == 2.0
+    for widget in (panel.pos_x, panel.pos_y, panel.rotation, panel.scale_x, panel.scale_y):
+        assert widget.isEnabled() is True
+
+    panel.lock_position_btn.setChecked(True)
+
+    for widget in (panel.pos_x, panel.pos_y, panel.rotation, panel.scale_x, panel.scale_y):
+        assert widget.isEnabled() is False
+    # Everything else stays editable while locked.
+    for widget in (panel.offset_x, panel.offset_y, panel.z_index, panel.parent_combo):
+        assert widget.isEnabled() is True
+    assert panel.rig.by_id(1).locked is True
 
 
-def test_scale_unlocked_allows_independent_x_and_y(qapp, tmp_path):
+def test_unchecking_lock_position_reenables_the_fields(qapp, tmp_path):
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), locked=True)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    assert panel.pos_x.isEnabled() is False
+
+    panel.lock_position_btn.setChecked(False)
+
+    for widget in (panel.pos_x, panel.pos_y, panel.rotation, panel.scale_x, panel.scale_y):
+        assert widget.isEnabled() is True
+    assert panel.rig.by_id(1).locked is False
+
+
+def test_layer_list_padlock_and_lock_position_button_share_state(qapp, tmp_path):
+    # Owner's request: "both the padlock & the lock position button will
+    # both fire the same code and share state."
     config, window, panel, _ = make_panel(tmp_path)
     panel._select(1)
-    panel.scale_lock.setChecked(False)
-    panel.scale_x.setValue(2.0)
-    assert panel.scale_y.value() != 2.0
-    assert panel.rig.by_id(1).scale_x == 2.0
+    lock_row_btn = panel._lock_row_buttons[1]
+    assert lock_row_btn.isChecked() is False
+
+    lock_row_btn.setChecked(True)  # toggling the Layer List's own icon
+
+    assert panel.rig.by_id(1).locked is True
+    assert panel.lock_position_btn.isChecked() is True  # synced
+    assert panel.pos_x.isEnabled() is False
+
+    panel.lock_position_btn.setChecked(False)  # toggling the other control
+
+    assert panel.rig.by_id(1).locked is False
+    assert lock_row_btn.isChecked() is False  # synced back
+    assert panel.pos_x.isEnabled() is True
 
 
-def test_scale_lock_proportions_round_trips_through_config(qapp, tmp_path):
+def test_locking_a_sprite_disables_moving_it_on_the_canvas(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
-    panel.scale_lock.setChecked(False)
-    panel._capture_ui_state_into_config()
-    assert config.control_panel.scale_lock_proportions is False
+    item = panel._items[1]
+    assert item.flags() & QGraphicsItem.ItemIsMovable
+
+    panel._on_sprite_lock_toggled(1, True)
+
+    assert not (item.flags() & QGraphicsItem.ItemIsMovable)
+
+
+def test_locked_sprite_has_no_resize_or_rotate_handles(qapp, tmp_path):
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path, locked=True)
+    panel._select(1)
+    item = panel._items[1]
+    assert item._handle_rects() == {}
+    assert item._handle_at(item._pixmap_rect().topLeft()) is None
+
+
+def test_lock_state_is_undoable(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.lock_position_btn.setChecked(True)
+    assert panel.rig.by_id(1).locked is True
+
+    panel.undo()
+
+    assert panel.rig.by_id(1).locked is False
 
 
 # --- Rotation -----------------------------------------------------------------
@@ -876,11 +956,10 @@ def test_reset_size_and_rotation_buttons_disabled_with_nothing_selected(qapp, tm
     assert panel.reset_rotation_btn.isEnabled() is True
 
 
-def test_reset_size_button_resets_scale_to_1_and_stays_locked(qapp, tmp_path):
+def test_reset_size_button_resets_scale_to_1(qapp, tmp_path):
     sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), scale_x=2.5, scale_y=0.4)]
     config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
     panel._select(1)
-    panel.scale_lock.setChecked(True)
 
     panel.reset_size_btn.click()
 
@@ -891,13 +970,12 @@ def test_reset_size_button_resets_scale_to_1_and_stays_locked(qapp, tmp_path):
     assert panel.scale_y.value() == 1.0
 
 
-def test_reset_size_button_works_unlocked_when_only_one_axis_is_off(qapp, tmp_path):
+def test_reset_size_button_works_when_only_one_axis_is_off(qapp, tmp_path):
     # scale_x already 1.0 -> setValue(1.0) fires no signal for it; must
     # not leave scale_y stuck at its old value because of that.
     sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), scale_x=1.0, scale_y=3.0)]
     config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
     panel._select(1)
-    panel.scale_lock.setChecked(False)
 
     panel.reset_size_btn.click()
 
@@ -921,7 +999,6 @@ def test_reset_size_and_rotation_are_undoable(qapp, tmp_path):
     sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), scale_x=2.0, rotation_deg=45.0)]
     config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
     panel._select(1)
-    panel.scale_lock.setChecked(False)
 
     panel.reset_size_btn.click()
     panel.reset_rotation_btn.click()
@@ -1002,31 +1079,6 @@ def test_shape_when_selected_covers_every_handle_even_on_a_fully_transparent_spr
         assert shape.contains(hrect.topLeft()), f"{name} handle's outer corner isn't in shape()"
 
 
-def test_dragging_a_corner_handle_scales_independently_when_unlocked(qapp, tmp_path):
-    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
-    panel._select(1)
-    panel.scale_lock.setChecked(False)
-    item = panel._items[1]
-    item._active_handle = "br"  # corner rest position (50, 50)
-    item._drag_handle(QPointF(75.0, 150.0))
-    sprite = panel.rig.by_id(1)
-    assert sprite.scale_x == pytest.approx(1.5)  # 75 / 50
-    assert sprite.scale_y == pytest.approx(3.0)  # 150 / 50
-    assert panel.scale_x.value() == pytest.approx(1.5)
-    assert panel.scale_y.value() == pytest.approx(3.0)
-
-
-def test_dragging_a_corner_handle_keeps_proportions_when_locked(qapp, tmp_path):
-    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
-    panel._select(1)
-    panel.scale_lock.setChecked(True)
-    item = panel._items[1]
-    item._active_handle = "br"
-    item._drag_handle(QPointF(75.0, 150.0))
-    sprite = panel.rig.by_id(1)
-    assert sprite.scale_x == pytest.approx(sprite.scale_y)
-
-
 def _send_mouse_move(item, scene_pos: QPointF) -> None:
     """A real QGraphicsSceneMouseEvent, with .pos() set the same way
     QGraphicsScene's own dispatch would (item.mapFromScene(scenePos), so
@@ -1055,7 +1107,6 @@ def test_dragging_a_corner_handle_repeatedly_does_not_diverge(qapp, tmp_path):
     # the error compounded (and oscillated) every mouseMoveEvent.
     config, window, panel, _ = _make_square_sprite_panel(tmp_path)
     panel._select(1)
-    panel.scale_lock.setChecked(False)
     item = panel._items[1]
     item._active_handle = "br"
 
@@ -1077,7 +1128,6 @@ def test_dragging_a_corner_handle_repeatedly_does_not_diverge(qapp, tmp_path):
 def test_dragging_a_corner_handle_never_produces_a_negative_scale(qapp, tmp_path):
     config, window, panel, _ = _make_square_sprite_panel(tmp_path)
     panel._select(1)
-    panel.scale_lock.setChecked(False)
     item = panel._items[1]
     item._active_handle = "br"
     item._drag_handle(QPointF(-25.0, -25.0))  # dragged past the origin
@@ -1536,16 +1586,20 @@ def test_persisted_ui_state_is_applied_on_construction(qapp, tmp_path):
     assert panel._sections["Layer List"].is_collapsed() is True
 
 
-def test_persisted_scale_lock_proportions_is_applied_on_construction(qapp, tmp_path):
-    from unicorn_cloak.config import ControlPanelConfig
-
+def test_a_locked_sprites_state_is_applied_on_construction(qapp, tmp_path):
+    # Lock Position comes from the selected sprite itself (Sprite.locked,
+    # saved with the avatar) now, not a persisted app-wide config field --
+    # see the config migration that retired control_panel.
+    # scale_lock_proportions the same day this replaced it.
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), locked=True)]
+    rig = AvatarRig(name="t", sprites=sprites)
     config = Config()
-    config.control_panel = ControlPanelConfig(scale_lock_proportions=False)
-    rig = make_test_rig()
     window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
     panel = ControlPanelWindow(rig, config, window, state_path=tmp_path / "settings.json")
 
-    assert panel.scale_lock.isChecked() is False
+    panel._select(1)
+    assert panel.lock_position_btn.isChecked() is True
+    assert panel.pos_x.isEnabled() is False
 
 
 def test_canvas_gets_the_majority_of_the_default_width(qapp, tmp_path):

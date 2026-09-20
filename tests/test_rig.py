@@ -21,6 +21,11 @@ def test_zoom_defaults_to_native_size():
     assert rig.zoom == 1.0
 
 
+def test_sprite_locked_defaults_to_false():
+    sprite = make_sprite(1)
+    assert sprite.locked is False
+
+
 def test_costume_assignments_and_expression_hotkeys_default_to_empty_per_slot():
     from unicorn_cloak.rig import NUM_COSTUMES
 

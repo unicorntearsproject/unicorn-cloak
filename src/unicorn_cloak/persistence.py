@@ -169,6 +169,7 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
                 clipped=bool(entry.get("clipped", False)),
                 toggle=entry.get("toggle", "null"),
                 hidden=bool(entry.get("hidden", False)),
+                locked=bool(entry.get("locked", False)),
                 # New 2026-09-16, absent from every file saved before
                 # today (including legacy PNGTuber-Plus's own format) --
                 # default to "not grouped, not manually driven" so an
@@ -249,6 +250,7 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
             "clipped": sprite.clipped,
             "toggle": sprite.toggle,
             "hidden": sprite.hidden,
+            "locked": sprite.locked,
             "groupName": sprite.group_name,
             "stateName": sprite.state_name,
             "manualDriven": sprite.manual_driven,
