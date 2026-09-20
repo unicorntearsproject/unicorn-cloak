@@ -800,12 +800,12 @@ def test_scale_field_loads_the_selected_sprites_values(qapp, tmp_path):
 
 
 def test_dragging_a_corner_handle_allows_independent_x_and_y(qapp, tmp_path):
-    # Corner-drag proportional locking (the old "Lock proportions"
-    # meaning) was retired 2026-09-19 when that same toggle was
-    # repurposed into "Lock Position" (see the Lock Position tests
-    # below) -- dragging a corner now always scales X/Y independently.
+    # "Lock proportions" is checked by default (see test_scale_lock_is_
+    # checked_by_default below), so an independent-axes drag needs it
+    # turned off first -- this is no longer the out-of-the-box behavior.
     config, window, panel, _ = _make_square_sprite_panel(tmp_path)
     panel._select(1)
+    panel.scale_lock.setChecked(False)
     item = panel._items[1]
     item._active_handle = "br"
     item._drag_handle(QPointF(150.0, 75.0))
@@ -814,7 +814,52 @@ def test_dragging_a_corner_handle_allows_independent_x_and_y(qapp, tmp_path):
     assert sprite.scale_y == pytest.approx(1.5)  # 75 / 50
 
 
-# --- Lock Position (owner's request, 2026-09-19; was "Lock proportions") ----
+def test_dragging_a_corner_handle_keeps_proportions_when_locked(qapp, tmp_path):
+    # The restored default behavior: dragging a corner handle scales both
+    # axes by the same (averaged) ratio, per the owner's 2026-09-19
+    # request to bring this back after it was briefly retired in favor of
+    # the (separate, coexisting) "Lock Position" feature.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    assert panel.scale_lock.isChecked() is True  # default
+    item = panel._items[1]
+    item._active_handle = "br"
+    item._drag_handle(QPointF(150.0, 75.0))
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == pytest.approx(sprite.scale_y)
+
+
+# --- Lock proportions (Scale X/Y linking; restored 2026-09-19) --------------
+
+
+def test_scale_lock_is_checked_by_default(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.scale_lock.isChecked() is True
+
+
+def test_scale_lock_links_x_and_y_when_checked(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    assert panel.scale_lock.isChecked() is True
+
+    panel.scale_x.setValue(2.5)
+
+    assert panel.scale_y.value() == pytest.approx(2.5)
+    assert panel.rig.by_id(1).scale_y == pytest.approx(2.5)
+
+
+def test_scale_unlocked_allows_independent_x_and_y(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+
+    panel.scale_x.setValue(2.5)
+
+    assert panel.scale_y.value() == pytest.approx(1.0)
+    assert panel.rig.by_id(1).scale_y == pytest.approx(1.0)
+
+
+# --- Lock Position (owner's request, 2026-09-19; separate from "Lock proportions" above) ----
 
 
 def test_lock_position_unchecked_by_default(qapp, tmp_path):
@@ -910,6 +955,19 @@ def test_lock_state_is_undoable(qapp, tmp_path):
     assert panel.rig.by_id(1).locked is False
 
 
+# --- Parent combo (Position & Hierarchy) --------------------------------------
+
+
+def test_parent_combo_is_populated_before_any_sprite_is_selected(qapp, tmp_path):
+    # Owner's report, 2026-09-19: "it does not populate in the parent row
+    # under position & hierarchy pane" -- a QComboBox nobody has ever
+    # called addItem() on shows as empty and disabled, unlike the spinbox
+    # fields nearby which always show *some* value.
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.parent_combo.count() >= 1
+    assert panel.parent_combo.itemText(0) == "None (root)"
+
+
 # --- Rotation -----------------------------------------------------------------
 
 
@@ -944,6 +1002,35 @@ def test_reset_size_and_rotation_buttons_visible_in_edit_mode(qapp, tmp_path):
     panel.edit_sprites_btn.setChecked(True)
     assert panel.reset_size_btn.isVisible() is True
     assert panel.reset_rotation_btn.isVisible() is True
+
+
+# --- Undo/Redo buttons (moved to the end of the mode row, 2026-09-19) -------
+
+
+def test_undo_redo_buttons_hidden_in_live_preview(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.live_preview_btn.setChecked(True)
+    assert panel._undo_btn.isVisible() is False
+    assert panel._redo_btn.isVisible() is False
+
+
+def test_undo_redo_buttons_visible_in_edit_mode(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.edit_sprites_btn.setChecked(True)
+    assert panel._undo_btn.isVisible() is True
+    assert panel._redo_btn.isVisible() is True
+
+
+def test_undo_redo_buttons_live_at_the_end_of_the_mode_row(qapp, tmp_path):
+    # Owner's request: "put those buttons at the end of the preview/edit
+    # row when in edit mode" -- rather than the bottom action bar they
+    # used to live in.
+    config, window, panel, _ = make_panel(tmp_path)
+    count = panel.mode_row.count()
+    assert panel.mode_row.itemAt(count - 2).widget() is panel._undo_btn
+    assert panel.mode_row.itemAt(count - 1).widget() is panel._redo_btn
 
 
 def test_reset_size_and_rotation_buttons_disabled_with_nothing_selected(qapp, tmp_path):

@@ -71,22 +71,31 @@ def test_load_state_strips_old_window_zoom(tmp_path):
     assert not hasattr(config.window, "zoom")
 
 
-def test_load_state_strips_old_scale_lock_proportions(tmp_path):
-    # control_panel.scale_lock_proportions was repurposed into
-    # AvatarRig.Sprite.locked 2026-09-19 (the "Lock proportions" button
-    # became "Lock Position") -- a settings.json written before that
-    # (version 2, no migration yet applied) had a real
-    # "control_panel": {"scale_lock_proportions": ...} key that _merge
-    # would otherwise reject as unknown now that ControlPanelConfig no
-    # longer has that field.
+def test_load_state_reads_a_settings_json_from_the_brief_v3_window(tmp_path):
+    # control_panel.scale_lock_proportions was briefly retired (version
+    # 3, stripped from raw config) and brought back the same day as its
+    # own separate control alongside the new per-sprite Lock Position --
+    # a settings.json written during that brief window (version 3, key
+    # already stripped) must still load fine, just with the field back
+    # at its dataclass default rather than whatever it used to be.
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({
-        "__config_version__": 2,
-        "control_panel": {"scale_lock_proportions": True, "active_tab": 2},
+        "__config_version__": 3,
+        "control_panel": {"active_tab": 2},
     }))
     config = load_state(path)  # must not raise
     assert config.control_panel.active_tab == 2
-    assert not hasattr(config.control_panel, "scale_lock_proportions")
+    assert config.control_panel.scale_lock_proportions is True
+
+
+def test_load_state_reads_scale_lock_proportions_when_present(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({
+        "__config_version__": 1,
+        "control_panel": {"scale_lock_proportions": False},
+    }))
+    config = load_state(path)
+    assert config.control_panel.scale_lock_proportions is False
 
 
 def test_save_then_load_round_trips(tmp_path):

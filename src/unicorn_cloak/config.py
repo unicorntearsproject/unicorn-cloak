@@ -66,25 +66,20 @@ def _migrate_window_zoom_to_avatar(raw: dict) -> dict:
     return raw
 
 
-def _migrate_scale_lock_to_sprite_locked(raw: dict) -> dict:
-    """v2 -> v3, 2026-09-19: the "Lock proportions" button's own
-    control_panel.scale_lock_proportions (a global, session-only
-    preference) was repurposed into AvatarRig.Sprite.locked (per-sprite,
-    saved with the avatar -- see that field's own comment) as "Lock
-    Position" -- strip it from an old settings.json's control_panel
-    block so _merge doesn't reject it as an unknown field. The value
-    itself isn't carried over: it meant "keep Scale X/Y proportional
-    while editing," a different concept from the per-sprite lock that
-    replaced it, so there's nothing sensible to migrate it *to*."""
-    control_panel = raw.get("control_panel")
-    if isinstance(control_panel, dict):
-        control_panel.pop("scale_lock_proportions", None)
-    return raw
+# v2 -> v3 briefly stripped control_panel.scale_lock_proportions here
+# (when this button's toggle was repurposed into Sprite.locked) and was
+# removed again the same day once that field came back as its own
+# separate control (see ControlPanelConfig.scale_lock_proportions's own
+# comment) -- no migration needed for that step since the field being
+# recognized again is exactly what makes an old settings.json's value
+# load correctly. A settings.json that *did* pass through the brief
+# stripped window (this repo's own real one did) just gets the
+# dataclass default (True) back, same as the value almost always was
+# anyway.
 
 
 _CONFIG_MIGRATIONS: dict[int, Callable[[dict], dict]] = {
     1: _migrate_window_zoom_to_avatar,
-    2: _migrate_scale_lock_to_sprite_locked,
 }
 
 
@@ -312,6 +307,16 @@ class ControlPanelConfig:
     # default (a QScrollArea's own sizeHint doesn't grow with its
     # content).
     collapsed_sections: tuple[str, ...] = ("Position & Hierarchy", "Animation")
+
+    # Whether Scale X/Y (Position & Hierarchy) are linked -- editing one,
+    # or dragging a corner handle on the Edit canvas, updates/scales the
+    # other to match, keeping the sprite's proportions. On by default per
+    # the owner's own request, 2026-09-17. Briefly retired 2026-09-19
+    # when this button's own toggle was repurposed into per-sprite
+    # AvatarRig.Sprite.locked ("Lock Position") -- brought back the same
+    # day, as its own separate control again, once the owner clarified
+    # both were wanted side by side, not one replacing the other.
+    scale_lock_proportions: bool = True
 
 
 @dataclass

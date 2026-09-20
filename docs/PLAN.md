@@ -397,6 +397,58 @@ things:
 persistence coverage, the config migration, and the shared-state/
 canvas-flag/disabled-fields/undo behavior of the lock feature itself.
 
+**2026-09-19, same-day follow-up: "Lock proportions" brought back
+alongside Lock Position, Parent combo empty before first selection,
+Undo/Redo moved to the mode row.** Owner's reaction to the Lock Position
+work above, three items:
+  - **"Lock proportions" restored.** The retirement described just above
+    -- repurposing the old "🔗 Lock proportions" button into "🔒 Lock
+    Position" and dropping proportional corner-drag/Scale-X/Y-linking
+    outright -- was a mistake: the owner wanted both, not one replacing
+    the other ("why did u remove? bring it back please"). `self.scale_
+    lock` is back as its own `QPushButton`, checked by default, sitting
+    next to (not instead of) `self.lock_position_btn`; `_on_scale_x/y_
+    changed` re-link the two spinboxes when it's checked, and `Editable
+    SpriteItem._drag_handle` re-applies the averaged-ratio proportional
+    scale on corner-drag under the same condition. `control_panel.
+    scale_lock_proportions` is back in `ControlPanelConfig` too (default
+    `True`) -- no new config migration needed, since a raw settings.json
+    missing the key (real example: the owner's own file, mid-migration
+    when this was tested) just falls back to that same default via
+    `_merge`, identical to never having had the field; the now-pointless
+    version-2-to-3 migration function was deleted, its slot in `_CONFIG_
+    MIGRATIONS` left unfilled like the ones before it. The two controls
+    are independent: Lock Position fully disables Scale (and Position/
+    Rotation), Lock proportions only links Scale's two axes while it's
+    still editable.
+  - **Parent combo populated before any sprite is ever selected.** Owner
+    report: "it does not populate in the parent row." Root cause: `_pop
+    ulate_parent_combo` (which fills in "None (root)" plus every other
+    sprite) only ever runs from `_load_property_form`, itself only
+    called once a sprite is actually selected -- so a freshly-opened
+    Control Panel showed a genuinely empty, disabled `QComboBox`, unlike
+    the property spinboxes nearby which always show *some* value (e.g.
+    0.00) even with nothing selected. Fixed by seeding the same "None
+    (root)" first entry immediately at construction, which `_populate_
+    parent_combo` then replaces wholesale the moment a real selection
+    happens. (With a sprite actually selected, the combo already worked
+    correctly -- confirmed against the real 18-sprite unicorn-demo avatar
+    -- so this was specifically a before-first-selection gap.)
+  - **Undo/Redo moved to the end of the Live Preview/Edit Sprites row.**
+    Previously lived in the bottom action bar, always visible regardless
+    of mode. Owner's ask: move them to the end of the mode-toggle row,
+    visible only in Edit mode (Live Preview has nothing editable to undo/
+    redo from) -- same visibility pattern already used there for Reset
+    Size/Reset Rotation. `self.mode_row` (that row's layout) is now
+    stored on `self` from `_build_canvas_area` so `_build_bottom_bar`,
+    which runs later and is what actually constructs the undo/redo
+    buttons, can append to it instead of building a second pair of
+    buttons early just to have somewhere to put them.
+477 tests (468 -> 477): proportional corner-drag and Scale-X/Y-linking
+restored as their own coverage (mirroring what existed before the brief
+retirement above), the Parent-combo pre-selection fix, and Undo/Redo's
+new position/visibility.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

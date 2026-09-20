@@ -435,6 +435,13 @@ class EditableSpriteItem(QGraphicsPixmapItem):
             return  # a zero-size pixmap dimension has no meaningful corner to scale from
         new_scale_x = pre_scale_pos.x() / corner.x()
         new_scale_y = pre_scale_pos.y() / corner.y()
+        if self._panel.scale_lock.isChecked():
+            # Same lock the Scale spinboxes already honor (see
+            # _on_scale_x/y_changed) -- reused here rather than a second,
+            # separate lock concept for the same idea.
+            ratio = (abs(new_scale_x) + abs(new_scale_y)) / 2
+            new_scale_x = math.copysign(ratio, new_scale_x)
+            new_scale_y = math.copysign(ratio, new_scale_y)
         # Dragging a corner across the origin would otherwise flip the
         # sprite (a negative scale) -- the Scale spinboxes only ever go
         # positive (0.01-100.0), so clamp here too rather than showing a
@@ -770,7 +777,12 @@ class ControlPanelWindow(QWidget):
         canvas_layout = QVBoxLayout(canvas_container)
         canvas_layout.setContentsMargins(8, 8, 8, 8)
 
-        mode_row = QHBoxLayout()
+        # Stored on self -- _build_bottom_bar (built later, after this
+        # method returns) adds the Undo/Redo buttons to the *end* of
+        # this same row once they exist (owner's request, 2026-09-19),
+        # rather than duplicating a second pair of buttons here before
+        # self.undo/self.redo's own real button objects are even built.
+        self.mode_row = mode_row = QHBoxLayout()
         # Two side-by-side mode buttons, not one button whose label swaps
         # (owner's request, 2026-09-19: "side by side, active one
         # highlighted") -- a QButtonGroup gives the usual radio-style
@@ -1425,6 +1437,15 @@ class ControlPanelWindow(QWidget):
         self.z_index = QSpinBox()
         self.z_index.setRange(-1000, 1000)
         self.parent_combo = QComboBox()
+        # Seeded with a placeholder immediately -- unlike the spinboxes
+        # above (which show *some* value, e.g. 0.00, even before a
+        # sprite is ever selected), a QComboBox nobody has ever called
+        # addItem() on shows as a genuinely empty, item-less dropdown --
+        # owner's report, 2026-09-19: "it does not populate in the
+        # parent row." _populate_parent_combo (see _load_property_form)
+        # replaces this with the real list, including this same "None
+        # (root)" first entry, the moment a sprite is actually selected.
+        self.parent_combo.addItem("None (root)", None)
 
         _pos_tip = "relative to this sprite's parent (or the avatar's center, for a root-level sprite)."
         self.pos_x.setToolTip(f"Horizontal position, {_pos_tip}")
@@ -1472,10 +1493,22 @@ class ControlPanelWindow(QWidget):
         self.property_form.addRow("Rotation (deg)", self.rotation)
 
         # Scale, owner's request, 2026-09-17: "add scale features to the
-        # positioning section." A toggle QPushButton, not a checkbox --
-        # matches Guide/Ghost's own established convention in this app.
+        # positioning section... w/a lock toggle (on by default) that
+        # scales x & y maintaining proportions." A toggle QPushButton,
+        # not a checkbox -- matches Guide/Ghost's own established
+        # convention in this app. Linking is handled in
+        # _on_scale_x/y_changed and EditableSpriteItem._drag_handle, not
+        # here; this row just lays the three widgets out. Briefly
+        # retired 2026-09-19 when this exact button's own toggle was
+        # repurposed into per-sprite Lock Position (below) -- restored as
+        # its own separate control the same day: a session-wide editing
+        # preference (do the two axes track each other), independent of
+        # whether the sprite is fully locked or not.
         self.scale_x = self._spin(0.01, 100.0)
         self.scale_y = self._spin(0.01, 100.0)
+        self.scale_lock = QPushButton("🔗 Lock proportions")
+        self.scale_lock.setCheckable(True)
+        self.scale_lock.setChecked(True)
         self.scale_x.setToolTip(
             "Permanently resizes this sprite horizontally, e.g. for a\n"
             "prop drawn at the wrong scale relative to everything else\n"
@@ -1486,20 +1519,29 @@ class ControlPanelWindow(QWidget):
         self.scale_y.setToolTip(
             self.scale_x.toolTip().replace("horizontally", "vertically")
         )
+        self.scale_lock.setToolTip(
+            "While on (default), editing Scale X or Scale Y -- or\n"
+            "dragging a corner handle on the Edit canvas -- updates/\n"
+            "scales the other to match, so the sprite always scales\n"
+            "proportionally. Turn off to stretch width and height\n"
+            "independently. Independent of \"Lock Position\" below, which\n"
+            "blocks Scale entirely rather than just linking its axes."
+        )
         scale_row = QHBoxLayout()
         scale_row.addWidget(QLabel("X"))
         scale_row.addWidget(self.scale_x)
         scale_row.addWidget(QLabel("Y"))
         scale_row.addWidget(self.scale_y)
+        scale_row.addWidget(self.scale_lock)
         self.property_form.addRow("Scale", scale_row)
 
-        # Lock Position (owner's request, 2026-09-19; was "🔗 Lock
-        # proportions" -- a global, session-only "keep Scale X/Y
-        # proportional while editing" preference, repurposed into this:
-        # a per-sprite, saved-with-the-avatar lock on Position/Scale/
-        # Rotation entirely -- see Sprite.locked's own comment). Fires
-        # the exact same code as the padlock icon next to this sprite in
-        # the Sprites tab's Layer List (see _on_sprite_lock_toggled) and
+        # Lock Position (owner's request, 2026-09-19) -- a per-sprite,
+        # saved-with-the-avatar lock on Position/Scale/Rotation entirely
+        # (see Sprite.locked's own comment), distinct from Lock
+        # proportions above (which only links Scale X/Y, and is a
+        # session preference, not saved per sprite). Fires the exact
+        # same code as the padlock icon next to this sprite in the
+        # Sprites tab's Layer List (see _on_sprite_lock_toggled) and
         # stays in sync with it regardless of which one was clicked.
         self.lock_position_btn = QPushButton("🔒 Lock Position")
         self.lock_position_btn.setCheckable(True)
@@ -1545,7 +1587,7 @@ class ControlPanelWindow(QWidget):
 
         property_fields = (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo,
-            self.rotation, self.scale_x, self.scale_y, self.lock_position_btn,
+            self.rotation, self.scale_x, self.scale_y, self.scale_lock, self.lock_position_btn,
             self.frames, self.anim_speed, self.variant,
         )
         for form, fields in (
@@ -1558,9 +1600,15 @@ class ControlPanelWindow(QWidget):
                     label.setToolTip(field_widget.toolTip())
         for box in (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index,
-            self.rotation, self.scale_x, self.scale_y, self.variant, self.anim_speed,
+            self.rotation, self.variant, self.anim_speed,
         ):
             box.valueChanged.connect(self._on_property_changed)
+        # Scale X/Y get their own handlers, not the generic loop above --
+        # each one may also need to update the *other* spinbox's value
+        # when proportions are locked, which _on_property_changed alone
+        # doesn't do.
+        self.scale_x.valueChanged.connect(self._on_scale_x_changed)
+        self.scale_y.valueChanged.connect(self._on_scale_y_changed)
         self.frames.valueChanged.connect(self._on_frames_changed)
         self.parent_combo.currentIndexChanged.connect(self._on_parent_changed)
 
@@ -1971,8 +2019,14 @@ class ControlPanelWindow(QWidget):
         self._redo_btn.setToolTip("Redo the last undone change (Ctrl+Shift+Z).")
         self._undo_btn.clicked.connect(self.undo)
         self._redo_btn.clicked.connect(self.redo)
-        actions_row_1.addWidget(self._undo_btn)
-        actions_row_1.addWidget(self._redo_btn)
+        # At the end of the Live Preview/Edit Sprites row, not here --
+        # owner's request, 2026-09-19 -- and only visible in Edit mode
+        # (see _on_canvas_mode_toggled), since Live Preview has nothing
+        # editable to undo/redo from. self.mode_row was built earlier, in
+        # _build_canvas_area, specifically so these buttons (which need
+        # self.undo/self.redo to already exist) could still land there.
+        self.mode_row.addWidget(self._undo_btn)
+        self.mode_row.addWidget(self._redo_btn)
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo)
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo)
 
@@ -2369,6 +2423,7 @@ class ControlPanelWindow(QWidget):
         else:
             self.live_preview_btn.setChecked(True)
         self._on_canvas_mode_toggled(self.edit_sprites_btn.isChecked())
+        self.scale_lock.setChecked(cp.scale_lock_proportions)
         self.tabs.setCurrentIndex(min(cp.active_tab, self.tabs.count() - 1))
         self.tabs.currentChanged.connect(self._on_tab_changed)
         for title, section in self._sections.items():
@@ -2493,6 +2548,7 @@ class ControlPanelWindow(QWidget):
         cp.canvas_mode = "edit" if self.edit_sprites_btn.isChecked() else "live_preview"
         cp.show_origin_guides = self.guide_btn.isChecked()
         cp.show_hidden_ghosted = self.ghost_btn.isChecked()
+        cp.scale_lock_proportions = self.scale_lock.isChecked()
         cp.grid_spacing_px = self.grid_spacing.value()
         cp.collapsed_sections = tuple(
             title for title, section in self._sections.items() if section.is_collapsed()
@@ -2973,6 +3029,23 @@ class ControlPanelWindow(QWidget):
         self._update_manual_driven_enabled_state()
         self._on_property_changed(None)
 
+    def _on_scale_x_changed(self, value: float) -> None:
+        if self._updating_form:
+            return
+        if self.scale_lock.isChecked() and abs(self.scale_y.value() - value) > 1e-9:
+            self.scale_y.blockSignals(True)
+            self.scale_y.setValue(value)
+            self.scale_y.blockSignals(False)
+        self._on_property_changed(None)
+
+    def _on_scale_y_changed(self, value: float) -> None:
+        if self._updating_form:
+            return
+        if self.scale_lock.isChecked() and abs(self.scale_x.value() - value) > 1e-9:
+            self.scale_x.blockSignals(True)
+            self.scale_x.setValue(value)
+            self.scale_x.blockSignals(False)
+        self._on_property_changed(None)
 
     def _on_reset_size_clicked(self) -> None:
         # Routed through the spinboxes, not straight into sprite.scale_x/
@@ -3201,6 +3274,8 @@ class ControlPanelWindow(QWidget):
         self.preview_controls.setVisible(edit_mode)
         self.reset_size_btn.setVisible(edit_mode)
         self.reset_rotation_btn.setVisible(edit_mode)
+        self._undo_btn.setVisible(edit_mode)
+        self._redo_btn.setVisible(edit_mode)
         if edit_mode:
             self.edit_view.refit_to_content()
         else:
