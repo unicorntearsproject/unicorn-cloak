@@ -1321,3 +1321,99 @@ def test_a_single_expanded_section_fills_the_tab_instead_of_leaving_it_mostly_em
     splitter = _tab_splitter_for(panel, "Costumes — press the number to switch")
     page_height = panel.tabs.currentWidget().height()
     assert splitter.height() > page_height * 0.8
+
+
+def test_non_growable_sections_dont_stretch_to_fill_the_splitter(qapp, tmp_path):
+    # Regression 2026-09-19, owner's report: a gap between State
+    # Assignment and Expressions "disappears when layers is also open".
+    # Root cause: every expanded section used to request QWIDGETSIZE_MAX
+    # equally, so with Layer List (the one section with something that
+    # should actually grow, its QListWidget) collapsed, State Assignment
+    # and Expressions split the leftover splitter space between
+    # themselves instead of leaving it alone. Non-growable sections must
+    # stay capped to their own real content height regardless of what
+    # else in the splitter is open or closed.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.resize(1000, 900)
+    panel.show()
+    qapp.processEvents()
+    _switch_to_tab(panel, "Sprites")
+    panel._sections["Layer List"].set_collapsed(True)
+    qapp.processEvents()
+
+    state_section = panel._sections["State Assignment"]
+    assert state_section.height() <= state_section.sizeHint().height() + 2
+
+
+def test_a_splitter_with_nothing_that_can_grow_still_pegs_to_the_top(qapp, tmp_path):
+    # Follow-up to the fix above: once non-growable sections stop
+    # stretching, the *splitter itself* has more room than its (now
+    # correctly small) children want -- which reproduced the exact same
+    # "no alignment set centers instead of pegging to the top" class of
+    # bug the 2026-09-17 fixes already covered, just via a new path
+    # (some sections expanded, but none of them growable) that the old
+    # "all collapsed" check didn't account for.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.resize(1000, 900)
+    panel.show()
+    qapp.processEvents()
+    _switch_to_tab(panel, "Sprites")
+    panel._sections["Layer List"].set_collapsed(True)
+    qapp.processEvents()
+
+    splitter = _tab_splitter_for(panel, "State Assignment")
+    assert splitter.geometry().y() < 20
+
+
+def test_a_growable_section_still_lets_the_splitter_fill_the_tab(qapp, tmp_path):
+    # The other half of the same fix: a splitter must NOT peg to the top
+    # (and so cap itself to content height) while something inside it
+    # -- Layer List's auto-expanding QListWidget -- still wants to grow.
+    # State Assignment/Expressions collapsed here so this isolates that
+    # one behavior, the same way test_a_single_expanded_section_fills_
+    # the_tab_instead_of_leaving_it_mostly_empty above does for the
+    # Costume Hotkeys tab -- the offscreen test platform's own virtual
+    # screen is a fixed, fairly small 800x800 (see _clamp_height_to_
+    # screen), so a real "do all three of this tab's sections fit
+    # together" scenario isn't reliably reproducible here regardless of
+    # what panel.resize() asks for.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.resize(1000, 900)
+    panel.show()
+    qapp.processEvents()
+    _switch_to_tab(panel, "Sprites")
+    panel._sections["State Assignment"].set_collapsed(True)
+    panel._sections["Expressions"].set_collapsed(True)
+    panel._sections["Layer List"].set_collapsed(False)
+    qapp.processEvents()
+    qapp.processEvents()  # lets the deferred QTimer.singleShot(0, ...) safety-net pass run too
+
+    splitter = _tab_splitter_for(panel, "Layer List")
+    page_height = panel.tabs.currentWidget().height()
+    assert splitter.height() > page_height * 0.8
+
+
+def test_adding_an_expression_button_while_expanded_resizes_the_section(qapp, tmp_path):
+    # The Expressions section's content changes at runtime (tagging a
+    # sprite manually-driven adds a button) -- its cap must be
+    # recomputed then, not just on the next unrelated section toggle, or
+    # a newly-added button would be clipped (or dead space would remain)
+    # until something else happened to trigger a resync.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.resize(1000, 900)
+    panel.show()
+    qapp.processEvents()
+    _switch_to_tab(panel, "Sprites")
+    qapp.processEvents()
+
+    section = panel._sections["Expressions"]
+
+    panel._select(1)
+    panel.group_name.setCurrentText("Mouth")
+    panel.state_name.setCurrentText("Laughing")
+    panel.manual_driven.setChecked(True)
+    qapp.processEvents()
+
+    # The cap must track whatever the section's content actually needs
+    # *now* -- not be left over from before the button existed.
+    assert section.maximumHeight() == section.sizeHint().height()

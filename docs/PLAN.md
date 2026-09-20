@@ -136,6 +136,48 @@ Panel-side triggering, the explicit remove buttons (plus the now-inert
 "clear leaves it incomplete" behavior), and zoom's full rig/persistence/
 config-migration/undo round trip.
 
+**2026-09-19, same-day follow-up: the layout-gap fix above was wrong
+twice before it was right.** Real screenshots (owner) showed the
+Position & Hierarchy/Application gaps *surviving* the margin fix
+described above -- the actual cause was Qt spreading a section's
+leftover splitter space *between* its stacked form layouts whenever
+nothing else in that splitter wanted it, not doubled-up margins.
+Fixed properly with a trailing `addStretch(1)` added to every plain-
+form section (state/motion/position/animation/envelope/obs/display),
+so leftover space always collects below the real content. Verified
+with an offscreen screenshot this time, not just reasoning about the
+code -- both reported tabs confirmed visually packed correctly. Then a
+*third* report ("the gap... disappears when layers is also open")
+exposed the real mechanism underneath both previous attempts: every
+expanded section requested equal, unlimited splitter space, so
+whichever *other* section in the same splitter had something that
+actually wanted to grow (Layer List's auto-expanding sprite list;
+Costume/Expression Hotkeys' list widgets) ended up silently absorbing
+the slack that non-growing sections like State Assignment/Expressions
+would otherwise have wrongly claimed. Fixed at the root: `Collapsible
+Section` gained a `wants_extra_space` flag (only Layer List and the two
+hotkey-list sections set it), and `_resync_tab_splitter_sizes` now caps
+every non-growing expanded section to its own real content height via
+`setMaximumHeight`, not just a `setSizes()` request Qt was free to
+override. That, in turn, resurfaced the *original* 2026-09-17 "nothing
+expanded -> centered" bug via a new path -- some sections expanded, but
+none of them growable -- so `_update_splitter_top_alignment`'s condition
+became "does anything *growable* here that's actually expanded"
+instead of "is everything collapsed" (the latter was a special case of
+the former all along). Chasing that surfaced one more real Qt quirk,
+not a logic bug: a splitter's negotiated geometry could still read
+stale immediately after `setAlignment()`/`setSizes()`, confirmed by
+reproducing it standalone -- fixed with a deferred, once-more resync
+pass via `QTimer.singleShot(0, ...)` in `_on_section_collapsed_changed`,
+the standard Qt answer to "just changed layout-affecting state, need it
+to actually be reflected." The Expressions section's *own* cap has the
+same staleness risk on every add/remove of a toggle button (tagging a
+sprite manually-driven, live), fixed the same way. 431 tests (from
+425), including one that pins down the exact "disappears when layers is
+open" scenario as a regression test, one confirming a growable section
+still fills its tab, and one confirming the Expressions section's cap
+tracks its content immediately after a live add.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

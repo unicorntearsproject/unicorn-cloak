@@ -121,13 +121,26 @@ class CollapsibleSection(QWidget):
     when restoring persisted state (see its own docstring). A caller that
     needs to react to *every* change, e.g. a QSplitter resync, needs this
     one instead.
+
+    `wants_extra_space` (owner's report, 2026-09-19: a gap between two
+    small expanded sections "disappears when layers is also open") marks
+    a section as having something inside that should actually grow into
+    extra room -- an auto-expanding list widget, so far. Everything else
+    defaults to False: control_panel_window.py's _resync_tab_splitter_
+    sizes caps those to their own real content height instead of letting
+    them request QWIDGETSIZE_MAX, so a splitter with nothing that wants
+    the leftover space doesn't split it between sections that don't need
+    it either -- it collects harmlessly below the last one instead.
     """
 
     collapsed_changed = Signal(bool)
 
-    def __init__(self, title: str, collapsed: bool = False, parent=None) -> None:
+    def __init__(
+        self, title: str, collapsed: bool = False, parent=None, wants_extra_space: bool = False
+    ) -> None:
         super().__init__(parent)
         self._title = title
+        self.wants_extra_space = wants_extra_space
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)

@@ -45,6 +45,16 @@ def test_collapsible_section_can_start_collapsed(qapp):
     assert section.is_collapsed() is True
 
 
+def test_collapsible_section_wants_extra_space_defaults_to_false(qapp):
+    section = CollapsibleSection("Position & Hierarchy")
+    assert section.wants_extra_space is False
+
+
+def test_collapsible_section_wants_extra_space_can_be_set_true(qapp):
+    section = CollapsibleSection("Layer List", wants_extra_space=True)
+    assert section.wants_extra_space is True
+
+
 def test_collapsible_section_toggling_the_header_collapses_and_expands(qapp):
     section = CollapsibleSection("Position & Hierarchy")
     section._header.setChecked(True)

@@ -743,22 +743,58 @@ class ControlPanelWindow(QWidget):
         # capping it to its sizeHint and aligning within the leftover
         # space -- it is *not* the "no-op once the widget can already
         # fill the space" behavior the original comment assumed, that
-        # assumption was simply wrong. A splitter with anything expanded
-        # must keep zero alignment (Qt's own default -- fill the cell) to
-        # actually grow into real extra space; only an all-collapsed
-        # splitter, which by definition can never fill that space anyway,
-        # should get AlignTop instead of centering.
-        all_collapsed = all(splitter.widget(i).is_collapsed() for i in range(splitter.count()))
+        # assumption was simply wrong.
+        #
+        # The condition below used to be just "all collapsed" -- correct
+        # back when every *expanded* section requested QWIDGETSIZE_MAX
+        # and so could always grow into extra room. Since
+        # _resync_tab_splitter_sizes started capping non-growable
+        # sections to their own content height (2026-09-19, see
+        # CollapsibleSection.wants_extra_space's own comment), an
+        # expanded-but-capped section can no longer fill leftover space
+        # either -- and the same centering this comment already describes
+        # showed up again, this time with State Assignment/Expressions
+        # both expanded and Layer List merely collapsed, not everything.
+        # The real condition was never really about collapsed/expanded at
+        # all -- it's about whether *anything* currently visible in this
+        # splitter can actually grow to absorb extra space.
+        nothing_can_grow = not any(
+            not splitter.widget(i).is_collapsed() and splitter.widget(i).wants_extra_space
+            for i in range(splitter.count())
+        )
         outer = splitter.parentWidget().layout()
-        outer.setAlignment(splitter, Qt.AlignmentFlag.AlignTop if all_collapsed else Qt.AlignmentFlag(0))
+        outer.setAlignment(splitter, Qt.AlignmentFlag.AlignTop if nothing_can_grow else Qt.AlignmentFlag(0))
 
     def _on_section_collapsed_changed(
         self, splitter: QSplitter, section: CollapsibleSection, collapsed: bool
     ) -> None:
-        self._resync_tab_splitter_sizes(splitter)
-        self._update_splitter_top_alignment(splitter)
+        # _make_room_if_needed first, not last -- it can itself collapse a
+        # *different* section in this splitter to make room, which the
+        # resync/realign below needs to already know about.
         if not collapsed:
             self._make_room_if_needed(splitter, section)
+        self._resync_tab_splitter_sizes(splitter)
+        self._update_splitter_top_alignment(splitter)
+        # A second pass, deferred to the next event-loop tick, is also
+        # needed -- found 2026-09-19 chasing an unrelated bug (a growable
+        # section, e.g. Layer List, staying stuck at its pre-toggle height
+        # after a same-splitter collapse/expand sequence, surviving even a
+        # plain processEvents() in the caller). setAlignment() above did
+        # take effect (confirmed by inspecting the item's actual alignment
+        # afterward), but the QSplitter's own negotiated geometry against
+        # its parent layout still didn't reflect it until something forced
+        # a *fresh* layout pass outside this call's own stack -- an
+        # otherwise-redundant extra call to this same method, but only
+        # once deferred via QTimer.singleShot(0, ...), reliably fixed it;
+        # neither an inline re-call nor reordering these three calls did.
+        # Re-fetches the section/splitter fresh rather than closing over
+        # them, in case either no longer exists by the time this runs.
+        def _resync_again() -> None:
+            if section.parent() is splitter:
+                self._resync_tab_splitter_sizes(splitter)
+                self._update_splitter_top_alignment(splitter)
+
+        QTimer.singleShot(0, _resync_again)
 
     def _resync_tab_splitter_sizes(self, splitter: QSplitter) -> None:
         # QSplitter caches each pane's last-negotiated pixel size across
@@ -778,8 +814,27 @@ class ControlPanelWindow(QWidget):
         for i in range(splitter.count()):
             pane = splitter.widget(i)
             if isinstance(pane, CollapsibleSection) and pane.is_collapsed():
+                pane.setMaximumHeight(16_777_215)
                 sizes.append(pane.sizeHint().height())
+            elif isinstance(pane, CollapsibleSection) and not pane.wants_extra_space:
+                # Cap to the section's own real content height instead of
+                # requesting QWIDGETSIZE_MAX like every expanded section
+                # used to (owner's report, 2026-09-19: a gap between two
+                # small expanded sections, e.g. State Assignment and
+                # Expressions, "disappears when layers is also open").
+                # setSizes() alone doesn't stop QSplitter from stretching
+                # a pane past what's requested when there's leftover
+                # space and nothing else claims it -- only an actual
+                # setMaximumHeight() does. Growable sections (see
+                # CollapsibleSection.wants_extra_space) keep the old
+                # QWIDGETSIZE_MAX behavior below, so they're still what
+                # absorbs genuine leftover splitter space.
+                content_height = pane.sizeHint().height()
+                pane.setMaximumHeight(content_height)
+                sizes.append(content_height)
             else:
+                if isinstance(pane, CollapsibleSection):
+                    pane.setMaximumHeight(16_777_215)
                 sizes.append(16_777_215)  # QWIDGETSIZE_MAX -- "everything left over"
         splitter.setSizes(sizes)
 
@@ -846,7 +901,7 @@ class ControlPanelWindow(QWidget):
         root.addWidget(self.tabs, stretch=3)
 
     def _build_sprites_tab(self) -> QWidget:
-        layer_section = CollapsibleSection("Layer List")
+        layer_section = CollapsibleSection("Layer List", wants_extra_space=True)
         self.sprite_list = QListWidget()
         self.sprite_list.setToolTip(
             "Every sprite in this avatar, listed front-to-back -- top of\n"
@@ -1518,7 +1573,7 @@ class ControlPanelWindow(QWidget):
         # each a stable, never-resized item instead -- adding/removing a
         # row means adding/removing a whole list item (a plain, native
         # QListWidget operation), never resizing one in place.
-        section = CollapsibleSection("Costumes — press the number to switch")
+        section = CollapsibleSection("Costumes — press the number to switch", wants_extra_space=True)
         self.costume_list = QListWidget()
         self.costume_list.setToolTip("One row per costume slot -- see the Hotkeys Help tab for the full explanation.")
         section.body_layout.addWidget(self.costume_list)
@@ -1562,7 +1617,7 @@ class ControlPanelWindow(QWidget):
         return tab
 
     def _build_expressions_tab(self) -> QWidget:
-        section = CollapsibleSection("Expressions — Shift + number toggles on/off")
+        section = CollapsibleSection("Expressions — Shift + number toggles on/off", wants_extra_space=True)
         self.expression_hotkey_list = QListWidget()
         self.expression_hotkey_list.setToolTip("One row per hotkey slot -- see the Hotkeys Help tab for the full explanation.")
         section.body_layout.addWidget(self.expression_hotkey_list)
@@ -3121,6 +3176,28 @@ class ControlPanelWindow(QWidget):
                 self._expression_buttons[(group, state)] = btn
         else:
             self._expressions_layout.addWidget(self._expressions_placeholder)
+
+        # This section's content (and so its real height) just changed --
+        # re-cap it against the splitter it lives in, or a stale cap from
+        # before this tagging/untagging would leave dead space below it
+        # (or clip a newly-added button) until some *other* section
+        # happens to toggle collapsed and trigger a resync incidentally.
+        # Deferred with singleShot(0), not called inline here -- sizeHint()
+        # right after addWidget()/takeAt() above can still answer with the
+        # *previous* layout's cached geometry until Qt actually finishes
+        # processing the pending layout pass (confirmed empirically: even
+        # an explicit self._expressions_layout.activate() right before the
+        # resync wasn't enough); the standard Qt fix for "just changed a
+        # layout, need its real sizeHint" is to let the event loop settle
+        # first. Re-fetches the section fresh rather than closing over it,
+        # in case this section no longer exists (or isn't in a splitter
+        # yet) by the time this actually runs.
+        def _resync_expressions_section_now() -> None:
+            section = self._sections.get("Expressions")
+            if section is not None and isinstance(section.parent(), QSplitter):
+                self._resync_tab_splitter_sizes(section.parent())
+
+        QTimer.singleShot(0, _resync_expressions_section_now)
 
     def _make_expression_toggle_handler(self, group: str, state: str) -> Callable[[bool], None]:
         def on_toggled(checked: bool) -> None:
