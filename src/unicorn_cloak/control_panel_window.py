@@ -417,8 +417,15 @@ class EditableSpriteItem(QGraphicsPixmapItem):
 
 
 _VIEWPORT_ZOOM_STEP = 1.15
-_MIN_VIEWPORT_ZOOM = 0.1
-_MAX_VIEWPORT_ZOOM = 10.0
+# Asymmetric on purpose (owner's report, 2026-09-19: "we can zoom out
+# really really far but not in very far at all... need it vice versa"):
+# refit_to_content's fit-to-content baseline (_viewport_zoom == 1.0)
+# already shows the whole avatar with padding, so there's rarely a
+# reason to zoom out much further -- 0.1x of that made an already-small
+# view shrink to a sliver. Precise per-sprite positioning, the actual
+# goal, needs the opposite: room to zoom in *much* closer than 10x.
+_MIN_VIEWPORT_ZOOM = 0.5
+_MAX_VIEWPORT_ZOOM = 50.0
 
 
 class GridCanvasView(QGraphicsView):

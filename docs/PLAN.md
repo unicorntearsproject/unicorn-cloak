@@ -286,6 +286,26 @@ reload, or re-entering Edit mode) -- purely a transient "look closer"
 aid, never touches any authored field or anything persisted, matching
 the "simple" scope asked for. 455 tests (449 -> 455).
 
+**Same day, immediate follow-up: the 0.1x-10x range was backwards for
+the actual goal.** Owner's report: "we can zoom out really really far
+but not in very far at all... need it vice versa if anything... need to
+zoom in for precise item positioning." Root cause was really just poor
+default numbers, not a logic bug: `refit_to_content`'s fit-to-content
+baseline is already a small absolute scale for a typical avatar (e.g.
+~0.31x for unicorn-demo at a real window size, since the avatar's own
+bounding box is much bigger than the viewport) -- 0.1x of that shrank an
+already-small view to a sliver, while 10x of it only reached ~3.1x
+absolute, nowhere near enough magnification to place small elements
+precisely. Range changed to 0.5x-50x: zooming out is now capped much
+closer to the already-shows-everything baseline (rarely useful to go
+further), and zooming in has far more headroom (~13.7x absolute at
+unicorn-demo's real baseline, confirmed with real screenshots at both
+new extremes -- max zoom-out keeps the avatar clearly visible with room
+around it, max zoom-in gets close enough to see individual flat-color
+regions of the art). Existing clamp tests already asserted the bound
+constants symbolically (`cpw_module._MIN_VIEWPORT_ZOOM`/
+`_MAX_VIEWPORT_ZOOM`), so they needed no changes for this.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
