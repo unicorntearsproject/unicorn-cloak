@@ -663,6 +663,44 @@ to actually finish instead of asserting immediately; the Rewind button
 sits right after Play, restarts playback, and matches Play's own
 enabled/disabled state.
 
+**2026-09-20, same-day follow-up: the mouth kept animating after file
+playback stopped; Rewind moved left of Play and renamed.** Owner's
+report: "the audio file stops but the mouth keeps moving." Root cause,
+found by tracing `motion.update_speaking`'s attack/hold/release
+envelope: it only ever advances when it's actually *called* again with
+a new sample. A live mic keeps calling it every block even during pure
+silence, so it decays smoothly all the way to quiet on its own --
+nothing special needed. `FilePlayback`'s very last call
+(`on_volume(0.0)`, in its own `finally` block, see yesterday's Stop
+fix) is a single *isolated* call, not the start of a steady stream: it
+nudges the envelope one exponential step toward 0 and then nothing ever
+calls `update_speaking` again -- leaving `talk_level` stuck at whatever
+nonzero level it last reached, with the render timer's own independent
+mouth-wobble/variant-alternation animation (which runs on the paint
+clock regardless of audio activity) visibly animating that stuck level
+forever. Confirmed live before fixing: after the final `on_volume(0.0)`
+call, `talk_level` was still 2 ("wide"), exactly matching the report.
+
+Fixed the same way `set_muted`/`effective_talk_level` already handles
+OBS mute -- a hard bypass of the envelope entirely, not a gradual
+release with nothing left to drive it. Extracted into a module-level
+`reset_speaking_state_and_close_mouth(window)` in `__main__.py` (not
+left as an inline closure like its sibling handlers) specifically so it
+has its own test file, `test___main__.py` -- the first for this module,
+previously untested as pure wiring/bootstrap code. Wired to
+`AudioManager.file_playback_stopped`, which already covers every way
+file playback can stop: a manual Stop, reaching the end of the file, or
+a decode error.
+
+Also moved the Rewind button to the left of Play (it landed to Play's
+right the day before) and shortened its label from "Rewind to Start" to
+just "Rewind" -- both owner's request.
+501 tests (498 -> 501): `reset_speaking_state_and_close_mouth` forces
+`talk_level`/the envelope back to a real closed-mouth state and hands
+back a fresh `SpeakingState`, including while muted (confirmed it
+doesn't fight `set_muted`'s own, separate path); Rewind's new position
+and shortened label.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

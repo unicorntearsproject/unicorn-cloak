@@ -2079,23 +2079,16 @@ class ControlPanelWindow(QWidget):
         self.audio_source.currentIndexChanged.connect(self._on_audio_source_changed)
         self.source_row.addWidget(self.audio_source, stretch=1)
 
-        self.play_file_btn = QPushButton("Play")
-        self.play_file_btn.setToolTip(
-            "Start or stop playing the chosen file to drive the mouth.\n"
-            "Silent by design -- it never plays out loud, only extracts\n"
-            "the volume envelope from it in real time."
-        )
-        self.play_file_btn.clicked.connect(self._on_play_file_clicked)
-        self.source_row.addWidget(self.play_file_btn)
-
-        # Owner's request, 2026-09-20. FilePlayback (audio.py) is a
-        # one-shot ffmpeg pipe decode with no seek support -- there's no
-        # such thing as "resume from where it was," only "start over from
-        # 0:00" -- so this just restarts playback via the exact same
-        # AudioManager.play_file() a Play click uses, which already stops
-        # whatever's currently playing first. Works the same whether a
-        # file is mid-playback or already stopped.
-        self._rewind_file_btn = QPushButton("Rewind to Start")
+        # Left of Play, not right -- owner's request, 2026-09-20 (it
+        # first landed to Play's right the day before). FilePlayback
+        # (audio.py) is a one-shot ffmpeg pipe decode with no seek
+        # support -- there's no such thing as "resume from where it
+        # was," only "start over from 0:00" -- so this just restarts
+        # playback via the exact same AudioManager.play_file() a Play
+        # click uses, which already stops whatever's currently playing
+        # first. Works the same whether a file is mid-playback or
+        # already stopped.
+        self._rewind_file_btn = QPushButton("Rewind")
         self._rewind_file_btn.setToolTip(
             "Restarts the chosen file from the beginning -- whether it's\n"
             "currently playing or already stopped. Playback can't seek\n"
@@ -2104,6 +2097,15 @@ class ControlPanelWindow(QWidget):
         )
         self._rewind_file_btn.clicked.connect(self._on_rewind_file_clicked)
         self.source_row.addWidget(self._rewind_file_btn)
+
+        self.play_file_btn = QPushButton("Play")
+        self.play_file_btn.setToolTip(
+            "Start or stop playing the chosen file to drive the mouth.\n"
+            "Silent by design -- it never plays out loud, only extracts\n"
+            "the volume envelope from it in real time."
+        )
+        self.play_file_btn.clicked.connect(self._on_play_file_clicked)
+        self.source_row.addWidget(self.play_file_btn)
 
         self._browse_file_btn = QPushButton("Browse…")
         self._browse_file_btn.setToolTip(

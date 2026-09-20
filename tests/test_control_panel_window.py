@@ -713,11 +713,18 @@ def test_file_label_hidden_when_no_file_chosen(qapp, tmp_path):
     assert panel.audio_file_label.isVisible() is False
 
 
-def test_rewind_button_sits_next_to_play(qapp, tmp_path):
+def test_rewind_button_sits_left_of_play(qapp, tmp_path):
+    # Owner's request, 2026-09-20 -- it first landed to Play's right the
+    # day before.
     config, window, panel, _ = make_panel(tmp_path)
     play_index = panel.source_row.indexOf(panel.play_file_btn)
     rewind_index = panel.source_row.indexOf(panel._rewind_file_btn)
-    assert rewind_index == play_index + 1
+    assert rewind_index == play_index - 1
+
+
+def test_rewind_button_text_is_just_rewind(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._rewind_file_btn.text() == "Rewind"
 
 
 def test_rewind_button_restarts_playback_from_the_beginning(qapp, tmp_path, monkeypatch):

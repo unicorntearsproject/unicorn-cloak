@@ -52,6 +52,34 @@ def _suppressed_native_stderr():
         os.close(saved_fd)
 
 
+def reset_speaking_state_and_close_mouth(window: RenderWindow) -> SpeakingState:
+    """Forces the mouth closed and hands back a fresh SpeakingState for
+    the caller to keep using, bypassing update_speaking's own attack/
+    hold/release envelope entirely. Module-level (not a closure inside
+    main()) so it's actually testable -- see test___main__.py.
+
+    Owner's report, 2026-09-20: "the audio file stops but the mouth
+    keeps moving." update_speaking's envelope only advances when it's
+    actually called -- a live mic keeps calling it every block even
+    during silence, so it decays smoothly all the way to quiet on its
+    own. FilePlayback's very last call (on_volume(0.0), in its own
+    finally block) is one isolated call, not the start of a steady
+    stream: it only nudges the envelope a single exponential step toward
+    0, and nothing ever calls update_speaking again afterward to finish
+    the job -- leaving talk_level stuck at whatever nonzero level it
+    last reached, with the render timer's own independent mouth-wobble/
+    variant-alternation animation (which runs regardless of audio
+    activity) visibly animating that stuck level forever. This is the
+    same "bypass the envelope entirely" approach set_muted/effective_
+    talk_level already uses for OBS mute -- called whenever
+    AudioManager.file_playback_stopped fires, which covers every way
+    file playback can stop: a manual Stop, reaching the end of the
+    file, or a decode error."""
+    window.set_talk_level(0)
+    window.set_envelope(0.0)
+    return SpeakingState()
+
+
 def main() -> int:
     # Owner's request, 2026-09-17: "hide the noise unless debug mode is
     # set" -- UNICORN_CLOAK_DEBUG_AUDIO (see on_volume_on_qt_thread below)
@@ -179,6 +207,10 @@ def main() -> int:
     def on_mute_changed_on_qt_thread(muted: bool) -> None:
         window.set_muted(muted)
 
+    def on_file_playback_stopped_on_qt_thread() -> None:
+        nonlocal speaking_state
+        speaking_state = reset_speaking_state_and_close_mouth(window)
+
     def on_volume_on_qt_thread(volume: float) -> None:
         nonlocal speaking_state, last_print
         speaking_state = update_speaking(
@@ -243,6 +275,13 @@ def main() -> int:
     )
     audio_manager.error_occurred.connect(
         on_error_on_qt_thread, Qt.ConnectionType.QueuedConnection
+    )
+    # Same QueuedConnection style as the others here, for consistency --
+    # file_playback_stopped itself already only ever fires on the Qt
+    # thread (see AudioManager's own docstring), but this file's whole
+    # convention is "assume anything from audio_manager needs it."
+    audio_manager.file_playback_stopped.connect(
+        on_file_playback_stopped_on_qt_thread, Qt.ConnectionType.QueuedConnection
     )
     # Same reasoning as above -- ObsMuteWatcher's callbacks (see
     # obs_link.py) fire from its own background connection thread.
