@@ -968,6 +968,11 @@ class ControlPanelWindow(QWidget):
             if label is not None:
                 label.setToolTip(widget.toolTip())
         state_section.body_layout.addLayout(state_form)
+        # See position_section's own comment below (Zoom vs. property_form)
+        # for why this matters: without it, whenever this section is given
+        # more splitter room than state_form actually needs, Qt spreads
+        # that leftover space into the layout instead of leaving it below.
+        state_section.body_layout.addStretch(1)
 
         self.talk_state.currentIndexChanged.connect(self._on_property_changed)
         self.blink_state.currentIndexChanged.connect(self._on_property_changed)
@@ -1072,6 +1077,7 @@ class ControlPanelWindow(QWidget):
             "Animation, to group them).",
         )
         motion_section.body_layout.addLayout(motion_form)
+        motion_section.body_layout.addStretch(1)
 
         # Position & Hierarchy and Animation live here, not on the
         # Sprites tab -- owner's request, 2026-09-17: both are per-sprite
@@ -1088,13 +1094,25 @@ class ControlPanelWindow(QWidget):
         # left out of self.property_form/self._per_sprite_widgets, so it
         # doesn't get reloaded or disabled as sprites are selected.
         #
-        # setContentsMargins(0, ...) matters once there's a second form
-        # stacked below it (self.property_form) -- each QFormLayout
-        # otherwise carries its own default margins, and two of them
-        # back to back double up into a visible gap between Zoom and
-        # Position X (owner's report, 2026-09-19: "since zoom was added
-        # it has a big gap under it"). Same fix _build_preview_controls
-        # already uses for its own single-form box.
+        # setContentsMargins(0, ...) -- same fix _build_preview_controls
+        # already uses for its own form box, so two forms stacked in one
+        # section don't each carry their own default margins on top of
+        # each other.
+        #
+        # The real cause of the owner's 2026-09-19 report ("since zoom
+        # was added it has a big gap under it") turned out to be a
+        # different, bigger thing than that margin doubling, confirmed
+        # from a follow-up screenshot after the margin fix alone didn't
+        # help: with two stacked layouts here (zoom_form, self.property_
+        # form below) and nothing telling Qt where to put leftover space,
+        # this section -- once it's the only or dominant thing expanded
+        # in the Behavior tab's splitter, so it's handed far more height
+        # than either form actually needs -- spread that surplus space
+        # *into* the layout (a visible gap between the two forms) instead
+        # of leaving it below both. The fix is the addStretch(1) after
+        # self.property_form, below -- same technique already used for
+        # the Sprites tab's Expressions section (see its own comment) and
+        # now applied to every section here for the same reason.
         zoom_form = QFormLayout()
         zoom_form.setContentsMargins(0, 0, 0, 0)
         self.zoom = ScrollSafeDoubleSpinBox()
@@ -1207,6 +1225,7 @@ class ControlPanelWindow(QWidget):
         scale_row.addWidget(self.scale_lock)
         self.property_form.addRow("Scale", scale_row)
         position_section.body_layout.addLayout(self.property_form)
+        position_section.body_layout.addStretch(1)
 
         animation_section = CollapsibleSection("Animation", collapsed=True)
         self.animation_form = QFormLayout()
@@ -1232,6 +1251,7 @@ class ControlPanelWindow(QWidget):
         self.animation_form.addRow("Anim speed (fps)", self.anim_speed)
         self.animation_form.addRow("Variant", self.variant)
         animation_section.body_layout.addLayout(self.animation_form)
+        animation_section.body_layout.addStretch(1)
 
         property_fields = (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo,
@@ -1324,6 +1344,7 @@ class ControlPanelWindow(QWidget):
             "How fast the mouth closes once the hold period ends.",
         )
         envelope_section.body_layout.addLayout(envelope_form)
+        envelope_section.body_layout.addStretch(1)
 
         obs_section = CollapsibleSection("OBS mute awareness")
         obs_form = QFormLayout()
@@ -1388,6 +1409,7 @@ class ControlPanelWindow(QWidget):
                 self._on_obs_mute_changed, Qt.ConnectionType.QueuedConnection
             )
         obs_section.body_layout.addLayout(obs_form)
+        obs_section.body_layout.addStretch(1)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -1456,6 +1478,13 @@ class ControlPanelWindow(QWidget):
             self._default_for(self.config.control_panel, "grid_spacing_px"), grid_tooltip,
         )
         display_section.body_layout.addLayout(canvas_form)
+        # See position_section's own comment (Behavior tab) for the real
+        # cause and why addStretch(1), not the margin fix above alone,
+        # is what actually closes the gap: confirmed from a follow-up
+        # screenshot showing the exact same "big gap between two stacked
+        # forms" symptom here too, once this became this tab's only
+        # section and so gets handed all its leftover splitter height.
+        display_section.body_layout.addStretch(1)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
