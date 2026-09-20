@@ -449,6 +449,53 @@ restored as their own coverage (mirroring what existed before the brief
 retirement above), the Parent-combo pre-selection fix, and Undo/Redo's
 new position/visibility.
 
+**2026-09-19, same-day follow-up: Guide/Ghost joined Undo/Redo in the
+mode row, the row's internal stretch removed, Behavior tab moved and
+given a header, sub-agent use restricted in CLAUDE.md.** Four items:
+  - **Guide and Ghost moved into the Live Preview/Edit Sprites row.**
+    Previously two more always-visible buttons in the bottom action bar;
+    both only ever affect the Edit canvas (grid/origin guides, ghosted
+    hidden layers), so they're now built alongside Undo/Redo in
+    `self.mode_row` instead, hidden outside Edit mode via the same
+    `_on_canvas_mode_toggled` visibility pattern.
+  - **The mode row's internal stretch removed.** Adding Undo/Redo
+    earlier the same day used `mode_row.addStretch(1)` (originally
+    placed after Reset Size/Reset Rotation, before Undo/Redo existed)
+    to push them to the row's far right, splitting the row into two
+    visually separate clusters. Owner's request: "put all the bars in
+    one row instead of splitting undo/redo off on their own now that
+    the bar will be pretty full" -- removed that stretch; a single
+    trailing one now goes at the very end, after Guide/Ghost, so all
+    seven buttons (mode toggle x2, Reset Size/Rotation, Undo, Redo,
+    Guide, Ghost) sit together as one left-aligned group.
+  - **Behavior tab moved to 2nd position (right after Sprites) and given
+    a header.** Previously 4th, after Costume/Expression Hotkeys. Also
+    added `self.behavior_header`, a `QLabel` at the top of the tab
+    reading "Editing layer: &lt;filename&gt;" (or "No layer selected…"
+    with nothing selected) -- kept in sync from `_select()`, the single
+    choke point every selection change already goes through. Hit the
+    same "plain QVBoxLayout centers/inflates a child with no explicit
+    max size" class of bug `_update_splitter_top_alignment` (see its own
+    2026-09-17 comment) already covers for the splitter below it, but
+    for a *new* reason: `setAlignment(header, AlignTop)` alone repositions
+    the header widget correctly but doesn't stop its *cell* from still
+    absorbing leftover vertical space when nothing else claims it,
+    pushing the splitter down with it (confirmed empirically: the header
+    widget's own rendered geometry was already a correct 17px tall, but
+    the splitter still landed ~330px down an otherwise-empty, all-
+    collapsed tab). Fixed with an explicit `QSizePolicy.Fixed` vertical
+    policy on the header instead, which caps the cell itself, not just
+    the widget inside it.
+  - **CLAUDE.md: sub-agent use restricted.** Owner's request: a hard
+    rule that sub-agents (the `Agent` tool) are for genuinely long-
+    running background tasks only, not a default way to delegate
+    routine reading/editing/investigation in this repo.
+484 tests (477 -> 484): Guide/Ghost visibility in the mode row, the
+row's single-trailing-stretch layout, the Behavior tab's new position
+and header (including the deselect/reselect text and the pre-existing
+"pegged to top" regression test, updated for the header's own height
+rather than an absolute page offset).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

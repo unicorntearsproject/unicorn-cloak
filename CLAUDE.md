@@ -115,13 +115,16 @@ same way secrets are treated: it never enters git.
 
 ## Git Conventions
 
-- Commit at the end of each meaningful iteration (a feature, a bug fix, a
-  documentation update) — not every single file edit, and never mid-edit
-  or before a claim (a perf fix, a bug fix) has been validated by running
-  the tests.
-- Only commit when asked, per the general default — this repo does not
-  carry the `obs` repo's "commit and push without waiting to be asked"
-  override; that was specific to `obs` being a live-state mirror.
+- **Commit (and push) after every substantial amount of work, without
+  waiting to be asked** — a feature, a bug fix, a documentation update.
+  Not every single file edit, and never mid-edit or before a claim (a
+  perf fix, a bug fix) has been validated by running the tests. This
+  repo now carries the same override the `obs` repo uses, reversing the
+  earlier "only commit when asked" default.
+- After pushing, confirm local `main` is actually in sync with
+  `origin/main` (`git status`/`git log` — no unpushed commits, no
+  divergence) before considering the iteration done, so the local
+  checkout a dev works from is never quietly behind what's on GitHub.
 - Commit with an imperative, ≤72-char subject and a body that says *why*,
   matching the existing log's style (`git log --oneline` for examples).
 - Never commit `settings.json`, `*.bak` files, `.venv/`, `__pycache__/`, or
@@ -142,15 +145,33 @@ No permission needed for:
 - Reading anything: `cat`, `grep`, `find`, `ls`, `git status/log/diff`,
   running the test suite, running the app.
 - Writing inside this repo (code, tests, docs) as part of an agreed task.
+- Committing and pushing to `origin` after a substantial amount of
+  validated work (see Git Conventions above) — no longer gated behind
+  asking first.
 
 Permission **is required** before:
 
 - Installing, updating, or removing a dependency (`pyproject.toml`,
   `requirements.txt`).
 - Any destructive git operation (see Git History Safety above).
-- Pushing to `origin`.
 - Deleting or overwriting `assets/unicorn-demo/` (the owner's authored
   demo avatar) or any file outside this repo.
+
+---
+
+## Sub-Agents (Hard Rule)
+
+- Do not spawn sub-agents (the `Agent` tool, or equivalent task-delegation
+  tools) for routine work in this repo — reading files, grepping,
+  targeted investigation, making edits, running tests. Do that work
+  directly, in the main conversation, so it stays visible and easy to
+  follow along with in real time.
+- Sub-agents are for genuinely long-running background tasks only —
+  something the owner explicitly wants kicked off to run independently
+  while other work continues, not a default way to parallelize or
+  offload exploration.
+- When in doubt, don't delegate — ask first rather than reaching for a
+  sub-agent as a shortcut.
 
 ---
 

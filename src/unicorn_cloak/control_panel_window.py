@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -826,7 +827,12 @@ class ControlPanelWindow(QWidget):
         mode_row.addWidget(self.reset_rotation_btn)
         self._per_sprite_widgets.extend((self.reset_size_btn, self.reset_rotation_btn))
 
-        mode_row.addStretch(1)
+        # The trailing stretch is added once, in _build_bottom_bar, after
+        # Undo/Redo/Guide/Ghost are appended below -- owner's request,
+        # 2026-09-19: keep this whole row as one contiguous group rather
+        # than a stretch splitting it into two clusters (which is what
+        # happened when Undo/Redo were first added here, pushed off to
+        # the far right on their own).
         canvas_layout.addLayout(mode_row)
 
         # --- Edit-mode preview-state controls (only meaningful in Edit
@@ -1129,10 +1135,14 @@ class ControlPanelWindow(QWidget):
 
     def _build_tabs(self, root: QVBoxLayout) -> None:
         self.tabs = QTabWidget()
+        # Behavior right after Sprites -- owner's request, 2026-09-19,
+        # since its Position & Hierarchy section is what most sprite
+        # edits actually land on, and it now carries a header naming the
+        # sprite currently selected (see _build_behavior_tab).
         self.tabs.addTab(self._build_sprites_tab(), "Sprites")
+        self.tabs.addTab(self._build_behavior_tab(), "Behavior")
         self.tabs.addTab(self._build_costumes_tab(), "Costume Hotkeys")
         self.tabs.addTab(self._build_expressions_tab(), "Expression Hotkeys")
-        self.tabs.addTab(self._build_behavior_tab(), "Behavior")
         self.tabs.addTab(self._build_audio_tab(), "Audio")
         self.tabs.addTab(self._build_application_tab(), "Application")
         root.addWidget(self.tabs, stretch=3)
@@ -1625,8 +1635,39 @@ class ControlPanelWindow(QWidget):
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
+        # Owner's request, 2026-09-19, alongside moving this tab to 2nd
+        # position (right after Sprites): a header naming which layer
+        # Position & Hierarchy/Animation below are actually editing --
+        # those sections only ever act on self._selected_id, but nothing
+        # on this tab itself said so, easy to lose track of after
+        # switching sprites on the Sprites tab and back. Kept updated
+        # from the single _select() choke point, not duplicated per
+        # section.
+        self.behavior_header = QLabel()
+        self.behavior_header.setObjectName("BehaviorHeader")
+        self._update_behavior_header(None)
+        # Fixed vertical size policy, not just AlignTop -- setAlignment()
+        # alone only repositions/clips the *widget* within whatever cell
+        # QVBoxLayout's own space-distribution math hands it, and with no
+        # maximumSize of its own a QLabel's cell can still be inflated
+        # with leftover space (confirmed empirically: the label's own
+        # rendered geometry stayed a correct 17px tall, but the splitter
+        # below it still landed ~330px down the page, i.e. after that
+        # inflated, mostly-empty cell). Fixed makes sizeHint() double as
+        # maximumSize, so the cell itself can't grow past one line of
+        # text -- caught by test_a_tab_that_starts_fully_collapsed_from_
+        # persisted_config_stays_pegged_to_top.
+        self.behavior_header.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        outer.addWidget(self.behavior_header)
         self._add_tab_splitter(outer, [motion_section, position_section, animation_section])
         return tab
+
+    def _update_behavior_header(self, sprite: Sprite | None) -> None:
+        if sprite is None:
+            self.behavior_header.setText("No layer selected — select one on the Sprites tab.")
+        else:
+            name = sprite.path.rsplit("/", 1)[-1]
+            self.behavior_header.setText(f"Editing layer: {name}")
 
     def _build_audio_tab(self) -> QWidget:
         envelope_section = CollapsibleSection("Envelope")
@@ -2009,7 +2050,10 @@ class ControlPanelWindow(QWidget):
         # the single biggest driver of this pane's minimum width
         # (measured, 2026-09-17: 1021px), which is exactly what forced
         # the canvas down to a sliver regardless of the splitter's
-        # requested ratio. Two rows roughly halves that.
+        # requested ratio. Two rows roughly halves that. Down to 7
+        # buttons across both rows as of 2026-09-19 (Undo/Redo/Guide/
+        # Ghost moved up into the mode row above), but still split the
+        # same way rather than second-guessing a measured decision.
         actions_row_1 = QHBoxLayout()
         actions_row_2 = QHBoxLayout()
 
@@ -2019,9 +2063,9 @@ class ControlPanelWindow(QWidget):
         self._redo_btn.setToolTip("Redo the last undone change (Ctrl+Shift+Z).")
         self._undo_btn.clicked.connect(self.undo)
         self._redo_btn.clicked.connect(self.redo)
-        # At the end of the Live Preview/Edit Sprites row, not here --
-        # owner's request, 2026-09-19 -- and only visible in Edit mode
-        # (see _on_canvas_mode_toggled), since Live Preview has nothing
+        # In the Live Preview/Edit Sprites row, not here -- owner's
+        # request, 2026-09-19 -- and only visible in Edit mode (see
+        # _on_canvas_mode_toggled), since Live Preview has nothing
         # editable to undo/redo from. self.mode_row was built earlier, in
         # _build_canvas_area, specifically so these buttons (which need
         # self.undo/self.redo to already exist) could still land there.
@@ -2110,7 +2154,11 @@ class ControlPanelWindow(QWidget):
 
         # Toggle buttons, not checkboxes with paragraph-long labels
         # (owner's request, 2026-09-17) -- the detail lives in the
-        # tooltip instead.
+        # tooltip instead. Moved into the Live Preview/Edit Sprites row
+        # (self.mode_row), not the bottom action bar, and hidden outside
+        # Edit mode -- owner's request, 2026-09-19: both only affect the
+        # Edit canvas, so they're meaningless in Live Preview, same
+        # reasoning as Reset Size/Reset Rotation and Undo/Redo above.
         self.guide_btn = QPushButton("Guide")
         self.guide_btn.setCheckable(True)
         self.guide_btn.setToolTip(
@@ -2120,7 +2168,7 @@ class ControlPanelWindow(QWidget):
             "default."
         )
         self.guide_btn.toggled.connect(self._on_guide_toggled)
-        actions_row_2.addWidget(self.guide_btn)
+        self.mode_row.addWidget(self.guide_btn)
 
         self.ghost_btn = QPushButton("Ghost")
         self.ghost_btn.setCheckable(True)
@@ -2131,7 +2179,8 @@ class ControlPanelWindow(QWidget):
             "which always renders them at true 0%. Off by default."
         )
         self.ghost_btn.toggled.connect(self._on_ghost_toggled)
-        actions_row_2.addWidget(self.ghost_btn)
+        self.mode_row.addWidget(self.ghost_btn)
+        self.mode_row.addStretch(1)
 
         actions_row_2.addStretch(1)
 
@@ -2886,6 +2935,7 @@ class ControlPanelWindow(QWidget):
         self.sprite_list.blockSignals(False)
 
         sprite = self.rig.by_id(sprite_id) if sprite_id is not None else None
+        self._update_behavior_header(sprite)
         if sprite is None:
             self._set_property_form_enabled(False)
         else:
@@ -3276,6 +3326,8 @@ class ControlPanelWindow(QWidget):
         self.reset_rotation_btn.setVisible(edit_mode)
         self._undo_btn.setVisible(edit_mode)
         self._redo_btn.setVisible(edit_mode)
+        self.guide_btn.setVisible(edit_mode)
+        self.ghost_btn.setVisible(edit_mode)
         if edit_mode:
             self.edit_view.refit_to_content()
         else:

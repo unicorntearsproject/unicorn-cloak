@@ -3,7 +3,7 @@ import math
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
 from PySide6.QtGui import QKeySequence, QMouseEvent, QWheelEvent
-from PySide6.QtWidgets import QApplication, QGraphicsItem, QGraphicsSceneMouseEvent
+from PySide6.QtWidgets import QApplication, QGraphicsItem, QGraphicsSceneMouseEvent, QSplitter
 
 from unicorn_cloak import control_panel_window as cpw_module
 from unicorn_cloak import motion
@@ -34,15 +34,17 @@ def test_panel_is_a_single_window_with_the_expected_object_name(qapp, tmp_path):
 
 
 def test_panel_has_the_six_expected_tabs_in_order(qapp, tmp_path):
+    # Behavior moved to 2nd position (right after Sprites), owner's
+    # request 2026-09-19, alongside adding its own "which layer" header.
     config, window, panel, _ = make_panel(tmp_path)
     titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
-    assert titles == ["Sprites", "Costume Hotkeys", "Expression Hotkeys", "Behavior", "Audio", "Application"]
+    assert titles == ["Sprites", "Behavior", "Costume Hotkeys", "Expression Hotkeys", "Audio", "Application"]
 
 
 def test_no_tab_has_more_than_three_collapsible_sections(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     for i in range(panel.tabs.count()):
-        splitter = panel.tabs.widget(i).layout().itemAt(0).widget()
+        splitter = panel.tabs.widget(i).findChild(QSplitter)
         assert splitter.count() <= 3
 
 
@@ -968,6 +970,34 @@ def test_parent_combo_is_populated_before_any_sprite_is_selected(qapp, tmp_path)
     assert panel.parent_combo.itemText(0) == "None (root)"
 
 
+# --- Behavior tab header (owner's request, 2026-09-19) -----------------------
+
+
+def test_behavior_header_shows_no_selection_by_default(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert "No layer selected" in panel.behavior_header.text()
+
+
+def test_behavior_header_names_the_selected_layer(qapp, tmp_path):
+    sprites = [Sprite(id=1, path="assets/mouth_open.png", image_data=make_test_png_bytes())]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    assert panel.behavior_header.text() == "Editing layer: mouth_open.png"
+
+
+def test_behavior_header_reverts_on_deselect(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel._select(None)
+    assert "No layer selected" in panel.behavior_header.text()
+
+
+def test_behavior_tab_is_second_right_after_sprites(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.tabs.tabText(0) == "Sprites"
+    assert panel.tabs.tabText(1) == "Behavior"
+
+
 # --- Rotation -----------------------------------------------------------------
 
 
@@ -1026,11 +1056,50 @@ def test_undo_redo_buttons_visible_in_edit_mode(qapp, tmp_path):
 def test_undo_redo_buttons_live_at_the_end_of_the_mode_row(qapp, tmp_path):
     # Owner's request: "put those buttons at the end of the preview/edit
     # row when in edit mode" -- rather than the bottom action bar they
-    # used to live in.
+    # used to live in. Guide/Ghost joined them there the same day, so
+    # this checks relative order among the trailing widgets rather than
+    # assuming Undo/Redo are the literal last two items (the row's own
+    # trailing stretch is the actual last item -- see
+    # test_mode_row_is_not_split_by_an_internal_stretch below).
+    config, window, panel, _ = make_panel(tmp_path)
+    widgets = [
+        panel.mode_row.itemAt(i).widget()
+        for i in range(panel.mode_row.count())
+        if panel.mode_row.itemAt(i).widget() is not None
+    ]
+    trailing = widgets[-4:]
+    assert trailing == [panel._undo_btn, panel._redo_btn, panel.guide_btn, panel.ghost_btn]
+
+
+def test_mode_row_is_not_split_by_an_internal_stretch(qapp, tmp_path):
+    # Owner's request, 2026-09-19: "put all the bars in one [row] instead
+    # of splitting undo/redo off on their own" -- the only stretch in
+    # this row must be the trailing one (after every button), not one
+    # in the middle pushing a subset of buttons off to the right.
     config, window, panel, _ = make_panel(tmp_path)
     count = panel.mode_row.count()
-    assert panel.mode_row.itemAt(count - 2).widget() is panel._undo_btn
-    assert panel.mode_row.itemAt(count - 1).widget() is panel._redo_btn
+    item_kinds = [panel.mode_row.itemAt(i).widget() is None for i in range(count)]
+    assert item_kinds.count(True) == 1  # exactly one spacer item
+    assert item_kinds[-1] is True  # and it's the last item
+
+
+# --- Guide / Ghost buttons (moved to the mode row, 2026-09-19) --------------
+
+
+def test_guide_and_ghost_buttons_hidden_in_live_preview(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.live_preview_btn.setChecked(True)
+    assert panel.guide_btn.isVisible() is False
+    assert panel.ghost_btn.isVisible() is False
+
+
+def test_guide_and_ghost_buttons_visible_in_edit_mode(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.edit_sprites_btn.setChecked(True)
+    assert panel.guide_btn.isVisible() is True
+    assert panel.ghost_btn.isVisible() is True
 
 
 def test_reset_size_and_rotation_buttons_disabled_with_nothing_selected(qapp, tmp_path):
@@ -1773,8 +1842,13 @@ def test_a_tab_that_starts_fully_collapsed_from_persisted_config_stays_pegged_to
     _switch_to_tab(panel, "Behavior")  # the actual switch is what exposes the bug
     qapp.processEvents()
 
+    # Threshold is relative to the Behavior tab's own header (added
+    # 2026-09-19, naming the layer being edited), not an absolute page
+    # offset -- the splitter is now expected to peg to just below that
+    # header rather than to y=0.
     splitter = _tab_splitter_for(panel, "Motion")
-    assert splitter.geometry().y() < 20
+    header_bottom = panel.behavior_header.geometry().bottom()
+    assert splitter.geometry().y() < header_bottom + 20
 
 
 def test_collapsing_every_section_stays_pegged_to_the_top_even_after_a_prior_expand(qapp, tmp_path):

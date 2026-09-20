@@ -156,6 +156,13 @@ def stylesheet() -> str:
         font-family: {FONT_DISPLAY};
         font-size: 14px;
     }}
+    QLabel#BehaviorHeader {{
+        color: {MAGENTA_500};
+        font-family: {FONT_DISPLAY};
+        font-size: 13px;
+        font-weight: 600;
+        padding: 2px 0 6px 0;
+    }}
     QPushButton#CollapsibleSectionHeader {{
         background-color: {INK_700};
         color: {MAGENTA_500};
