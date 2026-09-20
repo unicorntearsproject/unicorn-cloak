@@ -1,5 +1,7 @@
 import pytest
 from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import QApplication
 
 from unicorn_cloak import control_panel_window as cpw_module
 from unicorn_cloak import motion
@@ -301,7 +303,8 @@ def test_forcing_preview_expression_shows_the_matching_sprite(qapp, tmp_path):
 
 def test_canvas_defaults_to_live_preview(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
-    assert panel.canvas_mode_btn.isChecked() is False
+    assert panel.live_preview_btn.isChecked() is True
+    assert panel.edit_sprites_btn.isChecked() is False
     assert panel.canvas_stack.currentWidget() is panel.live_view
     assert panel.preview_controls.isVisible() is False
 
@@ -309,9 +312,9 @@ def test_canvas_defaults_to_live_preview(qapp, tmp_path):
 def test_toggling_canvas_mode_switches_to_edit_view(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     panel.show()
-    panel.canvas_mode_btn.setChecked(True)
+    panel.edit_sprites_btn.setChecked(True)
     assert panel.canvas_stack.currentWidget() is panel.edit_view
-    assert panel.canvas_mode_btn.text() == "Edit Sprites"
+    assert panel.live_preview_btn.isChecked() is False
     assert panel.preview_controls.isVisible() is True
 
 
@@ -541,7 +544,7 @@ def _show_application_tab(panel):
     panel.show()
     titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
     panel.tabs.setCurrentIndex(titles.index("Application"))
-    panel._sections["Display"].set_collapsed(False)
+    panel._sections["Display & Canvas"].set_collapsed(False)
 
 
 def test_selecting_image_background_shows_the_browse_button(qapp, tmp_path):
@@ -774,6 +777,63 @@ def test_reset_button_restores_the_default_value(qapp, tmp_path):
     assert panel.zoom.value() == 1.0
 
 
+# --- Zoom (moved from WindowConfig to AvatarRig 2026-09-19) -----------------
+
+
+def test_changing_zoom_writes_through_to_the_rig_and_render_window(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.zoom.setValue(2.0)
+    assert panel.rig.zoom == 2.0
+    assert window.zoom == 2.0
+    assert panel._dirty is True  # avatar-level state now, not an auto-saved Config field
+
+
+def test_zoom_change_is_undoable(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.zoom.setValue(2.0)
+    panel.undo()
+    assert panel.rig.zoom == 1.0
+    assert panel.zoom.value() == 1.0
+    assert window.zoom == 1.0
+
+    panel.redo()
+    assert panel.rig.zoom == 2.0
+    assert panel.zoom.value() == 2.0
+
+
+def test_dragging_zoom_continuously_pushes_only_one_undo_entry(qapp, tmp_path):
+    # Same lazy-undo pattern as continuous sprite-property edits
+    # (_undo_pending_for_selection) -- every valueChanged tick in one
+    # editing session must not flood the undo stack.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.zoom.setValue(1.5)
+    panel.zoom.setValue(2.0)
+    panel.zoom.setValue(2.5)
+    assert len(panel._undo_stack) == 1
+
+    panel._on_zoom_editing_finished()
+    panel.zoom.setValue(3.0)
+    assert len(panel._undo_stack) == 2
+
+
+def test_loading_a_different_avatar_syncs_zoom(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.persistence import save_avatar
+
+    config, window, panel, _ = make_panel(tmp_path)
+    other = AvatarRig(name="other", sprites=[Sprite(id=1, path="a.png")], zoom=3.0)
+    save_path = tmp_path / "other.uc"
+    save_avatar(other, save_path)
+
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(save_path), "")
+    )
+    panel._on_load()
+
+    assert panel.rig.zoom == 3.0
+    assert panel.zoom.value() == 3.0
+    assert window.zoom == 3.0
+
+
 # --- Expressions ------------------------------------------------------------
 
 
@@ -819,7 +879,7 @@ def test_filling_both_boxes_commits_the_costume_pair(qapp, tmp_path):
     assert panel.rig.by_id(2).costume_layers[2] is False
 
 
-def test_clearing_hide_box_on_a_committed_row_removes_it_and_reverts(qapp, tmp_path):
+def test_clearing_hide_box_on_a_committed_row_leaves_it_incomplete_and_reverts(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     panel._add_costume_row(2)
     row = panel._costume_rows[2][0]
@@ -828,7 +888,22 @@ def test_clearing_hide_box_on_a_committed_row_removes_it_and_reverts(qapp, tmp_p
     assert panel.rig.costume_assignments[2] == [(1, 2)]
 
     row.hide_combo.setCurrentIndex(row.hide_combo.findData(None))
-    assert panel._costume_rows[2] == []  # the row widget itself is gone
+    assert panel._costume_rows[2] == [row]  # clearing a box no longer deletes the row
+    assert panel.rig.costume_assignments[2] == []
+    assert panel.rig.by_id(1).costume_layers[2] is True  # reverted to visible
+    assert panel.rig.by_id(2).costume_layers[2] is True
+
+
+def test_removing_a_costume_row_via_its_button_reverts_and_deletes_it(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._add_costume_row(2)
+    row = panel._costume_rows[2][0]
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(1))
+    row.show_combo.setCurrentIndex(row.show_combo.findData(2))
+    assert panel.rig.costume_assignments[2] == [(1, 2)]
+
+    panel._on_remove_costume_row_clicked(2, row)
+    assert panel._costume_rows[2] == []
     assert panel.rig.costume_assignments[2] == []
     assert panel.rig.by_id(1).costume_layers[2] is True  # reverted to visible
     assert panel.rig.by_id(2).costume_layers[2] is True
@@ -904,12 +979,24 @@ def test_assigning_an_expression_hotkey_writes_through_to_the_rig(qapp, tmp_path
     assert panel.rig.expression_hotkeys[4] == [("Mouth", "Laughing")]
 
 
-def test_clearing_an_expression_hotkey_row_removes_it(qapp, tmp_path):
+def test_clearing_an_expression_hotkey_row_leaves_it_incomplete(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
     panel._add_expression_hotkey_row(4)
     row = panel._expression_hotkey_rows[4][0]
     row.combo.setCurrentIndex(panel._find_combo_index_by_data(row.combo, ("Mouth", "Laughing")))
     row.combo.setCurrentIndex(panel._find_combo_index_by_data(row.combo, None))
+    assert panel._expression_hotkey_rows[4] == [row]  # clearing no longer deletes the row
+    assert panel.rig.expression_hotkeys[4] == []
+
+
+def test_removing_an_expression_hotkey_row_via_its_button_deletes_it(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
+    panel._add_expression_hotkey_row(4)
+    row = panel._expression_hotkey_rows[4][0]
+    row.combo.setCurrentIndex(panel._find_combo_index_by_data(row.combo, ("Mouth", "Laughing")))
+    assert panel.rig.expression_hotkeys[4] == [("Mouth", "Laughing")]
+
+    panel._on_remove_expression_hotkey_row_clicked(4, row)
     assert panel._expression_hotkey_rows[4] == []
     assert panel.rig.expression_hotkeys[4] == []
 
@@ -927,6 +1014,51 @@ def test_triggering_an_expression_hotkey_clicks_its_button_and_forces_the_overri
     panel._trigger_expression_hotkey(4)  # press again -- toggles back off
     assert panel._expression_buttons[("Mouth", "Laughing")].isChecked() is False
     assert window.manual_overrides.get("Mouth") is None
+
+
+def test_triggering_a_costume_hotkey_sets_the_active_costume(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._trigger_costume_hotkey(3)
+    assert panel.rig.active_costume == 3
+
+
+def _focus_zoom_field(panel):
+    """Zoom lives in Behavior's Position & Hierarchy section, collapsed
+    by default -- setFocus() on a widget that isn't actually visible
+    silently fails (and some other, currently-visible widget keeps
+    focus instead), so both the tab and the section need opening first."""
+    _switch_to_tab(panel, "Behavior")
+    panel._sections["Position & Hierarchy"].set_collapsed(False)
+    panel.zoom.setFocus()
+    QApplication.processEvents()
+
+
+def test_costume_hotkey_is_skipped_while_an_input_widget_is_focused(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _focus_zoom_field(panel)
+    assert isinstance(QApplication.focusWidget(), type(panel.zoom))
+    panel._trigger_costume_hotkey(3)
+    assert panel.rig.active_costume == 0  # unchanged
+
+
+def test_expression_hotkey_is_skipped_while_an_input_widget_is_focused(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path, rig=_make_manual_expression_rig())
+    panel.rig.assign_expression_hotkey(4, "Mouth", "Laughing")
+    panel._rebuild_costume_and_expression_editors()
+    panel.show()
+    _focus_zoom_field(panel)
+
+    panel._trigger_expression_hotkey(4)
+    assert panel._expression_buttons[("Mouth", "Laughing")].isChecked() is False
+    assert window.manual_overrides.get("Mouth") is None
+
+
+def test_rebinding_a_costume_key_updates_its_control_panel_shortcut(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    edit = panel._hotkey_edits[3]
+    edit.setKeySequence(QKeySequence("k"))
+    assert panel._costume_shortcuts[3].key() == QKeySequence("k")
 
 
 def test_expression_hotkey_shortcut_matches_shift_plus_digit(qapp, tmp_path):
@@ -955,7 +1087,7 @@ def test_rebuilding_the_scene_repopulates_costume_and_expression_rows(qapp, tmp_
 
 def test_ui_state_round_trips_through_config(qapp, tmp_path):
     config, window, panel, state_path = make_panel(tmp_path)
-    panel.canvas_mode_btn.setChecked(True)
+    panel.edit_sprites_btn.setChecked(True)
     panel.guide_btn.setChecked(True)
     panel.tabs.setCurrentIndex(2)
     panel._sections["Layer List"].set_collapsed(True)
@@ -979,7 +1111,8 @@ def test_persisted_ui_state_is_applied_on_construction(qapp, tmp_path):
     window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
     panel = ControlPanelWindow(rig, config, window, state_path=tmp_path / "settings.json")
 
-    assert panel.canvas_mode_btn.isChecked() is True
+    assert panel.edit_sprites_btn.isChecked() is True
+    assert panel.live_preview_btn.isChecked() is False
     assert panel.guide_btn.isChecked() is True
     assert panel.ghost_btn.isChecked() is True
     assert panel.tabs.currentIndex() == 1

@@ -1,7 +1,10 @@
-edit sprite / live preview (side by side, active one highlighted)
-section titles jumping
-content rows not packing
-costumes/expressions hotkeys
+expressions pane - when expanded rows are centered
+position & heirarchy pane - since zoom was added it has a big gap under it before the other rows
+application tab - few options, only need one content area
+zoom setting
+    this should apply avatar level not application level
+costumes/expressions hotkeys don't seem to be working properly
 layer list jumps around when moving sprites up/down
+show/hide labels in costumes seem backwards
 
 ~                                                                

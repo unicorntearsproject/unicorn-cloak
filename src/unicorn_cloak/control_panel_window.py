@@ -45,6 +45,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -112,6 +113,18 @@ _BACKGROUND_LABELS = {
     "image": "Image (choose a file below)",
     "video": "Video, looping (choose a file below)",
 }
+
+
+def _is_input_widget_focused() -> bool:
+    """True while the focused widget is something the user is typing or
+    picking into -- costume/expression hotkeys must not steal a digit or
+    Shift+digit keypress from these (owner's request, 2026-09-19: "only
+    if no input field is focused of course"), since both hotkey sets now
+    also fire while the Control Panel has focus, which is full of exactly
+    these widgets (State Assignment's editable combos, the costume/
+    expression sprite pickers, the costume key-capture boxes themselves)."""
+    widget = QApplication.focusWidget()
+    return isinstance(widget, (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QKeySequenceEdit))
 
 
 def _eye_icon(visible: bool) -> QIcon:
@@ -432,6 +445,7 @@ class ControlPanelWindow(QWidget):
         self._selected_id: int | None = None
         self._updating_form = False
         self._undo_pending_for_selection = False
+        self._zoom_undo_pending = True
         self._undo_stack: list[list[Sprite]] = []
         self._redo_stack: list[list[Sprite]] = []
         self._help_window: HelpWindow | None = None
@@ -549,17 +563,32 @@ class ControlPanelWindow(QWidget):
         canvas_layout.setContentsMargins(8, 8, 8, 8)
 
         mode_row = QHBoxLayout()
-        self.canvas_mode_btn = QPushButton("Live Preview")
-        self.canvas_mode_btn.setCheckable(True)
-        self.canvas_mode_btn.setToolTip(
+        # Two side-by-side mode buttons, not one button whose label swaps
+        # (owner's request, 2026-09-19: "side by side, active one
+        # highlighted") -- a QButtonGroup gives the usual radio-style
+        # exclusivity, and QPushButton:checked (theme.py) already renders
+        # the active one highlighted for free.
+        mode_tooltip = (
             "Live Preview mirrors the real Render Window -- reacts to your\n"
             "actual mic and blinking, read-only. Edit Sprites is the\n"
             "interactive canvas -- drag sprites to position them, driven by\n"
             "the Preview state controls below instead of live audio.\n"
             "Neither view is captured by OBS; only the Render Window is."
         )
-        self.canvas_mode_btn.toggled.connect(self._on_canvas_mode_toggled)
-        mode_row.addWidget(self.canvas_mode_btn)
+        self.live_preview_btn = QPushButton("Live Preview")
+        self.live_preview_btn.setCheckable(True)
+        self.live_preview_btn.setChecked(True)
+        self.live_preview_btn.setToolTip(mode_tooltip)
+        self.edit_sprites_btn = QPushButton("Edit Sprites")
+        self.edit_sprites_btn.setCheckable(True)
+        self.edit_sprites_btn.setToolTip(mode_tooltip)
+        self._canvas_mode_group = QButtonGroup(self)
+        self._canvas_mode_group.setExclusive(True)
+        self._canvas_mode_group.addButton(self.live_preview_btn)
+        self._canvas_mode_group.addButton(self.edit_sprites_btn)
+        self.edit_sprites_btn.toggled.connect(self._on_canvas_mode_toggled)
+        mode_row.addWidget(self.live_preview_btn)
+        mode_row.addWidget(self.edit_sprites_btn)
         mode_row.addStretch(1)
         canvas_layout.addLayout(mode_row)
 
@@ -964,6 +993,14 @@ class ControlPanelWindow(QWidget):
         self._expressions_placeholder.setToolTip(self._expressions_placeholder.text())
         self._refresh_expressions_section()
         expressions_section.body_layout.addLayout(self._expressions_layout)
+        # Without this, the section's own QVBoxLayout has nothing to
+        # absorb extra vertical space once expanded -- with only a
+        # handful of toggle buttons (or the placeholder label), Qt
+        # centers that lone child in the leftover space instead of
+        # pinning it to the top (owner's report, 2026-09-19: "when
+        # expanded rows are centered"). A trailing stretch gives that
+        # extra space somewhere else to go.
+        expressions_section.body_layout.addStretch(1)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
@@ -1050,27 +1087,39 @@ class ControlPanelWindow(QWidget):
         # like everything else below -- its own QFormLayout, deliberately
         # left out of self.property_form/self._per_sprite_widgets, so it
         # doesn't get reloaded or disabled as sprites are selected.
+        #
+        # setContentsMargins(0, ...) matters once there's a second form
+        # stacked below it (self.property_form) -- each QFormLayout
+        # otherwise carries its own default margins, and two of them
+        # back to back double up into a visible gap between Zoom and
+        # Position X (owner's report, 2026-09-19: "since zoom was added
+        # it has a big gap under it"). Same fix _build_preview_controls
+        # already uses for its own single-form box.
         zoom_form = QFormLayout()
+        zoom_form.setContentsMargins(0, 0, 0, 0)
         self.zoom = ScrollSafeDoubleSpinBox()
         self.zoom.setRange(0.1, 5.0)
         self.zoom.setSingleStep(0.05)
         self.zoom.setDecimals(2)
-        self.zoom.setValue(self.config.window.zoom)
+        self.zoom.setValue(self.rig.zoom)
         zoom_tooltip = (
             "Scales the whole avatar bigger/smaller within the Render\n"
             "Window, around its own center -- doesn't change the window's\n"
             "own size, and applies no matter which sprite (if any) is\n"
-            "selected below. 1.0 = normal size."
+            "selected below. 1.0 = normal size. Saved with the avatar, not\n"
+            "the app -- different avatars can each have their own zoom."
         )
         self.zoom.setToolTip(zoom_tooltip)
         self.zoom.valueChanged.connect(self._on_zoom_changed)
+        self.zoom.editingFinished.connect(self._on_zoom_editing_finished)
         self._add_row_with_reset_and_lock(
             zoom_form, "Zoom (whole avatar)", self.zoom,
-            self._default_for(self.config.window, "zoom"), zoom_tooltip,
+            self._default_for(self.rig, "zoom"), zoom_tooltip,
         )
         position_section.body_layout.addLayout(zoom_form)
 
         self.property_form = QFormLayout()
+        self.property_form.setContentsMargins(0, 0, 0, 0)
         self.pos_x = self._spin(-4000, 4000)
         self.pos_y = self._spin(-4000, 4000)
         self.offset_x = self._spin(-4000, 4000)
@@ -1346,8 +1395,14 @@ class ControlPanelWindow(QWidget):
         return tab
 
     def _build_application_tab(self) -> QWidget:
-        display_section = CollapsibleSection("Display")
+        # One section, not two -- Zoom moved out to Behavior's Position &
+        # Hierarchy (see there) and Grid spacing is a single row, so
+        # "Display" and "Canvas" as separate collapsible headers left
+        # each holding almost nothing (owner's report, 2026-09-19: "few
+        # options, only need one content area").
+        display_section = CollapsibleSection("Display & Canvas")
         display_form = QFormLayout()
+        display_form.setContentsMargins(0, 0, 0, 0)
         self.background = QComboBox()
         for mode in BACKGROUND_COLORS:
             self.background.addItem(_BACKGROUND_LABELS.get(mode, mode), mode)
@@ -1384,8 +1439,8 @@ class ControlPanelWindow(QWidget):
         self._update_background_controls_visible()
         display_section.body_layout.addLayout(display_form)
 
-        canvas_section = CollapsibleSection("Canvas")
         canvas_form = QFormLayout()
+        canvas_form.setContentsMargins(0, 0, 0, 0)
         self.grid_spacing = ScrollSafeSpinBox()
         self.grid_spacing.setRange(10, 1000)
         grid_tooltip = (
@@ -1400,11 +1455,11 @@ class ControlPanelWindow(QWidget):
             canvas_form, "Grid spacing (px)", self.grid_spacing,
             self._default_for(self.config.control_panel, "grid_spacing_px"), grid_tooltip,
         )
-        canvas_section.body_layout.addLayout(canvas_form)
+        display_section.body_layout.addLayout(canvas_form)
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        self._add_tab_splitter(outer, [display_section, canvas_section])
+        self._add_tab_splitter(outer, [display_section])
         return tab
 
     def _build_costumes_tab(self) -> QWidget:
@@ -1448,12 +1503,14 @@ class ControlPanelWindow(QWidget):
             edit.setMaximumSequenceLength(1)
             edit.setKeySequence(QKeySequence(key_text))
             edit.setToolTip(
-                "Press a key to switch to this costume slot -- only while\n"
-                "the Render Window has keyboard focus. Escape can't be\n"
-                "bound here -- it always quits the app, no matter what.\n"
-                "Avoid reusing the same key on two slots -- only the first\n"
-                "matching slot fires. Modifiers (Ctrl/Alt/Shift) aren't\n"
-                "distinguished from the plain key."
+                "Press a key to switch to this costume slot -- works while\n"
+                "either the Render Window or this Control Panel has\n"
+                "keyboard focus (skipped here while a text/combo/key-capture\n"
+                "field is itself focused, so it never steals your typing).\n"
+                "Escape can't be bound here -- it always quits the app, no\n"
+                "matter what. Avoid reusing the same key on two slots --\n"
+                "only the first matching slot fires. Modifiers (Ctrl/Alt/\n"
+                "Shift) aren't distinguished from the plain key."
             )
             edit.keySequenceChanged.connect(self._hotkey_setter(slot, edit))
             self._hotkey_edits.append(edit)
@@ -1462,8 +1519,8 @@ class ControlPanelWindow(QWidget):
 
             add_btn = QPushButton("+ Add swap")
             add_btn.setToolTip(
-                "Pick two sprites: the left one starts hidden and this\n"
-                "costume shows it; the right one starts shown and this\n"
+                "Pick two sprites: the top one starts hidden and this\n"
+                "costume shows it; the bottom one starts shown and this\n"
                 "costume hides it. Add more than one pair to swap several\n"
                 "sprites at once (e.g. both halves of a hoodie for a vest)."
             )
@@ -1595,15 +1652,36 @@ class ControlPanelWindow(QWidget):
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo)
 
         # Expression hotkeys, owner's request, 2026-09-17: "shift+<number>"
-        # -- fixed, not user-remappable (unlike costume_keys), and scoped
-        # to this window (fires while the Control Panel has focus, not
-        # the Render Window) since that's already where Expressions are
-        # configured and toggled today.
+        # -- fixed, not user-remappable (unlike costume_keys), scoped to
+        # this window (fires while the Control Panel has focus, not the
+        # Render Window) since that's already where Expressions are
+        # configured and toggled today. Guarded against a focused text/
+        # combo/key-capture field inside _trigger_expression_hotkey.
         for slot, label in enumerate(EXPRESSION_HOTKEY_LABELS):
             QShortcut(
                 QKeySequence(f"Shift+{label}"), self,
                 activated=lambda s=slot: self._trigger_expression_hotkey(s),
             )
+
+        # Costume hotkeys, added here 2026-09-19 -- previously these only
+        # worked while the Render Window had focus, while Expression
+        # hotkeys (above) only worked here, so testing both together
+        # always left one set looking broken depending on which window
+        # was focused (owner's report: "costumes/expressions hotkeys
+        # don't seem to be working properly"). render.py's own
+        # keyPressEvent handling is untouched -- this is purely additive,
+        # a second place the same keys now also work. Unlike Expression
+        # hotkeys these are remappable, so each slot's QShortcut is kept
+        # around in self._costume_shortcuts and updated live by
+        # _hotkey_setter on a rebind, the same way render.py's own
+        # keyPressEvent resolves config.hotkeys.costume_keys fresh.
+        self._costume_shortcuts: list[QShortcut] = [
+            QShortcut(
+                QKeySequence(key_text), self,
+                activated=lambda s=slot: self._trigger_costume_hotkey(s),
+            )
+            for slot, key_text in enumerate(self.config.hotkeys.costume_keys[:NUM_COSTUMES])
+        ]
 
         help_btn = QPushButton("Help")
         help_btn.setToolTip("Open the full reference: hotkeys, sprite fields, file format, workflow.")
@@ -1787,6 +1865,11 @@ class ControlPanelWindow(QWidget):
             keys = list(self.config.hotkeys.costume_keys)
             keys[slot] = sequence.toString()
             self.config.hotkeys.costume_keys = tuple(keys)
+            # Keeps this slot's Control Panel QShortcut (see __init__)
+            # in sync -- render.py needs no equivalent update since it
+            # resolves costume_keys fresh on every keypress instead of
+            # holding a QShortcut of its own.
+            self._costume_shortcuts[slot].setKey(sequence)
             self._save_config()
 
         return on_change
@@ -1800,7 +1883,7 @@ class ControlPanelWindow(QWidget):
         self._redo_stack.clear()
         self._update_undo_redo_buttons()
 
-    def _snapshot(self) -> tuple[list[Sprite], list[list[tuple[int, int]]], list[list[tuple[str, str]]]]:
+    def _snapshot(self) -> tuple[list[Sprite], list[list[tuple[int, int]]], list[list[tuple[str, str]]], float]:
         # costume_assignments/expression_hotkeys ride along in the same
         # snapshot as the sprites, added 2026-09-17 -- otherwise undoing a
         # sprite edit that happens to also revert a sprite's
@@ -1811,21 +1894,30 @@ class ControlPanelWindow(QWidget):
         # lists of tuples; a shallow copy of the outer list would still
         # share (and let this snapshot silently mutate alongside) the
         # per-slot inner lists.
+        #
+        # zoom joined 2026-09-19 when it moved from WindowConfig to here
+        # (see AvatarRig.zoom) -- same reasoning: it's rig state now, so
+        # leaving it out of the snapshot would silently break Undo for it.
         return (
             [copy.copy(s) for s in self.rig.sprites],
             copy.deepcopy(self.rig.costume_assignments),
             copy.deepcopy(self.rig.expression_hotkeys),
+            self.rig.zoom,
         )
 
-    def _restore(self, snapshot: tuple[list[Sprite], list[list[tuple[int, int]]], list[list[tuple[str, str]]]]) -> None:
-        sprites, costume_assignments, expression_hotkeys = snapshot
+    def _restore(
+        self, snapshot: tuple[list[Sprite], list[list[tuple[int, int]]], list[list[tuple[str, str]]], float]
+    ) -> None:
+        sprites, costume_assignments, expression_hotkeys, zoom = snapshot
         self.rig.sprites = [copy.copy(s) for s in sprites]
         self.rig.costume_assignments = copy.deepcopy(costume_assignments)
         self.rig.expression_hotkeys = copy.deepcopy(expression_hotkeys)
+        self.rig.zoom = zoom
         self._rebuild_scene()
         self._rebuild_list()
         self._select(None)
         self._mark_dirty()
+        self._sync_zoom_controls()
         self.render_window.rebuild()
 
     def undo(self) -> None:
@@ -1947,8 +2039,11 @@ class ControlPanelWindow(QWidget):
         cp = self.config.control_panel
         self.guide_btn.setChecked(cp.show_origin_guides)
         self.ghost_btn.setChecked(cp.show_hidden_ghosted)
-        self.canvas_mode_btn.setChecked(cp.canvas_mode == "edit")
-        self._on_canvas_mode_toggled(self.canvas_mode_btn.isChecked())
+        if cp.canvas_mode == "edit":
+            self.edit_sprites_btn.setChecked(True)
+        else:
+            self.live_preview_btn.setChecked(True)
+        self._on_canvas_mode_toggled(self.edit_sprites_btn.isChecked())
         self.scale_lock.setChecked(cp.scale_lock_proportions)
         self.tabs.setCurrentIndex(min(cp.active_tab, self.tabs.count() - 1))
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -2071,7 +2166,7 @@ class ControlPanelWindow(QWidget):
         cp.width = self.width()
         cp.height = self.height()
         cp.active_tab = self.tabs.currentIndex()
-        cp.canvas_mode = "edit" if self.canvas_mode_btn.isChecked() else "live_preview"
+        cp.canvas_mode = "edit" if self.edit_sprites_btn.isChecked() else "live_preview"
         cp.show_origin_guides = self.guide_btn.isChecked()
         cp.show_hidden_ghosted = self.ghost_btn.isChecked()
         cp.scale_lock_proportions = self.scale_lock.isChecked()
@@ -2658,6 +2753,17 @@ class ControlPanelWindow(QWidget):
         body = "\n\n".join(f"• {issue.message}" for issue in issues)
         QMessageBox.warning(self, "Check for Issues", body)
 
+    def _sync_zoom_controls(self) -> None:
+        """Reflects self.rig.zoom (just changed by a load/hot-reload, not
+        by the spinbox itself) into the Zoom spinbox and the live Render
+        Window. blockSignals so this doesn't loop back into
+        _on_zoom_changed and push a spurious undo entry."""
+        self.zoom.blockSignals(True)
+        self.zoom.setValue(self.rig.zoom)
+        self.zoom.blockSignals(False)
+        if self.render_window is not None:
+            self.render_window.set_zoom(self.rig.zoom)
+
     def refresh_after_external_change(self) -> None:
         """For hot reload (see hot_reload.py) -- the save file or a
         sprite's source PNG changed on disk outside this app entirely.
@@ -2669,6 +2775,7 @@ class ControlPanelWindow(QWidget):
         self._select(None)
         self._refresh_preview_expression_combo()
         self._refresh_expressions_section()
+        self._sync_zoom_controls()
         self.render_window.rebuild()
 
     def _on_load(self) -> None:
@@ -2682,6 +2789,7 @@ class ControlPanelWindow(QWidget):
         self.rig.name = loaded.name
         self.rig.sprites = loaded.sprites
         self.rig.active_costume = loaded.active_costume
+        self.rig.zoom = loaded.zoom
         self._current_avatar_path = path
         self.config.avatar_path = path
         self._dirty = False
@@ -2691,6 +2799,7 @@ class ControlPanelWindow(QWidget):
         self._select(None)
         self._refresh_preview_expression_combo()
         self._refresh_expressions_section()
+        self._sync_zoom_controls()
         self._save_config()
         self.render_window.rebuild()
 
@@ -2699,7 +2808,6 @@ class ControlPanelWindow(QWidget):
     # =====================================================================
 
     def _on_canvas_mode_toggled(self, edit_mode: bool) -> None:
-        self.canvas_mode_btn.setText("Edit Sprites" if edit_mode else "Live Preview")
         self.canvas_stack.setCurrentWidget(self.edit_view if edit_mode else self.live_view)
         self.preview_controls.setVisible(edit_mode)
         if edit_mode:
@@ -2934,9 +3042,20 @@ class ControlPanelWindow(QWidget):
         self._save_config()
 
     def _on_zoom_changed(self, value: float) -> None:
-        self.config.window.zoom = value
+        # Lazy, once-per-editing-session undo push -- same pattern
+        # _on_property_changed uses for continuous sprite fields (see
+        # _undo_pending_for_selection), so dragging/scrolling this spinbox
+        # doesn't flood the undo stack with one entry per tick.
+        if self._zoom_undo_pending:
+            self.push_undo_snapshot()
+            self._zoom_undo_pending = False
+        self.rig.zoom = value
+        self._mark_dirty()
         if self.render_window is not None:
             self.render_window.set_zoom(value)
+
+    def _on_zoom_editing_finished(self) -> None:
+        self._zoom_undo_pending = True
         self._save_config()
 
     # =====================================================================
@@ -3004,11 +3123,11 @@ class ControlPanelWindow(QWidget):
     #     forcing a state already suppresses its own group's automatic
     #     siblings (see render.py's manual-override handling).
     # A row only becomes a real, committed assignment once it's fully
-    # filled in; clearing any part of an already-committed row removes it
-    # instead -- generalizes the owner's own described deletion gesture
-    # ("not assigning to first box but assigning the second box will
-    # simply remove the item") to "any incomplete row isn't a real
-    # assignment anymore," which also covers clearing the *other* box.
+    # filled in -- clearing a combo back to "—" just leaves it incomplete,
+    # it does not remove the row. Removal is its own explicit "−" button
+    # on each row (owner's report, 2026-09-19: the previous "clearing a
+    # box removes the row" gesture "doesn't work lol" -- not discoverable,
+    # replaced with simple +/− buttons instead).
 
     def _sprite_label(self, sprite: Sprite) -> str:
         name = sprite.path.rsplit("/", 1)[-1]
@@ -3055,9 +3174,22 @@ class ControlPanelWindow(QWidget):
         self._populate_costume_sprite_combo(show_combo, show_id)
         hide_combo.setToolTip("Hidden by default -- shown while this costume is active.")
         show_combo.setToolTip("Shown by default -- hidden while this costume is active.")
-        hide_row.addWidget(QLabel("Hide"))
+        # Labels name what this costume *does* to the picked sprite, not
+        # its default state -- "Hide" under hide_combo read backwards
+        # (owner's report, 2026-09-19: "show/hide labels in costumes seem
+        # backwards"): hide_combo's sprite is the one this costume SHOWS
+        # (it's hidden everywhere else), and show_combo's sprite is the
+        # one this costume HIDES (shown everywhere else). Only the labels
+        # swap here -- hide_combo/show_combo and the underlying
+        # hide_id/show_id data (see assign_costume_pair) keep their
+        # existing, correct meaning.
+        remove_btn = QPushButton("−")
+        remove_btn.setFixedWidth(28)
+        remove_btn.setToolTip("Remove this swap.")
+        hide_row.addWidget(QLabel("Show"))
         hide_row.addWidget(hide_combo, 1)
-        show_row.addWidget(QLabel("Show"))
+        hide_row.addWidget(remove_btn)
+        show_row.addWidget(QLabel("Hide"))
         show_row.addWidget(show_combo, 1)
         row_layout.addLayout(hide_row)
         row_layout.addLayout(show_row)
@@ -3066,6 +3198,7 @@ class ControlPanelWindow(QWidget):
         row.committed = (hide_id, show_id) if hide_id is not None and show_id is not None else None
         hide_combo.currentIndexChanged.connect(lambda _checked=False, s=slot, r=row: self._on_costume_row_changed(s, r))
         show_combo.currentIndexChanged.connect(lambda _checked=False, s=slot, r=row: self._on_costume_row_changed(s, r))
+        remove_btn.clicked.connect(lambda _checked=False, s=slot, r=row: self._on_remove_costume_row_clicked(s, r))
         return row
 
     def _add_costume_row(self, slot: int, hide_id: int | None = None, show_id: int | None = None) -> None:
@@ -3095,11 +3228,12 @@ class ControlPanelWindow(QWidget):
         self.push_undo_snapshot()
         hide_id = row.hide_combo.currentData()
         show_id = row.show_combo.currentData()
-        now_complete = hide_id is not None and show_id is not None
-        if row.committed is not None and not now_complete:
-            self._remove_costume_row(slot, row)
-        else:
-            row.committed = (hide_id, show_id) if now_complete else None
+        row.committed = (hide_id, show_id) if hide_id is not None and show_id is not None else None
+        self._resync_costume_slot(slot)
+
+    def _on_remove_costume_row_clicked(self, slot: int, row: QWidget) -> None:
+        self.push_undo_snapshot()
+        self._remove_costume_row(slot, row)
         self._resync_costume_slot(slot)
 
     def _resync_costume_slot(self, slot: int) -> None:
@@ -3142,11 +3276,16 @@ class ControlPanelWindow(QWidget):
             "on, exactly like clicking its button in the Sprites tab's\n"
             "Expressions section (they share the same live state)."
         )
+        remove_btn = QPushButton("−")
+        remove_btn.setFixedWidth(28)
+        remove_btn.setToolTip("Remove this hotkey assignment.")
         row_layout.addWidget(QLabel("Force"))
         row_layout.addWidget(combo, 1)
+        row_layout.addWidget(remove_btn)
         row.combo = combo
         row.committed = pair
         combo.currentIndexChanged.connect(lambda _checked=False, s=slot, r=row: self._on_expression_hotkey_row_changed(s, r))
+        remove_btn.clicked.connect(lambda _checked=False, s=slot, r=row: self._on_remove_expression_hotkey_row_clicked(s, r))
         return row
 
     def _add_expression_hotkey_row(self, slot: int, pair: tuple[str, str] | None = None) -> None:
@@ -3170,11 +3309,12 @@ class ControlPanelWindow(QWidget):
 
     def _on_expression_hotkey_row_changed(self, slot: int, row: QWidget) -> None:
         self.push_undo_snapshot()
-        value = row.combo.currentData()
-        if row.committed is not None and value is None:
-            self._remove_expression_hotkey_row(slot, row)
-        else:
-            row.committed = value
+        row.committed = row.combo.currentData()
+        self._resync_expression_hotkey_slot(slot)
+
+    def _on_remove_expression_hotkey_row_clicked(self, slot: int, row: QWidget) -> None:
+        self.push_undo_snapshot()
+        self._remove_expression_hotkey_row(slot, row)
         self._resync_expression_hotkey_slot(slot)
 
     def _resync_expression_hotkey_slot(self, slot: int) -> None:
@@ -3205,10 +3345,20 @@ class ControlPanelWindow(QWidget):
         the buttons' own existing toggle handler (_make_expression_toggle_
         handler) rather than duplicating its group-exclusivity logic, so
         a hotkey press and a real click always stay in sync."""
+        if _is_input_widget_focused():
+            return
         for group, state in self.rig.expression_hotkeys[slot]:
             btn = self._expression_buttons.get((group, state))
             if btn is not None:
                 btn.click()
+
+    def _trigger_costume_hotkey(self, slot: int) -> None:
+        """Plain 1-9,0 (see the QShortcut wiring in __init__) -- same
+        effect as render.py's own keyPressEvent handling for these keys,
+        just triggerable from the Control Panel too."""
+        if _is_input_widget_focused():
+            return
+        self.rig.active_costume = slot
 
     def _rebuild_costume_and_expression_editors(self) -> None:
         """Full rebuild from rig.costume_assignments/expression_hotkeys --

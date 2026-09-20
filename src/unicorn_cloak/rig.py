@@ -223,6 +223,14 @@ class AvatarRig:
     sprites: list[Sprite] = field(default_factory=list)
     active_costume: int = 0  # index into costume_layers, 0-based
 
+    # Whole-avatar render scale (see render.py's RenderWindow.set_zoom).
+    # Moved here from the app-wide WindowConfig 2026-09-19 (owner's
+    # report: "this should apply avatar level not application level") --
+    # how big an avatar renders is a property of that avatar, not of the
+    # machine it's running on, so it travels with the .uc file like
+    # everything else in this class rather than living in settings.json.
+    zoom: float = 1.0
+
     # Explicit (hide_sprite_id, show_sprite_id) pairs assigned to each
     # costume hotkey slot -- an *authoring* convenience only (see
     # control_panel_window.py's costume editor). Adding a pair also writes

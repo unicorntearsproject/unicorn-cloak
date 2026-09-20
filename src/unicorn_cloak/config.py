@@ -45,17 +45,30 @@ DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "settings.json"
 # owner never hand-edits or is shown a message about -- migrations here
 # are silent, applied on load, before _merge ever sees the dict.
 _CONFIG_VERSION_KEY = "__config_version__"
-CURRENT_CONFIG_VERSION = 1
+CURRENT_CONFIG_VERSION = 2
 
 # One entry per version bump: raw settings dict at that version -> raw
 # dict at version + 1. _migrate_raw_config applies them in sequence, so a
 # file several versions behind still gets every intermediate step, not
-# just the latest. Empty for now -- there's no structural difference
-# between version 0 and 1 yet, only the new stamp itself (exactly like
-# CURRENT_FORMAT_VERSION's own introduction in persistence.py). Add an
-# entry here (keyed by the version it migrates *from*) the day a real
-# structural change needs one.
-_CONFIG_MIGRATIONS: dict[int, Callable[[dict], dict]] = {}
+# just the latest.
+
+
+def _migrate_window_zoom_to_avatar(raw: dict) -> dict:
+    """v1 -> v2, 2026-09-19: WindowConfig.zoom moved to AvatarRig.zoom
+    (see that field's own comment in rig.py) -- strip it from an old
+    settings.json's window block so _merge doesn't reject it as an
+    unknown WindowConfig field. The value itself isn't carried over: a
+    per-machine setting standing in for what's now a per-avatar one, and
+    the avatar file's own zoom (defaulting to 1.0) takes over from here."""
+    window = raw.get("window")
+    if isinstance(window, dict):
+        window.pop("zoom", None)
+    return raw
+
+
+_CONFIG_MIGRATIONS: dict[int, Callable[[dict], dict]] = {
+    1: _migrate_window_zoom_to_avatar,
+}
 
 
 def _migrate_raw_config(raw: dict) -> dict:
@@ -175,10 +188,8 @@ class WindowConfig:
     # other mode. Added 2026-09-17, owner's request.
     background_image_path: str = ""
     background_video_path: str = ""
-    # Scales the avatar around its own center within this fixed-size
-    # window -- makes it bigger/smaller on stream without needing
-    # different art or changing the window/source dimensions in OBS.
-    zoom: float = 1.0
+    # zoom moved to AvatarRig.zoom 2026-09-19 -- see that field's own
+    # comment for why (it's per-avatar, not per-machine).
 
 
 @dataclass
@@ -187,10 +198,15 @@ class HotkeysConfig:
     # "1".."9", index 9 -> "0", matching the on-screen 1-9,0 numbering).
     # Remappable from Settings' Hotkeys group (QKeySequenceEdit widgets,
     # one key per slot -- render.py resolves each string back to a plain
-    # Qt.Key live in keyPressEvent, so a rebind takes effect immediately).
+    # Qt.Key live in keyPressEvent, so a rebind takes effect immediately;
+    # control_panel_window.py additionally wires these as real QShortcuts,
+    # rebuilt on the same rebind, added 2026-09-19 so costume switching
+    # also works from the Control Panel, not just the Render Window).
     #
-    # These only fire while the Render Window itself has keyboard focus.
-    # A global variant (usable while OBS or another app has focus, which
+    # These only fire while the Render Window or the Control Panel has
+    # keyboard focus (and, in the Control Panel, only while no text/combo/
+    # key-capture field is itself focused). A global variant (usable while
+    # OBS or another app has focus, which
     # would otherwise be the actually-useful case while streaming) was
     # considered and deliberately dropped 2026-09-16 -- owner's call: it
     # would fight with whatever else on the system already claims those

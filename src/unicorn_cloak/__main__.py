@@ -101,7 +101,7 @@ def main() -> int:
         background=config.window.background,
         background_image_path=config.window.background_image_path,
         background_video_path=config.window.background_video_path,
-        zoom=config.window.zoom,
+        zoom=rig.zoom,
     )
     window.show()
 
@@ -138,6 +138,7 @@ def main() -> int:
         rig.name = reloaded.name
         rig.sprites = reloaded.sprites
         rig.active_costume = reloaded.active_costume
+        rig.zoom = reloaded.zoom
         control_panel.refresh_after_external_change()
         # The reload may have added/removed/renamed sprites -- re-point
         # the sprite watch at whatever the file now actually contains.

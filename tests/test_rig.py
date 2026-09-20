@@ -16,6 +16,11 @@ def test_sprite_rotation_deg_defaults_to_unrotated():
     assert sprite.rotation_deg == 0.0
 
 
+def test_zoom_defaults_to_native_size():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1)])
+    assert rig.zoom == 1.0
+
+
 def test_costume_assignments_and_expression_hotkeys_default_to_empty_per_slot():
     from unicorn_cloak.rig import NUM_COSTUMES
 

@@ -49,13 +49,26 @@ def test_load_state_applies_a_registered_migration(tmp_path, monkeypatch):
 
 
 def test_load_state_stops_migrating_when_no_migration_is_registered_for_a_step(tmp_path):
-    # A version behind current with nothing registered for that step
-    # (true right now, since _CONFIG_MIGRATIONS is empty) must still load
-    # via _merge's own per-field defaults, not raise.
+    # A version behind current with nothing registered for *that*
+    # particular step (true for step 0 -> 1, even though step 1 -> 2 now
+    # has a real migration -- see _migrate_window_zoom_to_avatar) must
+    # still load via _merge's own per-field defaults, not raise.
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"__config_version__": 0, "avatar_path": "/tmp/x.uc"}))
     config = load_state(path)
     assert config.avatar_path == "/tmp/x.uc"
+
+
+def test_load_state_strips_old_window_zoom(tmp_path):
+    # zoom moved from WindowConfig to AvatarRig 2026-09-19 -- a settings
+    # .json written before that (version 1, no migration yet applied) had
+    # a real "window": {"zoom": ...} key that _merge would otherwise
+    # reject as unknown now that WindowConfig no longer has that field.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"__config_version__": 1, "window": {"zoom": 2.5, "width": 1920}}))
+    config = load_state(path)  # must not raise
+    assert config.window.width == 1920
+    assert not hasattr(config.window, "zoom")
 
 
 def test_save_then_load_round_trips(tmp_path):

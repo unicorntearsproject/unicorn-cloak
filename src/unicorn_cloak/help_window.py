@@ -219,26 +219,32 @@ you want). Avoid Escape and avoid reusing the same key on two slots —
 only the first matching slot fires.</li>
 <li><b>Escape</b> — quit the app, with confirmation (not remappable).</li>
 </ul>
-<p>These only fire while the <b>Render Window</b> itself has keyboard
-focus, on purpose: a global variant (usable while OBS or another app has
-focus, which would otherwise be the actually-useful case while
-streaming) was considered and rejected -- it would risk colliding with
-whatever else on the system already claims the same keys (games, other
-overlays, DAW shortcuts), and that's not a trade worth making.</p>
+<p>Costume switching only fires here while the <b>Render Window</b>
+itself has keyboard focus, on purpose: a global variant (usable while OBS
+or another app has focus, which would otherwise be the actually-useful
+case while streaming) was considered and rejected -- it would risk
+colliding with whatever else on the system already claims the same keys
+(games, other overlays, DAW shortcuts), and that's not a trade worth
+making.</p>
 
 <h3>Control Panel (needs keyboard focus there instead)</h3>
 <ul>
+<li><b>1-9, 0</b> — switch costume slot, same remappable keys as the
+Render Window above. Added 2026-09-19 so costume and Expression hotkeys
+work from the same window instead of needing two different ones focused
+at two different times.</li>
 <li><b>Shift+1</b> through <b>Shift+9</b>, <b>Shift+0</b> — toggle an
 Expression on/off. Fixed, not remappable (unlike costume keys).</li>
 <li><b>Ctrl+Z</b> / <b>Ctrl+Shift+Z</b> — undo/redo.</li>
 </ul>
-<p><b>Important difference from costume hotkeys:</b> Expression hotkeys
-work by clicking the exact same buttons the Sprites tab's Expressions
-section already has, so they only fire while the <i>Control Panel</i>
-window has focus -- not the Render Window, and not at all while the
-Control Panel is closed. If you plan to use them live, keep the Control
-Panel open somewhere off to the side, outside whatever OBS is actually
-capturing.</p>
+<p>Both hotkey types are skipped here while a text field, combo box, or
+key-capture box has focus, so typing into one (including remapping a
+costume key itself) never gets hijacked by a matching digit press.
+Expression hotkeys work by clicking the exact same buttons the Sprites
+tab's Expressions section already has, so they still only fire while the
+<i>Control Panel</i> window has focus and is open -- if you plan to use
+them live, keep the Control Panel open somewhere off to the side, outside
+whatever OBS is actually capturing.</p>
 <p><b>Two different "Expressions," a tab apart -- not the same thing:</b>
 the Sprites tab's Expressions section is where an expression actually
 gets <i>defined</i> (tag a sprite Manually driven with a Group/State
@@ -255,19 +261,19 @@ explicitly add it.</p>
 scrolling list of all 10 slots. Each slot has:</p>
 <ul>
 <li>Its own remappable key-capture box (see above).</li>
-<li>Zero or more <b>Hide / Show</b> sprite-pair rows. Pick a sprite in
-<b>Hide</b> -- it's hidden everywhere else and this hotkey shows it. Pick
-a sprite in <b>Show</b> -- it's shown everywhere else and this hotkey
+<li>Zero or more <b>Show / Hide</b> sprite-pair rows. Pick a sprite in
+<b>Show</b> -- it's hidden everywhere else and this hotkey shows it. Pick
+a sprite in <b>Hide</b> -- it's shown everywhere else and this hotkey
 hides it. Click <b>+ Add swap</b> for another row under the same slot to
 swap several sprites at once (e.g. both halves of a hoodie for a vest,
-under one hotkey).</li>
+under one hotkey), or the row's own <b>−</b> button to remove it and put
+both its sprites back to normal (visible everywhere).</li>
 </ul>
-<p>A row only takes effect once both boxes are filled in. Clearing either
-box on an already-set-up row removes it and puts both of its sprites back
-to normal (visible everywhere) -- there's no separate delete button.
-This is purely a friendlier way to author what used to need a raw file
-edit (each sprite's own "Costume layers"); nothing about how costumes
-actually render changed.</p>
+<p>A row only takes effect once both boxes are filled in -- clearing one
+back to "—" just leaves it incomplete, it doesn't remove the row; use
+<b>−</b> for that. This is purely a friendlier way to author what used to
+need a raw file edit (each sprite's own "Costume layers"); nothing about
+how costumes actually render changed.</p>
 
 <h3>Setting up what an Expression hotkey does</h3>
 <p>The <b>Expression Hotkeys</b> tab, right of Costume Hotkeys -- same
@@ -279,8 +285,8 @@ exactly the same
 pairs as plain toggle buttons if you just want to force one live without
 a hotkey). Add more than one row to
 force several groups together as one combined expression (e.g. a mouth
-shape and an eye shape at once).
-Clearing a row's dropdown removes it, same gesture as costumes.</p>
+shape and an eye shape at once). Use the row's own <b>−</b> button to
+remove it, same as costumes.</p>
 
 <h3>Mouse (Edit-mode canvas)</h3>
 <p>Select a sprite (click it on the canvas or in the Sprites list) to see
@@ -617,15 +623,15 @@ before recording started.</p>
 
 <h3>Application tab</h3>
 <ul>
-<li><b>Display</b> section — Background: Transparent (normal OBS use), a
-solid color (chroma-keying/previewing), or an Image/Video of your own
-choosing (Browse… appears once selected; video loops continuously and is
-always silent, regardless of its own audio track). Zoom moved to the
-Behavior tab's Position &amp; Hierarchy section — see Behavior tab
-below.</li>
-<li><b>Canvas</b> section — Grid spacing (px): how far apart the
-Edit-mode canvas's grid lines are, toggled on/off with the Guide button
-in the bottom bar.</li>
+<li><b>Display &amp; Canvas</b> section — Background: Transparent (normal
+OBS use), a solid color (chroma-keying/previewing), or an Image/Video of
+your own choosing (Browse… appears once selected; video loops
+continuously and is always silent, regardless of its own audio track).
+Also Grid spacing (px): how far apart the Edit-mode canvas's grid lines
+are, toggled on/off with the Guide button in the bottom bar. (Zoom lives
+on the Behavior tab's Position &amp; Hierarchy section instead, since it's
+saved with the avatar, not app-wide like everything else here — see
+Behavior tab below.)</li>
 </ul>
 <p>Costume/Expression hotkey setup moved to its own <b>Costume
 Hotkeys</b>/<b>Expression Hotkeys</b> tabs, immediately right of Sprites

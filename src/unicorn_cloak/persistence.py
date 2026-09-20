@@ -61,7 +61,12 @@ _FORMAT_VERSION_KEY = "__format_version__"
 # sprite_keys with `key=int`, which would crash on a non-numeric key.
 _COSTUME_ASSIGNMENTS_KEY = "__costume_assignments__"
 _EXPRESSION_HOTKEYS_KEY = "__expression_hotkeys__"
-_NON_SPRITE_KEYS = {_FORMAT_VERSION_KEY, _COSTUME_ASSIGNMENTS_KEY, _EXPRESSION_HOTKEYS_KEY}
+# Added 2026-09-19 when AvatarRig.zoom moved here from WindowConfig (see
+# that field's own comment) -- absent on every file saved before today,
+# defaults to 1.0 (native size) on load, same pattern as the other
+# rig-level keys above.
+_ZOOM_KEY = "__zoom__"
+_NON_SPRITE_KEYS = {_FORMAT_VERSION_KEY, _COSTUME_ASSIGNMENTS_KEY, _EXPRESSION_HOTKEYS_KEY, _ZOOM_KEY}
 
 _VEC2_RE = re.compile(r"Vector2\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)")
 
@@ -180,6 +185,7 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
         sprites=sprites,
         costume_assignments=_normalize_slot_pairs(raw.get(_COSTUME_ASSIGNMENTS_KEY)),
         expression_hotkeys=_normalize_slot_pairs(raw.get(_EXPRESSION_HOTKEYS_KEY)),
+        zoom=raw.get(_ZOOM_KEY, 1.0),
     )
 
 
@@ -205,6 +211,7 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
         _FORMAT_VERSION_KEY: CURRENT_FORMAT_VERSION,
         _COSTUME_ASSIGNMENTS_KEY: rig.costume_assignments,
         _EXPRESSION_HOTKEYS_KEY: rig.expression_hotkeys,
+        _ZOOM_KEY: rig.zoom,
     }
     for i, sprite in enumerate(rig.sprites):
         out[str(i)] = {

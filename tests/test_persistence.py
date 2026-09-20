@@ -111,7 +111,7 @@ def test_avatar_01_save_preserves_every_raw_key(tmp_path):
     # __format_version__ is: save_avatar always writes them, the real
     # external file predates the feature and never will have them.
     _RIG_LEVEL_KEYS_WITH_NO_LEGACY_COUNTERPART = {
-        "__format_version__", "__costume_assignments__", "__expression_hotkeys__",
+        "__format_version__", "__costume_assignments__", "__expression_hotkeys__", "__zoom__",
     }
     sprite_keys = set(original_raw.keys()) - _RIG_LEVEL_KEYS_WITH_NO_LEGACY_COUNTERPART
     assert sprite_keys == set(roundtripped_raw.keys()) - _RIG_LEVEL_KEYS_WITH_NO_LEGACY_COUNTERPART
@@ -383,6 +383,23 @@ def test_load_defaults_costume_assignments_and_expression_hotkeys_when_absent(tm
     rig = load_avatar(path)
     assert rig.costume_assignments == [[] for _ in range(NUM_COSTUMES)]
     assert rig.expression_hotkeys == [[] for _ in range(NUM_COSTUMES)]
+
+
+def test_zoom_round_trips(tmp_path):
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="a.png")], zoom=2.5)
+    path = tmp_path / "out.save"
+    save_avatar(rig, path)
+    reloaded = load_avatar(path)
+    assert reloaded.zoom == 2.5
+
+
+def test_load_defaults_zoom_to_1_when_absent(tmp_path):
+    # A file saved before AvatarRig.zoom existed (moved here from
+    # WindowConfig.zoom 2026-09-19) has no __zoom__ key at all.
+    path = tmp_path / "old.save"
+    path.write_text(json.dumps({"0": _sprite_entry()}))
+    rig = load_avatar(path)
+    assert rig.zoom == 1.0
 
 
 def test_save_is_atomic_no_leftover_tmp_file(tmp_path):

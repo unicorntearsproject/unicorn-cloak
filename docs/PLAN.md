@@ -9,7 +9,7 @@ few genuinely embarrassing internal identifiers, and a rigid single-window
 edit/view toggle. This plan replaces it, in three phases, without carrying
 the mess forward.
 
-Status (last refreshed 2026-09-18): **Phase 1 nearly done, three of
+Status (last refreshed 2026-09-19): **Phase 1 nearly done, three of
 Phase 2's five milestones pulled forward, running end-to-end on real
 hardware.** Phase 2: design tokens (Milestone 1) and the live capture
 preview (Milestone 3) are done; the performance pass (Milestone 4) is
@@ -85,6 +85,56 @@ respectively (renumbered as this project's own first decision record).
 Every cross-reference to their old locations, in both repos, was updated
 to match; see the `obs` repo's own README changelog for that side of it.
 No code changed in this pass.
+
+**2026-09-19 — notes-driven Control Panel fixes, first pass since the
+standalone-repo split.** Owner kept a running scratch `notes` file of UI
+complaints while using the app; worked through it item by item. The
+Live Preview/Edit Sprites toggle is now two side-by-side buttons (a
+`QButtonGroup`), not one button whose label swapped between the two
+names -- the active one highlights via the existing `QPushButton:checked`
+style, no new theme work needed. Two real layout bugs, both in the same
+family as the splitter/CollapsibleSection top-alignment fixes from
+2026-09-17: the Behavior tab's Position & Hierarchy section had a big gap
+under Zoom because it and the per-sprite property form are two separate
+`QFormLayout`s stacked in the same section, each carrying its own default
+margins that double up when stacked (fixed by zeroing both); and the
+Sprites tab's Expressions section centered its toggle buttons vertically
+once expanded, because its own sub-layout had nothing to absorb extra
+space (fixed with a trailing stretch, scoped to just that section, not
+`CollapsibleSection` itself -- see 2026-09-17's own comment on why a
+blanket alignment fix there breaks other sections' ability to grow into
+real space). The Application tab's Display/Canvas split, down to two
+single-row sections after Zoom moved out 2026-09-17, is now one "Display
+& Canvas" section. Costume swap rows' Hide/Show labels were reversed
+from what they actually do (the "Hide" combo picks the sprite this
+costume *shows*, and vice versa) -- swapped so the label names the
+action, not the picked sprite's default state. Costume and Expression
+hotkeys previously worked in different windows only (costume: Render
+Window focus; expression: Control Panel focus), so testing both in the
+same session always made one look broken -- both now also fire from the
+Control Panel, guarded against a focused text/combo/key-capture field so
+typing (including remapping a costume key itself) is never hijacked;
+Render Window behavior for costume keys is unchanged. The costume/
+expression editors' only removal gesture -- clearing a combo back to
+"—" -- wasn't discoverable ("doesn't work lol"); replaced with an
+explicit "−" button per row, and clearing a combo now just leaves the
+row incomplete instead of deleting it. Zoom moved from `WindowConfig`
+(app-wide, `settings.json`) to `AvatarRig.zoom` (per-avatar, saved with
+the `.uc` file) -- how big an avatar renders is that avatar's own
+property, not the machine's; a real settings.json migration
+(`_migrate_window_zoom_to_avatar`, config version 1 -> 2) strips the old
+key so an existing settings.json doesn't crash on load, and Undo/Redo's
+rig snapshot now covers zoom too (it didn't before the move, since
+`_snapshot`/`_restore` only ever touched sprites/costume/expression
+data). Net effect for real files in the wild: any avatar saved before
+today has no zoom of its own and will render at the default 1.0 the next
+time it's opened, even if the old app-wide setting had it at something
+else -- worth re-setting once per avatar that relied on it. 425 tests
+(up from 413), all touched behavior covered: the two-button toggle, all
+three layout fixes' underlying causes, the hotkey guard and its Control-
+Panel-side triggering, the explicit remove buttons (plus the now-inert
+"clear leaves it incomplete" behavior), and zoom's full rig/persistence/
+config-migration/undo round trip.
 
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.

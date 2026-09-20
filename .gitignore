@@ -1,3 +1,5 @@
+notes*.txt
+
 # Local dev state -- not something a checkout should ship with (personal
 # window geometry, selected audio device, etc.)
 settings.json
