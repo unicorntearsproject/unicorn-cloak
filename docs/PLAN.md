@@ -232,6 +232,46 @@ inert, plus new tests for the guard itself (blank, whitespace-only,
 filling it in after the fact starts the watcher) and the status label's
 three states.
 
+**2026-09-19, same-day follow-up: edit-canvas scale/rotate drag diverged
+into wild jumps from tiny handle movements.** Owner's report: "starts
+jumping sizes randomly very fast while just moving the handles a
+little." Root cause, confirmed by simulating a real multi-step drag
+through actual `QGraphicsSceneMouseEvent`s rather than calling
+`_drag_handle` directly with hand-picked points (the latter can't
+reproduce this at all -- see below): `_drag_handle` read `event.pos()`,
+which Qt maps through the item's *current* `transform()` -- i.e.
+already divided by the very scale being computed that frame. Each call
+then computed `(true_scale / previous_scale)` instead of `true_scale`
+outright, and since the sprite's scale is set from that wrong result
+every time, the error compounded (and for scale specifically,
+oscillated: a real repro climbed 2.0 -> 1.01 -> 2.02 -> 1.02 -> 2.04 ->
+1.03 across six 1px nudges instead of increasing smoothly). Rotation
+had the same bug but a gentler symptom -- tracked the mouse at roughly
+*half* speed instead of oscillating, since a pure rotation doesn't
+compound the way a scale division does. Fixed by switching to
+`event.scenePos()` and manually removing only this item's own rotation
+(never its scale) via `parentItem().mapFromScene(...) - self.pos()`,
+anchoring every frame's computation to the sprite's fixed original
+geometry regardless of whatever transform was already in effect --
+correctly parent-aware too (verified against a rotated+scaled parent
+with a child sprite, tracking smoothly). The two direct-call handle
+tests already in the suite (a single `_drag_handle(QPointF(...))` call)
+passed against the *broken* code too, which is exactly why this
+survived past them -- the bug only exists in what a real, live,
+multi-step Qt event sequence feeds in, not in the function's own
+formula taken in isolation. New regression tests use real
+`QGraphicsSceneMouseEvent`s dispatched through `mouseMoveEvent` for
+that reason, each independently confirmed to reproduce the bug against
+the pre-fix code first.
+
+**Same day, also added: Reset Size / Reset Rotation buttons** next to
+Edit Sprites (owner's request) -- visible only in Edit mode, disabled
+with the rest of the per-sprite property form when nothing's selected,
+routed through the existing Scale X/Y and Rotation spinboxes (not
+straight into the sprite fields) so undo, dirty-tracking, lock-
+proportions, and the live canvas update all come for free from the
+handlers those spinboxes already have. 449 tests (440 -> 449).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

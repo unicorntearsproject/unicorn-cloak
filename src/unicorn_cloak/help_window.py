@@ -329,12 +329,16 @@ Panel back.</li>
 
 <h3>The Control Panel, at a glance</h3>
 <ul>
-<li><b>Canvas</b> (top) — a <b>Live Preview / Edit Sprites</b> toggle
-button switches between two views of the avatar: Live Preview mirrors
-the real Render Window (reacts to your actual mic and blinking,
-read-only) and is the default; Edit Sprites is the interactive canvas --
-drag a sprite to move it, driven by the Preview state controls that
-appear above it instead of live audio. A level meter is always shown
+<li><b>Canvas</b> (top) — two buttons, <b>Live Preview</b> and <b>Edit
+Sprites</b>, switch between two views of the avatar (the active one is
+highlighted): Live Preview mirrors the real Render Window (reacts to
+your actual mic and blinking, read-only) and is the default; Edit
+Sprites is the interactive canvas -- drag a sprite to move it, driven by
+the Preview state controls that appear above it instead of live audio.
+Edit Sprites also shows two more buttons, <b>Reset Size</b> and
+<b>Reset Rotation</b>, which reset the selected sprite's Scale X/Y back
+to 1.0 or Rotation back to 0° -- both disabled with nothing selected,
+and both undoable like any other edit. A level meter is always shown
 just below the canvas, in either mode.</li>
 <li><b>Tabs</b> (middle) — Sprites, Costume Hotkeys, Expression Hotkeys,
 Behavior, Audio, and Application. Each tab is made of a few sections you

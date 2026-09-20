@@ -1,7 +1,9 @@
+import math
+
 import pytest
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QKeySequence
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGraphicsSceneMouseEvent
 
 from unicorn_cloak import control_panel_window as cpw_module
 from unicorn_cloak import motion
@@ -664,6 +666,93 @@ def test_editing_rotation_field_writes_through_to_the_sprite(qapp, tmp_path):
     assert panel.rig.by_id(1).rotation_deg == 30.0
 
 
+# --- Reset Size / Reset Rotation buttons (Edit canvas) -----------------------
+
+
+def test_reset_size_and_rotation_buttons_hidden_in_live_preview(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.live_preview_btn.setChecked(True)
+    assert panel.reset_size_btn.isVisible() is False
+    assert panel.reset_rotation_btn.isVisible() is False
+
+
+def test_reset_size_and_rotation_buttons_visible_in_edit_mode(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.edit_sprites_btn.setChecked(True)
+    assert panel.reset_size_btn.isVisible() is True
+    assert panel.reset_rotation_btn.isVisible() is True
+
+
+def test_reset_size_and_rotation_buttons_disabled_with_nothing_selected(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.reset_size_btn.isEnabled() is False
+    assert panel.reset_rotation_btn.isEnabled() is False
+
+    panel._select(1)
+    assert panel.reset_size_btn.isEnabled() is True
+    assert panel.reset_rotation_btn.isEnabled() is True
+
+
+def test_reset_size_button_resets_scale_to_1_and_stays_locked(qapp, tmp_path):
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), scale_x=2.5, scale_y=0.4)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    panel.scale_lock.setChecked(True)
+
+    panel.reset_size_btn.click()
+
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == 1.0
+    assert sprite.scale_y == 1.0
+    assert panel.scale_x.value() == 1.0
+    assert panel.scale_y.value() == 1.0
+
+
+def test_reset_size_button_works_unlocked_when_only_one_axis_is_off(qapp, tmp_path):
+    # scale_x already 1.0 -> setValue(1.0) fires no signal for it; must
+    # not leave scale_y stuck at its old value because of that.
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), scale_x=1.0, scale_y=3.0)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+
+    panel.reset_size_btn.click()
+
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == 1.0
+    assert sprite.scale_y == 1.0
+
+
+def test_reset_rotation_button_resets_rotation_to_0(qapp, tmp_path):
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), rotation_deg=123.0)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+
+    panel.reset_rotation_btn.click()
+
+    assert panel.rig.by_id(1).rotation_deg == 0.0
+    assert panel.rotation.value() == 0.0
+
+
+def test_reset_size_and_rotation_are_undoable(qapp, tmp_path):
+    sprites = [Sprite(id=1, path="a.png", image_data=make_test_png_bytes(), scale_x=2.0, rotation_deg=45.0)]
+    config, window, panel, _ = make_panel(tmp_path, rig=AvatarRig(name="t", sprites=sprites))
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+
+    panel.reset_size_btn.click()
+    panel.reset_rotation_btn.click()
+    assert panel.rig.by_id(1).scale_x == 1.0
+    assert panel.rig.by_id(1).rotation_deg == 0.0
+
+    panel.undo()
+    assert panel.rig.by_id(1).rotation_deg == 45.0
+    panel.undo()
+    assert panel.rig.by_id(1).scale_x == 2.0
+
+
 # --- Interactive scale/rotate handles (edit canvas) --------------------------
 
 
@@ -757,6 +846,53 @@ def test_dragging_a_corner_handle_keeps_proportions_when_locked(qapp, tmp_path):
     assert sprite.scale_x == pytest.approx(sprite.scale_y)
 
 
+def _send_mouse_move(item, scene_pos: QPointF) -> None:
+    """A real QGraphicsSceneMouseEvent, with .pos() set the same way
+    QGraphicsScene's own dispatch would (item.mapFromScene(scenePos), so
+    through whatever transform the item *currently* has) -- calling
+    item._drag_handle(...) directly with a hand-picked QPointF, as the
+    other handle tests above do, can't reproduce the bug this guards:
+    that only shows up via the real event pipeline's own live-remapped
+    .pos(), across a multi-step drag."""
+    event = QGraphicsSceneMouseEvent(QEvent.Type.GraphicsSceneMouseMove)
+    event.setScenePos(scene_pos)
+    event.setPos(item.mapFromScene(scene_pos))
+    item.mouseMoveEvent(event)
+
+
+def test_dragging_a_corner_handle_repeatedly_does_not_diverge(qapp, tmp_path):
+    # Regression 2026-09-19, owner's report: "starts jumping sizes
+    # randomly very fast while just moving the handles a little."
+    # Reproduced exactly with this sequence against the pre-fix code:
+    # scale oscillated 2.0 -> 1.01 -> 2.02 -> 1.02 -> 2.04 -> 1.03 across
+    # six 1px nudges, instead of climbing smoothly. Root cause:
+    # _drag_handle used to receive event.pos(), which Qt maps through
+    # this item's CURRENT transform() -- i.e. already divided by the
+    # very scale being computed this frame -- so each call computed
+    # (true_scale / previous_scale) instead of true_scale outright, and
+    # since the sprite's scale is set from that wrong result every time,
+    # the error compounded (and oscillated) every mouseMoveEvent.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    panel.scale_lock.setChecked(False)
+    item = panel._items[1]
+    item._active_handle = "br"
+
+    # Corner rest position is (50, 50). Roughly double the size, then
+    # nudge by a few pixels at a time several times in a row, the way a
+    # real slow drag delivers many small mouseMoveEvents.
+    _send_mouse_move(item, QPointF(100.0, 100.0))
+    sprite = panel.rig.by_id(1)
+    assert sprite.scale_x == pytest.approx(2.0)
+
+    for nudge in (101.0, 102.0, 103.0, 104.0, 105.0):
+        _send_mouse_move(item, QPointF(nudge, nudge))
+
+    # Must climb smoothly and land at 105/50 = 2.1 -- not oscillate.
+    assert sprite.scale_x == pytest.approx(2.1)
+    assert sprite.scale_y == pytest.approx(2.1)
+
+
 def test_dragging_a_corner_handle_never_produces_a_negative_scale(qapp, tmp_path):
     config, window, panel, _ = _make_square_sprite_panel(tmp_path)
     panel._select(1)
@@ -788,6 +924,27 @@ def test_dragging_the_rotate_handle_sideways_is_ninety_degrees(qapp, tmp_path):
     item._drag_handle(QPointF(40.0, 0.0))
     assert panel.rig.by_id(1).rotation_deg == pytest.approx(90.0)
     assert panel.rotation.value() == pytest.approx(90.0)
+
+
+def test_dragging_the_rotate_handle_tracks_the_mouse_exactly_through_a_real_drag(qapp, tmp_path):
+    # Same real-event-pipeline issue as the corner-scale regression above
+    # (see _send_mouse_move's own comment), just less dramatic here:
+    # reproduced against the pre-fix code, a real multi-step drag lagged
+    # to roughly *half* the true angle each step (10 -> 10, 20 -> 10,
+    # 30 -> 20, 40 -> 20, 50 -> 30, ...) instead of tracking the mouse
+    # directly, since it also read event.pos() -- mapped through the
+    # rotation already applied a moment before -- instead of a fixed,
+    # transform-independent reference.
+    config, window, panel, _ = _make_square_sprite_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    item._active_handle = "rotate"
+    sprite = panel.rig.by_id(1)
+
+    for deg in (10, 20, 30, 40, 50, 60, 70, 80, 89):
+        rad = math.radians(deg)
+        _send_mouse_move(item, QPointF(40.0 * math.sin(rad), -40.0 * math.cos(rad)))
+        assert sprite.rotation_deg == pytest.approx(deg)
 
 
 def test_scale_and_rotate_drags_mark_the_avatar_dirty(qapp, tmp_path):

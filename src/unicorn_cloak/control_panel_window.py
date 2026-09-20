@@ -322,7 +322,7 @@ class EditableSpriteItem(QGraphicsPixmapItem):
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if self._active_handle is not None:
-            self._drag_handle(event.pos())
+            self._drag_handle(event.scenePos())
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -331,40 +331,58 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         self._active_handle = None
         super().mouseReleaseEvent(event)
 
-    def _drag_handle(self, local_pos: QPointF) -> None:
-        # `local_pos` (a mouse event's .pos()) is already expressed in
-        # this item's own, untransformed local coordinate system -- Qt
-        # inverse-maps through the item's *current* transform (whatever
-        # rotation/scale is already applied) to produce it, verified
-        # empirically 2026-09-17. That means these formulas compute the
-        # new absolute rotation/scale directly from the current mouse
-        # position, with no incremental delta-tracking needed: dividing
-        # the still-original, unscaled corner point into the current
-        # local mouse position gives exactly the scale factor that would
-        # place that corner under the cursor, and atan2 against the
-        # origin gives exactly the angle that would place the rotate
-        # handle under the cursor -- regardless of whatever rotation/
-        # scale was already in effect before this drag started.
+    def _drag_handle(self, scene_pos: QPointF) -> None:
+        # scene_pos, not event.pos() -- .pos() maps through this item's
+        # CURRENT transform(), which includes the very scale being
+        # computed this frame. Feeding an already-scaled position back
+        # into "divide by the original corner" computes the new scale
+        # as (true_scale / current_scale) instead of true_scale outright
+        # -- wrong whenever current_scale != 1, and since current_scale
+        # is exactly what gets set from that wrong result, the error
+        # compounds every single mouseMoveEvent, diverging into the
+        # wild, rapid size jumps the owner reported (2026-09-19) from
+        # only a small handle movement. Mapping scene_pos into the
+        # *parent's* local space instead (mapFromScene walks up however
+        # many ancestor transforms there are, correctly, even for a
+        # nested child sprite -- see rig.py's parent/child contract)
+        # and subtracting self.pos() gives this item's offset in the
+        # coordinate space its own transform() operates ON, before that
+        # transform is applied -- anchored to the sprite's fixed,
+        # original geometry every time, regardless of whatever scale or
+        # rotation was already in effect.
+        parent = self.parentItem()
+        parent_local_pos = parent.mapFromScene(scene_pos) if parent is not None else scene_pos
+        offset = parent_local_pos - self.pos()
+
         if self._active_handle == "rotate":
             # 0 deg = straight up from the origin (this item's pivot,
             # i.e. Position -- see rig.Sprite's Position/Offset comment);
             # verified empirically against QTransform.rotate's own sign
             # convention (positive = clockwise in Qt's y-down coordinate
-            # system) rather than assumed.
-            angle = math.degrees(math.atan2(local_pos.x(), -local_pos.y()))
+            # system) rather than assumed. Uses the pre-rotation offset
+            # directly (not un-rotated further) -- solving for the
+            # rotation that would put the handle under the cursor is
+            # exactly atan2 of the vector from the origin to the cursor,
+            # in the frame rotation_deg itself is defined against.
+            angle = math.degrees(math.atan2(offset.x(), -offset.y()))
             self.sprite.rotation_deg = angle
             self._apply_authored_transform()
             self._panel.on_sprite_rotated(self.sprite)
             return
 
+        # Un-rotate (never un-scale, see above) to isolate the distance
+        # from origin scale_x/y are actually defined relative to -- the
+        # corner points below are themselves in that same pre-rotation,
+        # pre-scale pixmap space.
+        pre_scale_pos = QTransform().rotate(-self.sprite.rotation_deg).map(offset)
         corner = {
             "tl": self._pixmap_rect().topLeft(), "tr": self._pixmap_rect().topRight(),
             "bl": self._pixmap_rect().bottomLeft(), "br": self._pixmap_rect().bottomRight(),
         }[self._active_handle]
         if abs(corner.x()) < 1e-6 or abs(corner.y()) < 1e-6:
             return  # a zero-size pixmap dimension has no meaningful corner to scale from
-        new_scale_x = local_pos.x() / corner.x()
-        new_scale_y = local_pos.y() / corner.y()
+        new_scale_x = pre_scale_pos.x() / corner.x()
+        new_scale_y = pre_scale_pos.y() / corner.y()
         if self._panel.scale_lock.isChecked():
             # Same lock the Scale spinboxes already honor (see
             # _on_scale_x/y_changed) -- reused here rather than a second,
@@ -623,6 +641,23 @@ class ControlPanelWindow(QWidget):
         self.edit_sprites_btn.toggled.connect(self._on_canvas_mode_toggled)
         mode_row.addWidget(self.live_preview_btn)
         mode_row.addWidget(self.edit_sprites_btn)
+
+        # Owner's request, 2026-09-19: two buttons next to Edit Sprites to
+        # reset the selected sprite's Scale/Rotation back to native --
+        # hidden outside Edit mode (nothing to reset in Live Preview,
+        # which isn't even showing the authored-transform canvas), and
+        # disabled with the rest of the per-sprite property form when
+        # nothing is selected (see _set_property_form_enabled).
+        self.reset_size_btn = QPushButton("Reset Size")
+        self.reset_size_btn.setToolTip("Reset the selected sprite's Scale X/Y back to 1.0 (native size).")
+        self.reset_size_btn.clicked.connect(self._on_reset_size_clicked)
+        self.reset_rotation_btn = QPushButton("Reset Rotation")
+        self.reset_rotation_btn.setToolTip("Reset the selected sprite's Rotation back to 0° (unrotated).")
+        self.reset_rotation_btn.clicked.connect(self._on_reset_rotation_clicked)
+        mode_row.addWidget(self.reset_size_btn)
+        mode_row.addWidget(self.reset_rotation_btn)
+        self._per_sprite_widgets.extend((self.reset_size_btn, self.reset_rotation_btn))
+
         mode_row.addStretch(1)
         canvas_layout.addLayout(mode_row)
 
@@ -2716,6 +2751,19 @@ class ControlPanelWindow(QWidget):
             self.scale_x.blockSignals(False)
         self._on_property_changed(None)
 
+    def _on_reset_size_clicked(self) -> None:
+        # Routed through the spinboxes, not straight into sprite.scale_x/
+        # y -- reuses _on_scale_x/y_changed's existing lock-proportion,
+        # undo, dirty-tracking, and live-canvas-update handling instead
+        # of duplicating it. setValue() is a no-op (fires nothing) on
+        # whichever of the two is already 1.0 -- harmless, since the
+        # other one's own handler re-reads both anyway.
+        self.scale_x.setValue(1.0)
+        self.scale_y.setValue(1.0)
+
+    def _on_reset_rotation_clicked(self) -> None:
+        self.rotation.setValue(0.0)
+
     def _on_group_name_changed(self, _text: str) -> None:
         if self._updating_form or self._selected_id is None:
             return
@@ -2928,6 +2976,8 @@ class ControlPanelWindow(QWidget):
     def _on_canvas_mode_toggled(self, edit_mode: bool) -> None:
         self.canvas_stack.setCurrentWidget(self.edit_view if edit_mode else self.live_view)
         self.preview_controls.setVisible(edit_mode)
+        self.reset_size_btn.setVisible(edit_mode)
+        self.reset_rotation_btn.setVisible(edit_mode)
         if edit_mode:
             self.edit_view.refit_to_content()
         else:
