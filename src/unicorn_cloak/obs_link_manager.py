@@ -64,6 +64,17 @@ class ObsLinkManager(QObject):
         if self._watcher is not None:
             return
         obs = self.config.obs
+        if not obs.input_name.strip():
+            # Checkbox on, but the owner hasn't (yet) filled in an Input
+            # name -- the checkbox's own tooltip already warns "otherwise
+            # this would just retry a connection with nothing configured
+            # yet," but nothing previously enforced that (owner's report,
+            # 2026-09-19: exactly this -- obsws-python's GetInputMute
+            # rejected an empty input name with a confusing raw SDK
+            # error). Silently doesn't start rather than attempting (and
+            # failing) a connection with an input name that was never
+            # going to be valid.
+            return
         self._watcher = ObsMuteWatcher(
             host=obs.host,
             port=obs.port,

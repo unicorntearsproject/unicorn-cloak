@@ -50,9 +50,15 @@ def test_start_if_enabled_starts_a_watcher_when_enabled(qapp, monkeypatch):
     assert manager.is_running is True
 
 
+def _config_with_input_name() -> Config:
+    config = Config()
+    config.obs.input_name = "Mic/Aux"  # _start() no-ops with a blank one (see its own comment)
+    return config
+
+
 def test_set_enabled_true_starts_and_false_stops(qapp, monkeypatch):
     started, stopped = _patch_watcher(monkeypatch)
-    manager = ObsLinkManager(Config())
+    manager = ObsLinkManager(_config_with_input_name())
 
     manager.set_enabled(True)
     assert len(started) == 1
@@ -73,7 +79,7 @@ def test_restart_does_nothing_when_disabled(qapp, monkeypatch):
 
 def test_restart_stops_and_starts_a_fresh_watcher_when_enabled(qapp, monkeypatch):
     started, stopped = _patch_watcher(monkeypatch)
-    manager = ObsLinkManager(Config())
+    manager = ObsLinkManager(_config_with_input_name())
     manager.set_enabled(True)
     assert len(started) == 1
 
@@ -84,7 +90,7 @@ def test_restart_stops_and_starts_a_fresh_watcher_when_enabled(qapp, monkeypatch
 
 def test_shutdown_stops_a_running_watcher(qapp, monkeypatch):
     started, stopped = _patch_watcher(monkeypatch)
-    manager = ObsLinkManager(Config())
+    manager = ObsLinkManager(_config_with_input_name())
     manager.set_enabled(True)
     manager.shutdown()
     assert len(stopped) == 1
@@ -93,9 +99,55 @@ def test_shutdown_stops_a_running_watcher(qapp, monkeypatch):
 
 def test_connection_changed_emits_false_on_stop(qapp, monkeypatch):
     _patch_watcher(monkeypatch)
-    manager = ObsLinkManager(Config())
+    manager = ObsLinkManager(_config_with_input_name())
     received = []
     manager.connection_changed.connect(received.append)
     manager.set_enabled(True)
     manager.set_enabled(False)
     assert received == [False]
+
+
+def test_enabling_with_a_blank_input_name_does_not_start_a_watcher(qapp, monkeypatch):
+    # Regression 2026-09-19, owner's report: turning the checkbox on
+    # before filling in an Input name produced a raw obs-websocket error
+    # ("OBS input '' not found ...") instead of the routine, silent
+    # not-configured-yet state this is everywhere else in the app.
+    started, stopped = _patch_watcher(monkeypatch)
+    config = Config()
+    assert config.obs.input_name == ""
+    manager = ObsLinkManager(config)
+
+    manager.set_enabled(True)
+
+    assert started == []
+    assert manager.is_running is False
+
+
+def test_enabling_with_a_whitespace_only_input_name_does_not_start_a_watcher(qapp, monkeypatch):
+    started, stopped = _patch_watcher(monkeypatch)
+    config = Config()
+    config.obs.input_name = "   "
+    manager = ObsLinkManager(config)
+
+    manager.set_enabled(True)
+
+    assert started == []
+
+
+def test_restart_after_filling_in_a_blank_input_name_starts_the_watcher(qapp, monkeypatch):
+    # The natural real-world order: check the box first, notice nothing
+    # happens, then fill in the Input name -- control_panel_window.py's
+    # _on_obs_connection_field_changed calls restart() on every field
+    # edit, which must actually start the watcher once there's finally a
+    # real name to connect with.
+    started, stopped = _patch_watcher(monkeypatch)
+    config = Config()
+    manager = ObsLinkManager(config)
+    manager.set_enabled(True)
+    assert started == []  # nothing yet -- still blank
+
+    config.obs.input_name = "Mic/Aux"
+    manager.restart()
+
+    assert len(started) == 1
+    assert started[0]["input_name"] == "Mic/Aux"

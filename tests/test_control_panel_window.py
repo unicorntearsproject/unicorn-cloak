@@ -873,6 +873,46 @@ def test_loading_a_different_avatar_syncs_zoom(qapp, tmp_path, monkeypatch):
     assert window.zoom == 3.0
 
 
+# --- OBS mute awareness status label -----------------------------------------
+
+
+def test_obs_status_label_starts_not_connected(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.obs_status_label.text() == "Not connected"
+
+
+def test_enabling_obs_with_no_input_name_shows_a_specific_hint(qapp, tmp_path):
+    # Regression 2026-09-19, owner's report: turning this on before
+    # filling in an Input name silently tried (and failed) to connect
+    # with a blank one -- ObsLinkManager._start() now declines to even
+    # try, and the status label should say why instead of just repeating
+    # the same "Not connected" a wrong host/port or OBS-not-running would
+    # also show.
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.obs_input_name.text() == ""
+    panel.obs_enabled.setChecked(True)
+    assert panel.obs_status_label.text() == "Not connected -- enter an Input name above"
+
+
+def test_enabling_obs_with_an_input_name_shows_plain_not_connected(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.obs_input_name.setText("Mic/Aux")
+    panel.obs_input_name.editingFinished.emit()
+    panel.obs_enabled.setChecked(True)
+    assert panel.obs_status_label.text() == "Not connected"
+
+
+def test_typing_an_input_name_after_enabling_clears_the_hint(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.obs_enabled.setChecked(True)
+    assert "enter an Input name" in panel.obs_status_label.text()
+
+    panel.obs_input_name.setText("Mic/Aux")
+    panel.obs_input_name.editingFinished.emit()
+
+    assert panel.obs_status_label.text() == "Not connected"
+
+
 # --- Expressions ------------------------------------------------------------
 
 

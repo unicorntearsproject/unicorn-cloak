@@ -208,6 +208,30 @@ actually fail against the pre-fix code before being confirmed to pass
 against the fix, not just written to match whatever the fix happened
 to produce.
 
+**2026-09-19, same-day follow-up: OBS mute awareness failed with a raw
+SDK error when enabled before an Input name was set.** Owner's terminal
+log: `[obs] OBS input '' not found (Request GetInputMute returned code
+300 ...)`. The checkbox's own tooltip already said "otherwise this
+would just retry a connection with nothing configured yet" -- true
+intent, never actually enforced: `ObsLinkManager._start()` started a
+real `ObsMuteWatcher` (and so a real obs-websocket connection attempt)
+the moment the checkbox was checked, regardless of whether Input name
+had ever been filled in, producing exactly this confusing raw error
+instead of the routine, silent "not configured yet" state every other
+gap in this setup (OBS not running, wrong host/port) already gets.
+Fixed by having `_start()` decline outright when `input_name.strip()`
+is empty -- same silent no-op as those other routine states, not an
+error. The status label (Audio tab) now also says why when this is the
+case ("Not connected -- enter an Input name above"), refreshed
+immediately on toggling the checkbox or editing any of the four
+connection fields, not just from the background watcher's own
+connection/mute callbacks. 440 tests (433 -> 440): four pre-existing
+`test_obs_link_manager.py` tests needed a real Input name in their
+`Config()` fixture now that starting with a blank one is correctly
+inert, plus new tests for the guard itself (blank, whitespace-only,
+filling it in after the fact starts the watcher) and the status label's
+three states.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

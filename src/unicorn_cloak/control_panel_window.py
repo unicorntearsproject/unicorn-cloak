@@ -3077,14 +3077,26 @@ class ControlPanelWindow(QWidget):
 
     def _obs_status_text(self, connected: bool, muted: bool = False) -> str:
         if not connected:
+            # ObsLinkManager._start() itself declines to even attempt a
+            # connection with no Input name set (owner's report,
+            # 2026-09-19: turning the checkbox on first produced a raw,
+            # confusing obs-websocket error instead) -- surfaced here too,
+            # so the status label says *why* rather than leaving "Not
+            # connected" looking identical to "OBS just isn't running."
+            if self.obs_enabled.isChecked() and not self.config.obs.input_name.strip():
+                return "Not connected -- enter an Input name above"
             return "Not connected"
         return "Connected -- muted" if muted else "Connected -- not muted"
+
+    def _refresh_obs_status_label(self) -> None:
+        self.obs_status_label.setText(self._obs_status_text(self._obs_connected, self._obs_muted))
 
     def _on_obs_enabled_toggled(self, checked: bool) -> None:
         if self.obs_link_manager is not None:
             self.obs_link_manager.set_enabled(checked)
         else:
             self.config.obs.enabled = checked
+        self._refresh_obs_status_label()
         self._save_config()
 
     def _on_obs_connection_field_changed(self) -> None:
@@ -3094,17 +3106,18 @@ class ControlPanelWindow(QWidget):
         self.config.obs.input_name = self.obs_input_name.text()
         if self.obs_link_manager is not None:
             self.obs_link_manager.restart()
+        self._refresh_obs_status_label()
         self._save_config()
 
     def _on_obs_connection_changed(self, connected: bool) -> None:
         self._obs_connected = connected
         if not connected:
             self._obs_muted = False
-        self.obs_status_label.setText(self._obs_status_text(self._obs_connected, self._obs_muted))
+        self._refresh_obs_status_label()
 
     def _on_obs_mute_changed(self, muted: bool) -> None:
         self._obs_muted = muted
-        self.obs_status_label.setText(self._obs_status_text(self._obs_connected, self._obs_muted))
+        self._refresh_obs_status_label()
 
     # =====================================================================
     # Display
