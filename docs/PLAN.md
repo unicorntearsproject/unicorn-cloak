@@ -531,6 +531,51 @@ the above:
 the behavior combo's population/two-way sync/lock-greying, replacing
 the old header's now-removed text-based tests.
 
+**2026-09-20: fixed a real, intermittent "no active mouth" flash on the
+owner's live avatar.** Reported against the actual running app (`~/
+projects/unicorn-tears/.../avatar-01`), not this repo's own fixtures --
+`rig_lint.find_rig_issues` came back clean against that file, and its
+Mouth group has full, gapless talk-state coverage (closed/mild/wide all
+present, mild's 6 sprites at variants 0-5, wide's 2 at 0-1) -- ruling out
+a rig-authoring mistake and pointing at render.py itself.
+
+Root cause: `RenderWindow._simulate_step` computes `self._talk_variant_
+count`/advances `self._talk_variant_frame` against `self.effective_talk_
+level` *at that instant*, but `_apply_to_scene` (the actual paint pass,
+`render.py`) re-reads `effective_talk_level` fresh and had been trusting
+those two outright. `SIM_DT` (~16.67ms) is very slightly longer than
+`PAINT_INTERVAL_MS` (16ms), so a fair number of `_on_frame` calls paint
+with zero `_simulate_step` in between -- and `set_talk_level` (called
+asynchronously, from the audio thread via a queued connection) can
+change the talk level in exactly that gap. A level change crossing a
+band boundary (e.g. mild -> wide) landing in that gap left a stale
+variant index from the *old* band (mild's own, unrelated 0-5 numbering)
+applied against the *new* band's sprites (wide's 0-1) -- `sprite_alpha`
+requires an exact `talk_variant == active_talk_variant` match once
+`talk_variant_count > 1`, so a stale index that doesn't also exist in
+the new band matches nothing, hiding every mouth sprite for that one
+paint. Self-corrects on the next `_simulate_step`, which is exactly why
+it read as a single-frame flash rather than a stuck state.
+
+Fixed by having `_apply_to_scene` recompute the sibling count fresh
+(new `_talk_variant_sibling_count` helper, shared with `_simulate_step`
+rather than duplicating the same `sum()`) against whatever level is
+actually being painted, and modulo-wrapping the (possibly stale) frame
+index against that fresh count rather than trusting it outright. A
+no-op whenever the band hasn't changed (the frame is already kept
+`< count` by `animation_frame_step`'s own modulo); real-time cycling
+speed is still entirely governed by `_simulate_step`. Blink isn't
+affected by this same race -- `blink_level` only ever changes inside
+`_simulate_step` itself, never asynchronously, so it can't go stale
+relative to `_apply_to_scene` the way audio-driven `talk_level` (and
+`set_muted`, which also folds into `effective_talk_level`) can.
+490 tests (489 -> 490): forces the exact gap directly (a real simulate
+step at "mild", then a level change to "wide" with no simulate step in
+between, then a paint) rather than depending on real timer/thread
+timing -- confirmed failing pre-fix (all mouth sprites hidden) and
+passing post-fix, plus a direct sanity check against the owner's real
+avatar file.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

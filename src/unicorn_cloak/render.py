@@ -518,6 +518,32 @@ class RenderWindow(QWidget):
         correct for whenever one does."""
         return not sprite.hidden and sprite.costume_layers[self.rig.active_costume]
 
+    def _talk_variant_sibling_count(self, level: int) -> int:
+        """How many sprites currently share the talk-axis variant pool
+        at a given talk level -- e.g. 2 while "mild" and two mild-open
+        mouth sprites exist. Shared by _simulate_step (which uses it to
+        advance self._talk_variant_frame at mouth_variant_hz, in real
+        time) and _apply_to_scene (which recomputes its own, against
+        whatever level is actually being painted -- see that method's
+        own comment for why it can't just trust self._talk_variant_count
+        the way _simulate_step's own advance-over-time logic does)."""
+        return max(
+            1,
+            sum(
+                1
+                for rt in self._runtimes.values()
+                if not rt.sprite.manual_driven
+                and rt.sprite.talk_state != 0
+                # axis_visible, not a direct == check: talk_state can be
+                # motion.TALK_QUIET_ONLY (3), which is "visible when
+                # effective_talk_level == 0" rather than "equal to 3" --
+                # a direct equality check would silently exclude a
+                # quiet-only mouth from ever sharing a variant pool.
+                and motion.axis_visible(rt.sprite.talk_state, level)
+                and self._sprite_currently_eligible(rt.sprite)
+            ),
+        )
+
     def _simulate_step(self) -> None:
         self.tick += 1
 
@@ -554,22 +580,7 @@ class RenderWindow(QWidget):
         # sprites. animation_frame_step already treats count<=1 as "never
         # advance" (see motion.py), so a band with only one sprite in it
         # just sits at variant 0 forever, matching every existing rig.
-        self._talk_variant_count = max(
-            1,
-            sum(
-                1
-                for rt in self._runtimes.values()
-                if not rt.sprite.manual_driven
-                and rt.sprite.talk_state != 0
-                # axis_visible, not a direct == check: talk_state can be
-                # motion.TALK_QUIET_ONLY (3), which is "visible when
-                # effective_talk_level == 0" rather than "equal to 3" --
-                # a direct equality check would silently exclude a
-                # quiet-only mouth from ever sharing a variant pool.
-                and motion.axis_visible(rt.sprite.talk_state, self.effective_talk_level)
-                and self._sprite_currently_eligible(rt.sprite)
-            ),
-        )
+        self._talk_variant_count = self._talk_variant_sibling_count(self.effective_talk_level)
         self._talk_variant_frame, self._talk_variant_ticks = motion.animation_frame_step(
             self._talk_variant_frame,
             self._talk_variant_ticks,
@@ -669,6 +680,31 @@ class RenderWindow(QWidget):
         base_x, base_y = self.width() / 2, self.height() / 2
         self.root_item.setPos(base_x, base_y + self.bounce.y_position)
 
+        # Recomputed fresh here rather than trusting self._talk_variant_
+        # count/self._talk_variant_frame outright -- SIM_DT (~16.67ms) is
+        # very slightly longer than PAINT_INTERVAL_MS (16ms), so a fair
+        # number of _on_frame calls paint with zero _simulate_step in
+        # between. talk_level itself is set asynchronously (set_talk_
+        # level, from the audio thread via a queued connection) and can
+        # change in that gap -- if it crosses a band boundary (e.g. mild
+        # -> wide) without a _simulate_step in between to recompute, the
+        # stale count/frame (from the *old* band's own, unrelated variant
+        # numbering) gets applied to the *new* band's sprites below.
+        # sprite_alpha requires an exact talk_variant == active_talk_
+        # variant match once talk_variant_count > 1, so a stale index
+        # that doesn't happen to also exist in the new band matches
+        # nothing -- hiding every mouth sprite for that one paint (owner's
+        # report, 2026-09-20: "a quick flip to a state with no active
+        # mouth"). The modulo wrap is a no-op whenever the band hasn't
+        # changed (the frame is already kept < count by animation_frame_
+        # step's own modulo); real-time cycling speed is still entirely
+        # governed by _simulate_step, this only guarantees whatever index
+        # reaches sprite_alpha is always valid for the band actually
+        # being painted.
+        talk_level = self.effective_talk_level
+        talk_variant_count = self._talk_variant_sibling_count(talk_level)
+        active_talk_variant = self._talk_variant_frame % talk_variant_count
+
         for rt in self._runtimes.values():
             sprite = rt.sprite
             # rt.drag_pos lives in "cumulative drift" space (see
@@ -751,12 +787,12 @@ class RenderWindow(QWidget):
             alpha = motion.sprite_alpha(
                 sprite.talk_state,
                 sprite.blink_state,
-                self.effective_talk_level,
+                talk_level,
                 self.blink_level,
                 self.edit_mode,
                 talk_variant=sprite.variant,
-                active_talk_variant=self._talk_variant_frame,
-                talk_variant_count=self._talk_variant_count,
+                active_talk_variant=active_talk_variant,
+                talk_variant_count=talk_variant_count,
                 blink_variant=sprite.variant,
                 active_blink_variant=self._blink_variant_frame,
                 blink_variant_count=self._blink_variant_count,

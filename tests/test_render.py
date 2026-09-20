@@ -1036,3 +1036,46 @@ def test_single_sprite_band_ignores_variant_swap_rate(qapp):
         window._simulate_step()
         window._apply_to_scene()
         assert item.opacity() == 1.0
+
+
+def test_talk_level_change_without_a_simulate_step_does_not_blank_the_mouth(qapp):
+    # Regression 2026-09-20, owner's report on the real avatar: "every
+    # once in a while i'm getting a quick flip to a state with no active
+    # mouth." Root cause: SIM_DT (~16.67ms) is very slightly longer than
+    # PAINT_INTERVAL_MS (16ms), so a fair number of _on_frame calls paint
+    # (_apply_to_scene) with zero _simulate_step in between -- and
+    # set_talk_level (called asynchronously, from the audio thread via a
+    # queued connection) can change the talk level in exactly that gap.
+    # Without _apply_to_scene recomputing the variant count/frame fresh,
+    # a stale index left over from the *old* band (here: "mild", with its
+    # own unrelated variant numbering) got applied to the *new* band's
+    # sprites ("wide"), matching none of them and hiding the mouth
+    # entirely for that one paint. This forces exactly that gap directly,
+    # without depending on real timer/thread timing.
+    png = make_test_png_bytes()
+    sprites = [
+        Sprite(id=1, path="mild-0.png", image_data=png, talk_state=1, variant=0),
+        Sprite(id=2, path="mild-1.png", image_data=png, talk_state=1, variant=1),
+        Sprite(id=3, path="mild-2.png", image_data=png, talk_state=1, variant=2),
+        Sprite(id=4, path="wide-0.png", image_data=png, talk_state=2, variant=0),
+        Sprite(id=5, path="wide-1.png", image_data=png, talk_state=2, variant=1),
+    ]
+    rig = AvatarRig(name="test", sprites=sprites)
+    window = RenderWindow(rig, MotionConfig())
+
+    window.set_talk_level(1)  # mild
+    window._simulate_step()
+    # Force the exact stale state a real run can land in: the last real
+    # simulate step landed on variant 2 within the mild band -- valid
+    # there (3 mild sprites, variants 0-2), but the wide band only has
+    # variants 0-1.
+    window._talk_variant_frame = 2
+    window._talk_variant_count = 3
+
+    window.set_talk_level(2)  # wide -- no _simulate_step in between, by design
+    window._apply_to_scene()
+
+    wide_items = [window._runtimes[4].item, window._runtimes[5].item]
+    assert any(item.opacity() == 1.0 for item in wide_items)  # not all hidden
+    mild_items = [window._runtimes[1].item, window._runtimes[2].item, window._runtimes[3].item]
+    assert all(item.opacity() == 0.0 for item in mild_items)  # wrong band, correctly hidden
