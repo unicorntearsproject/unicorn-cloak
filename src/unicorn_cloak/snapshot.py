@@ -14,7 +14,7 @@ requested costume slot and not individually hidden show up.
 from __future__ import annotations
 
 from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QImage, QPainter, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene
 
 from . import motion
@@ -58,6 +58,28 @@ def render_costume_snapshot(rig: AvatarRig, costume_index: int) -> QImage:
             )
             item.setZValue(sprite.z_index)
             item.setPos(*sprite.position)
+            # Static, authored Scale X/Y and Rotation (rig.Sprite's own
+            # "permanently resizing/rotating a layer" fields) -- omitted
+            # here entirely until 2026-09-20, so every sprite exported at
+            # its raw native pixel size/orientation regardless of what
+            # was authored to make it fit the rest of the rig. Harmless
+            # for a rig where every sprite happens to share the same
+            # scale (nothing to get relatively wrong), but produced
+            # gross, inconsistent distortion for a real one -- the
+            # owner's report, with screenshots: a snapshot export where
+            # correctly-fitted sunglasses (authored at 0.34x to match a
+            # head scaled to 0.843x) rendered enormous, sticking out past
+            # the head like ears, because neither scale was applied.
+            # Excludes render.py's own *reactive* squash/stretch/drag-
+            # rotation terms (rt.scale/rt.rotation_rad) -- this module
+            # has no runtime state at all, every sprite sits at rest (see
+            # module docstring), so there's nothing reactive to combine
+            # with.
+            if sprite.rotation_deg or sprite.scale_x != 1.0 or sprite.scale_y != 1.0:
+                transform = QTransform()
+                transform.rotate(sprite.rotation_deg)
+                transform.scale(sprite.scale_x, sprite.scale_y)
+                item.setTransform(transform)
             if parent_item is None:
                 scene.addItem(item)
         # Children still nest under a parent item for correct position

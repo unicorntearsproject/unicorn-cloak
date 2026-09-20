@@ -45,6 +45,28 @@ def test_snapshot_excludes_a_mild_talk_variant_at_rest(qapp):
     assert image.width() == 1 and image.height() == 1
 
 
+def test_snapshot_applies_the_sprites_authored_scale(qapp):
+    # Regression 2026-09-20, owner's report with screenshots: an exported
+    # snapshot of the real running avatar showed correctly-fitted
+    # sunglasses (authored at 0.34x to match a head scaled to 0.843x)
+    # rendered enormous, sticking out past the head like ears -- neither
+    # scale was ever applied, so every sprite exported at its raw native
+    # pixel size regardless of what render.py/the editor actually show.
+    rig = _rig_with_one_sprite(image_data=make_test_png_bytes(size=100), scale_x=0.5, scale_y=0.5)
+    image = render_costume_snapshot(rig, 0)
+    assert (image.width(), image.height()) == (50, 50)
+
+
+def test_snapshot_applies_the_sprites_authored_rotation(qapp):
+    # Same root cause/fix as the scale test above -- rotation_deg was
+    # equally ignored. A 45-degree rotation of a square sprite widens its
+    # bounding box well past the sprite's own native size.
+    rig = _rig_with_one_sprite(image_data=make_test_png_bytes(size=100), rotation_deg=45.0)
+    image = render_costume_snapshot(rig, 0)
+    assert image.width() > 100
+    assert image.height() > 100
+
+
 def test_child_position_composes_with_parent_even_when_parent_is_hidden(qapp):
     parent = Sprite(id=1, path="p.png", image_data=None, hidden=True, position=(50.0, 50.0))
     child = Sprite(

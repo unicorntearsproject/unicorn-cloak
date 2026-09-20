@@ -576,6 +576,36 @@ timing -- confirmed failing pre-fix (all mouth sprites hidden) and
 passing post-fix, plus a direct sanity check against the owner's real
 avatar file.
 
+**2026-09-20, same-day follow-up: Export Snapshot ignored every
+sprite's authored Scale X/Y and Rotation.** Owner's report, with two
+screenshots -- the Control Panel's own Edit canvas showing a
+correctly-proportioned face, a PNG from "Export Snapshot…" of the same
+avatar showing the sunglasses ballooned out past the head like ears.
+Traced to `snapshot.py`'s `build()`, which constructs each `QGraphics
+PixmapItem` with position/offset/z-index but never calls `setTransform`
+-- every sprite exported at its raw native pixel size/orientation,
+regardless of what was authored to make it actually fit the rest of the
+rig. Invisible on a rig where every sprite happens to share the same
+scale (the repo's own `unicorn-demo` and the `unicorn-tears` avatar-01
+file used to first investigate this both do, so testing against those
+alone didn't catch it) -- but the owner's actual live avatar (`~/
+projects/bon/.../bugged-out-nerd.uc`, confirmed via `settings.json`'s
+real `avatar_path`, not a guess) has every sprite individually scaled
+down to fit source art of wildly different native resolutions: sunglasses
+at 0.34x against a head at 0.843x. Ignoring both scales meant the
+glasses rendered at roughly *2.5x* their correct size relative to the
+head -- reproduced exactly (screenshot-for-screenshot) against that
+real file before fixing, and confirmed matching the owner's own Edit
+canvas screenshot after. Fixed with the same rotate-then-scale `QTransform`
+construction `render.py`'s own `_apply_to_scene` already uses, minus its
+*reactive* squash/stretch/drag-rotation terms -- this module has no
+runtime state at all, every sprite sits at rest (see its own module
+docstring), so there's nothing reactive to combine with.
+492 tests (490 -> 492): a scaled sprite's snapshot bounding box comes
+out at the scaled size, not the native one; a rotated sprite's bounding
+box widens past its native size -- both confirmed failing pre-fix,
+passing post-fix.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
