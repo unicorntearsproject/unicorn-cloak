@@ -361,6 +361,49 @@ def test_scrolling_up_on_the_edit_canvas_zooms_in(qapp, tmp_path):
     assert panel.edit_view.transform().m11() > scale_before
 
 
+def test_edit_canvas_scrollbars_are_always_off(qapp, tmp_path):
+    # Regression 2026-09-19, owner's report: "the character jumps
+    # forward real quick and snaps back... a horizontal scroll bar
+    # appears" when zooming in past the fit-to-content baseline. Root
+    # cause: at Qt's default ScrollBarAsNeeded policy, content bigger
+    # than the viewport (exactly what zooming in produces) makes a
+    # scrollbar appear -- shrinking the viewport's own geometry to make
+    # room for it fires this view's resizeEvent, which calls
+    # refit_to_content(), instantly undoing the very zoom that triggered
+    # it. Zooming out never hit this (content only ever shrinks, no
+    # scrollbar), which is exactly why the owner saw it one direction
+    # only. This asserts the actual fix (scrollbars can never appear at
+    # all) directly -- the feedback loop itself depends on real
+    # interactive scrollbar/geometry timing this offscreen test
+    # environment doesn't reliably reproduce even pre-fix, so a
+    # behavioral "zoom in, then check the scale" test would not
+    # actually catch a regression here.
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.edit_view.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert panel.edit_view.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+
+def test_zooming_in_past_the_fit_baseline_keeps_growing(qapp, tmp_path):
+    # Companion to the scrollbar-policy test above: with a real shown
+    # window and the event loop actually pumped between wheel events
+    # (closer to real interactive use than the other zoom tests, which
+    # call wheelEvent back-to-back with no event-loop turn in between),
+    # zoom must keep climbing, not intermittently reset.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.resize(1000, 800)
+    panel.edit_sprites_btn.setChecked(True)
+    panel.show()
+    for _ in range(5):
+        qapp.processEvents()
+
+    baseline = panel.edit_view.transform().m11()
+    for _ in range(5):
+        panel.edit_view.wheelEvent(_wheel_event(120))
+        qapp.processEvents()
+
+    assert panel.edit_view.transform().m11() > baseline * 1.5
+
+
 def test_scrolling_down_on_the_edit_canvas_zooms_out(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     scale_before = panel.edit_view.transform().m11()

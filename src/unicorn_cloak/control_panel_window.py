@@ -460,6 +460,24 @@ class GridCanvasView(QGraphicsView):
         # natural feel for scroll-to-zoom.
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self._viewport_zoom = 1.0
+        # Scrollbars off, same as PreviewView's own reasoning -- and load-
+        # bearing here, not just cosmetic: zooming in past the fit-to-
+        # content baseline makes the content bigger than the viewport,
+        # which (with Qt's default ScrollBarAsNeeded) makes a scrollbar
+        # appear -- that shrinks the *viewport's* own geometry to make
+        # room for it, which fires this widget's resizeEvent, which calls
+        # refit_to_content(), instantly resetting the very zoom that just
+        # triggered it. Owner's report, 2026-09-19: "the character jumps
+        # forward real quick and snaps back... a horizontal scroll bar
+        # appears" -- exactly this feedback loop, and exactly why zooming
+        # out (content only ever shrinks, no scrollbar, no loop) "worked
+        # fine" while zooming in didn't. No pan-by-scrollbar is lost by
+        # turning them off -- this view was never actually pannable that
+        # way to begin with (dragging moves the selected sprite, not the
+        # view); re-scrolling anchors the zoom whereever the cursor is if
+        # you need to look elsewhere while zoomed in.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
     def wheelEvent(self, event) -> None:  # noqa: N802 (Qt override)
         factor = _VIEWPORT_ZOOM_STEP if event.angleDelta().y() > 0 else 1 / _VIEWPORT_ZOOM_STEP

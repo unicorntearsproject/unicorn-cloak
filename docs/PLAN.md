@@ -306,6 +306,30 @@ regions of the art). Existing clamp tests already asserted the bound
 constants symbolically (`cpw_module._MIN_VIEWPORT_ZOOM`/
 `_MAX_VIEWPORT_ZOOM`), so they needed no changes for this.
 
+**Same day, second follow-up: zoom-in "jumps forward real quick and
+snaps back", with a scrollbar flashing.** Owner's report was specific
+enough to point straight at the mechanism: `GridCanvasView` never
+disabled its scrollbars (unlike `PreviewView`, which already does, for
+the same reason). At Qt's default `ScrollBarAsNeeded` policy, zooming
+in past the fit-to-content baseline makes the content bigger than the
+viewport -- exactly the condition that makes a scrollbar appear.
+Showing one shrinks the *viewport's* own geometry to make room for it,
+which fires `GridCanvasView.resizeEvent`, which calls
+`refit_to_content()`, instantly undoing the very zoom that triggered
+it. Zooming out never hit this (content only ever shrinks, never
+triggers a scrollbar), which is exactly why the owner only saw it one
+direction. Fixed by turning scrollbars off entirely, same as
+`PreviewView` -- nothing lost, since this view was never actually
+pannable via scrollbar to begin with (dragging moves the selected
+sprite, not the view).
+The regression test for this asserts the scrollbar policy directly,
+not "zoom in and check the scale stuck" -- confirmed that a purely
+behavioral test doesn't reliably fail pre-fix in this offscreen test
+environment (the real feedback loop depends on interactive scrollbar/
+geometry timing this headless platform doesn't reproduce the same way
+even without the fix), so it would have been a false sense of coverage.
+457 tests (455 -> 457).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
