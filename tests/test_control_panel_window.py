@@ -116,6 +116,24 @@ def test_select_populates_property_form(qapp, tmp_path):
     assert panel.talk_state.currentData() == 1
 
 
+def test_variant_is_the_last_row_of_state_assignment(qapp, tmp_path):
+    # Owner's request, 2026-09-20: "put 'variant' in the state assignment
+    # pane as the last row" -- it used to live on the Behavior tab's
+    # Animation section, grouped with Frames/Anim speed (an unrelated,
+    # spritesheet-playback concept), even though it's actually which
+    # *slot* within a shared Talk/Blink state a sprite alternates in.
+    config, window, panel, _ = make_panel(tmp_path)
+    row, _role = panel.state_form.getWidgetPosition(panel.variant)
+    assert row == panel.state_form.rowCount() - 1
+
+
+def test_editing_variant_writes_through_to_the_sprite(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.variant.setValue(3)
+    assert panel.rig.by_id(1).variant == 3
+
+
 def _make_rig_with_a_tagged_and_an_untagged_sprite():
     png = make_test_png_bytes()
     sprites = [

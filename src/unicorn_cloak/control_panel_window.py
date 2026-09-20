@@ -1241,7 +1241,7 @@ class ControlPanelWindow(QWidget):
         # tagging live), which belongs next to the sprite list that
         # defines it, not next to the avatar-wide Motion tuning knobs.
         state_section = CollapsibleSection("State Assignment")
-        state_form = QFormLayout()
+        self.state_form = QFormLayout()
         self.group_name = QComboBox()
         self.group_name.setEditable(True)
         self.state_name = QComboBox()
@@ -1253,6 +1253,14 @@ class ControlPanelWindow(QWidget):
         self.blink_state = QComboBox()
         for value, label in motion.BLINK_STATE_LABELS.items():
             self.blink_state.addItem(label, value)
+        # Last row, not on the Behavior tab's Animation section where it
+        # used to live -- owner's request, 2026-09-20: Variant is which
+        # *slot* within a shared Talk/Blink state this sprite alternates
+        # in, so it belongs with the rest of that state assignment, not
+        # grouped with Frames/Anim speed (spritesheet playback, an
+        # unrelated concept it only happened to share a section with).
+        self.variant = QSpinBox()
+        self.variant.setRange(0, 9)
 
         self.group_name.setToolTip(
             "The named slot this sprite belongs to -- e.g. \"Mouth\" or\n"
@@ -1289,16 +1297,24 @@ class ControlPanelWindow(QWidget):
             "is for anything that isn't an eye shape. Ignored entirely\n"
             "when Manually driven is checked."
         )
-        state_form.addRow("Group name", self.group_name)
-        state_form.addRow("State name", self.state_name)
-        state_form.addRow(self.manual_driven)
-        state_form.addRow("Talk state", self.talk_state)
-        state_form.addRow("Blink state", self.blink_state)
-        for widget in (self.group_name, self.state_name, self.talk_state, self.blink_state):
-            label = state_form.labelForField(widget)
+        self.variant.setToolTip(
+            "Alternation slot for sprites that share the same Talk state\n"
+            "(e.g. two \"mild\" mouths) or Blink state (e.g. two \"eyes\n"
+            "open\" shapes) -- they take turns showing, cycling 0, 1, 2...\n"
+            "at the Behavior tab's \"Mouth/Eye alternate rate\". A state\n"
+            "with only one sprite in it ignores this."
+        )
+        self.state_form.addRow("Group name", self.group_name)
+        self.state_form.addRow("State name", self.state_name)
+        self.state_form.addRow(self.manual_driven)
+        self.state_form.addRow("Talk state", self.talk_state)
+        self.state_form.addRow("Blink state", self.blink_state)
+        self.state_form.addRow("Variant", self.variant)
+        for widget in (self.group_name, self.state_name, self.talk_state, self.blink_state, self.variant):
+            label = self.state_form.labelForField(widget)
             if label is not None:
                 label.setToolTip(widget.toolTip())
-        state_section.body_layout.addLayout(state_form)
+        state_section.body_layout.addLayout(self.state_form)
         # See position_section's own comment below (Zoom vs. property_form)
         # for why this matters: without it, whenever this section is given
         # more splitter room than state_form actually needs, Qt spreads
@@ -1307,6 +1323,7 @@ class ControlPanelWindow(QWidget):
 
         self.talk_state.currentIndexChanged.connect(self._on_property_changed)
         self.blink_state.currentIndexChanged.connect(self._on_property_changed)
+        self.variant.valueChanged.connect(self._on_property_changed)
         self.manual_driven.toggled.connect(self._on_manual_driven_toggled)
         # editTextChanged, not currentIndexChanged: verified empirically
         # that for an editable QComboBox, picking an existing item fires
@@ -1316,7 +1333,7 @@ class ControlPanelWindow(QWidget):
         self.state_name.editTextChanged.connect(self._on_property_changed)
 
         self._per_sprite_widgets.extend(
-            (self.group_name, self.state_name, self.manual_driven, self.talk_state, self.blink_state)
+            (self.group_name, self.state_name, self.manual_driven, self.talk_state, self.blink_state, self.variant)
         )
 
         expressions_section = CollapsibleSection("Expressions")
@@ -1588,8 +1605,8 @@ class ControlPanelWindow(QWidget):
             "Prevents this sprite's Position, Rotation, and Scale from\n"
             "being changed -- by dragging on the Edit canvas (moving it,\n"
             "or its resize/rotate handles) or these fields directly.\n"
-            "Everything else (Offset, Z-index, Parent, Frames/Anim\n"
-            "speed/Variant, State Assignment...) stays editable. Same\n"
+            "Everything else (Offset, Z-index, Parent, Frames/Anim speed,\n"
+            "State Assignment including Variant...) stays editable. Same\n"
             "lock as the padlock icon next to this sprite in the Layer\n"
             "List -- either one toggles both."
         )
@@ -1603,8 +1620,6 @@ class ControlPanelWindow(QWidget):
         self.frames = QSpinBox()
         self.frames.setRange(1, 60)
         self.anim_speed = self._spin(0.0, 60.0)
-        self.variant = QSpinBox()
-        self.variant.setRange(0, 9)
         self.frames.setToolTip(
             "Number of equal-width frames in this sprite's image, for a\n"
             "simple looping animation. 1 = a plain static image."
@@ -1612,26 +1627,19 @@ class ControlPanelWindow(QWidget):
         self.anim_speed.setToolTip(
             "Animation speed in frames per second. Only matters if Frames is greater than 1."
         )
-        self.variant.setToolTip(
-            "Alternation slot for sprites that share the same Talk state\n"
-            "(e.g. two \"mild\" mouths) -- they take turns showing, cycling\n"
-            "0, 1, 2... at this tab's \"Mouth alternate rate\". A Talk state\n"
-            "with only one sprite in it ignores this."
-        )
         self.animation_form.addRow("Frames", self.frames)
         self.animation_form.addRow("Anim speed (fps)", self.anim_speed)
-        self.animation_form.addRow("Variant", self.variant)
         animation_section.body_layout.addLayout(self.animation_form)
         animation_section.body_layout.addStretch(1)
 
         property_fields = (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo,
             self.rotation, self.scale_x, self.scale_y, self.scale_lock, self.lock_position_btn,
-            self.frames, self.anim_speed, self.variant,
+            self.frames, self.anim_speed,
         )
         for form, fields in (
             (self.property_form, (self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index, self.parent_combo, self.rotation)),
-            (self.animation_form, (self.frames, self.anim_speed, self.variant)),
+            (self.animation_form, (self.frames, self.anim_speed)),
         ):
             for field_widget in fields:
                 label = form.labelForField(field_widget)
@@ -1639,7 +1647,7 @@ class ControlPanelWindow(QWidget):
                     label.setToolTip(field_widget.toolTip())
         for box in (
             self.pos_x, self.pos_y, self.offset_x, self.offset_y, self.z_index,
-            self.rotation, self.variant, self.anim_speed,
+            self.rotation, self.anim_speed,
         ):
             box.valueChanged.connect(self._on_property_changed)
         # Scale X/Y get their own handlers, not the generic loop above --

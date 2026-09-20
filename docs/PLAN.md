@@ -606,6 +606,26 @@ out at the scaled size, not the native one; a rotated sprite's bounding
 box widens past its native size -- both confirmed failing pre-fix,
 passing post-fix.
 
+**2026-09-20, same-day follow-up: Variant moved to the last row of
+State Assignment.** Owner's request. Previously lived on the Behavior
+tab's Animation section, grouped with Frames/Anim speed -- but those two
+are about spritesheet playback (an unrelated concept), while Variant is
+actually which *slot* within a shared Talk/Blink state a sprite
+alternates in, so it belongs with the rest of that state assignment
+(Group name/State name/Manually driven/Talk state/Blink state) on the
+Sprites tab instead. A straight move, not a duplication -- one `QSpin
+Box`, relocated (construction, tooltip, row, label-tooltip sync,
+`_per_sprite_widgets` registration, `valueChanged` wiring all moved
+together); `_load_property_form`/the property-changed write-back that
+read/write `sprite.variant` needed no changes at all, since both were
+already keyed by widget identity, not by which section built it. Also
+renamed the Sprites tab's local `state_form` to `self.state_form`,
+matching its `property_form`/`animation_form` siblings (both already
+`self.`) and making the new row's position testable.
+494 tests (492 -> 494): Variant is the State Assignment form's last row
+(`QFormLayout.getWidgetPosition`, not a screenshot-only check), and
+still writes through to the sprite from its new location.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
