@@ -622,9 +622,16 @@ saying so.</li>
 
 <h3>Audio source (bottom bar)</h3>
 <p>What actually drives the mouth, always visible at the bottom of the
-window. <b>Microphone</b> is the normal setup. <b>File</b> plays a local
-audio or video file through this app instead, silently -- it never plays
-the file's sound out loud, it only extracts its volume to drive the
+window. <b>Microphone</b> is the normal setup. <b>Desktop audio</b> drives
+the mouth from whatever's actually playing out your speakers instead of a
+mic -- a game, a video, music -- using the same Device dropdown described
+below. It needs an explicit device chosen: unlike Microphone, it never
+silently falls back to "whatever's first available," since on a typical
+PipeWire/JACK setup that fallback is a real physical mic, not a desktop
+loopback -- pick one from the Device dropdown, or you'll see a clear error
+instead of the avatar quietly lip-syncing to your voice. <b>File</b> plays
+a local audio or video file through this app instead, silently -- it never
+plays the file's sound out loud, it only extracts its volume to drive the
 mouth, at the file's own real-time pace. Built for re-recording something
 where the avatar needs to be driven by one participant's isolated track
 while a *different*, already-combined recording is what actually gets
@@ -635,11 +642,24 @@ with whatever else you start playing; click both close together by hand.
 The chosen file's path is shown just below the row, shortened from the
 middle if it's long (e.g. <code>/home/jj/…/recording.mp3</code>), always
 keeping the filename itself intact. <b>Record 10s &amp; loop</b> captures
-ten seconds of whatever's currently active (mic or file) and then loops
-it continuously, so the Audio tab's thresholds can be tuned against a
-real speech rhythm without talking the whole time. Click it again (or
-pick Microphone/File) to stop the loop and go back to what was active
-before recording started.</p>
+ten seconds of whatever's currently active (mic, desktop audio, or file)
+and then loops it continuously, so the Audio tab's thresholds can be
+tuned against a real speech rhythm without talking the whole time. Click
+it again (or pick a different source) to stop the loop and go back to
+what was active before recording started.</p>
+
+<h3>Device dropdown (bottom bar)</h3>
+<p>Which capture device feeds the mouth, shown just below the Audio
+source row -- only meaningful for Microphone and Desktop Audio (grayed
+out on File, which doesn't use a capture device at all). Remembered
+separately per source, so switching between Microphone and Desktop Audio
+keeps each one's own choice. "System default" picks automatically for
+Microphone; Desktop Audio has no such automatic pick (see above) -- choose
+a real device from the list. A "Now capturing: …" label next to the row
+shows the device this app actually opened, once one is; if that doesn't
+match what you expected, it's worth double-checking the dropdown's
+selection. Click <b>Refresh</b> after plugging in a new mic or headphones
+-- this app has no way to notice that on its own.</p>
 
 <h3>Application tab</h3>
 <ul>

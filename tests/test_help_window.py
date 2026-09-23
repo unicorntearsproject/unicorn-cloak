@@ -64,3 +64,15 @@ def test_hotkeys_tab_flags_the_control_panel_focus_requirement_for_expressions(q
     hotkeys_text = tabs.widget(3).toPlainText()
     assert "Control Panel" in hotkeys_text
     assert "closed" in hotkeys_text.lower() or "focus" in hotkeys_text.lower()
+
+
+def test_reference_tab_documents_desktop_audio_and_the_device_dropdown(qapp):
+    # Regression, bug audit addendum 2026-09-23, D5 ("missing docs"):
+    # neither the Help window nor the README mentioned Desktop Audio or
+    # the Device dropdown/"Now capturing" label before this.
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    reference_text = tabs.widget(4).toPlainText()
+    assert "Desktop audio" in reference_text
+    assert "Now capturing" in reference_text
+    assert "Device dropdown" in reference_text

@@ -220,6 +220,18 @@ def resolve_input_device(hint: str | None, *, strict: bool = False) -> int | Non
         return None
     if hint:
         hint_lower = hint.lower()
+        # Exact match first, substring second -- bug audit addendum
+        # 2026-09-23, D5: a hint that's a *whole* device name (the normal
+        # case -- the device dropdown always writes one of these, never a
+        # hand-typed fragment) must never lose out to some other device
+        # whose longer name merely contains it as a substring (e.g. a
+        # hint of "USB Audio" would previously match "USB Audio Pro"
+        # first if that device happened to enumerate earlier). Substring
+        # matching still runs as a second pass, for a hand-edited
+        # settings.json hint that isn't a full name.
+        for info in usable:
+            if str(info["name"]).strip().lower() == hint_lower:
+                return info["index"]
         for info in usable:
             if hint_lower in str(info["name"]).lower():
                 return info["index"]
@@ -292,6 +304,7 @@ class Microphone:
         reconnect_delay_s: float = _DEFAULT_RECONNECT_DELAY_S,
         on_error: Callable[[str], None] | None = None,
         strict_device: bool = False,
+        on_device_resolved: Callable[[str], None] | None = None,
     ) -> None:
         self._on_volume = on_volume
         self.device = device
@@ -299,6 +312,14 @@ class Microphone:
         self.blocksize = blocksize
         self._reconnect_delay_s = reconnect_delay_s
         self._on_error = on_error
+        # Fired once a stream actually opens, with the real device name
+        # PortAudio resolved to -- quick-win enhancement E2 (bug audit
+        # addendum 2026-09-23): "Device: <hint>" in the UI is only ever
+        # what was *asked for*; this is what was actually *opened*, which
+        # is the only thing that would have made D1-D3 (switching source
+        # silently kept the old device, or silently fell back to the mic)
+        # obvious at a glance instead of needing an audit to notice.
+        self._on_device_resolved = on_device_resolved
         # See resolve_input_device's own docstring -- Desktop Audio
         # (bug audit addendum 2026-09-23, D2/D3) passes True so an
         # unset or vanished device reports a real, retrying error
@@ -394,6 +415,7 @@ class Microphone:
         # fallback for when that query itself fails.
         native_rate = self.samplerate
         native_channels = 2
+        info: dict | None = None
         try:
             info = (
                 sd.query_devices(device_index)
@@ -424,6 +446,9 @@ class Microphone:
         )
         stream.start()
         self._stream = stream
+        if self._on_device_resolved is not None:
+            resolved_name = info.get("name") if isinstance(info, dict) else None
+            self._on_device_resolved(str(resolved_name) if resolved_name else "system default")
         try:
             while not stop_event.is_set():
                 if stream.read_available < self.blocksize:

@@ -2269,6 +2269,24 @@ class ControlPanelWindow(QWidget):
         root.addLayout(self.device_row)
         self._populate_audio_devices()
 
+        # "Now capturing: <device>" -- quick-win enhancement E2 (bug audit
+        # addendum 2026-09-23). The Device dropdown above shows what's
+        # *asked for*; this shows what Microphone/Desktop Audio actually
+        # opened, from AudioManager.device_resolved -- would have made
+        # D1-D3 (switching source silently kept the old device, or a
+        # missing device silently fell back to the mic) obvious at a
+        # glance instead of needing an audit to catch. Empty/hidden while
+        # nothing is actually capturing (File source, or before the first
+        # device resolves).
+        self._now_capturing_label = QLabel("")
+        self._now_capturing_label.setToolTip(
+            "Which device is actually open right now, not just what the\n"
+            "Device dropdown above asks for -- if this doesn't match what\n"
+            "you expected, double-check that dropdown's selection."
+        )
+        self._now_capturing_label.setVisible(False)
+        root.addWidget(self._now_capturing_label)
+
         self.audio_file_label = QLabel(self._elided_file_label())
         self.audio_file_label.setToolTip(self.config.audio.file_path or "No file chosen yet -- click Browse….")
         self.audio_file_label.setVisible(bool(self.config.audio.file_path))
@@ -2283,6 +2301,12 @@ class ControlPanelWindow(QWidget):
             )
             self.audio_manager.recording_started.connect(self._on_recording_started)
             self.audio_manager.recording_finished.connect(self._on_recording_finished)
+            # QueuedConnection: fires from Microphone's own background
+            # thread -- same reasoning as every other audio_manager
+            # connection here (see AudioManager's own docstring).
+            self.audio_manager.device_resolved.connect(
+                self._on_device_resolved, Qt.ConnectionType.QueuedConnection
+            )
         self._update_source_controls_enabled()
         self._update_play_button_text()
         self._update_record_loop_button_text()
@@ -3903,6 +3927,13 @@ class ControlPanelWindow(QWidget):
 
     def _on_file_playback_stopped(self) -> None:
         self._update_play_button_text()
+
+    def _on_device_resolved(self, name: str) -> None:
+        if name:
+            self._now_capturing_label.setText(f"Now capturing: {name}")
+            self._now_capturing_label.setVisible(True)
+        else:
+            self._now_capturing_label.setVisible(False)
 
     # =====================================================================
     # Envelope threshold ordering warning

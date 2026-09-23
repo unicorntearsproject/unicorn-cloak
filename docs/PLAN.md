@@ -1226,6 +1226,33 @@ OBS event).
 
 618 tests (607 -> 618).
 
+**2026-09-23, later still:** owner approved fixing D5 and all twelve
+quick-win enhancements from the addendum, plus a new clickable
+file-playback timeline/scrubber feature -- proceeding as a series of
+small, tested, committed chunks (tracked in
+`docs/audit/2026-09-23-bug-audit.md`'s enhancement table's own Status
+column). First chunk: D5's two remaining points, plus E2.
+
+**D5 (remaining two points):** `resolve_input_device` now tries an
+exact, whole-name match before falling back to substring matching, so
+a hint that's a full device name can't lose to some other device whose
+longer name merely contains it (the substring pass still runs second,
+for a hand-edited settings.json hint that isn't a full name). The Help
+window's Reference tab now documents Desktop Audio and the Device
+dropdown, previously missing entirely. (D5's third point, shared
+thresholds across sources, is E1 below -- not yet done.)
+
+**E2, "Now capturing: <device>" label:** `Microphone` gained an
+`on_device_resolved` callback, fired once a stream actually opens with
+the real device name PortAudio resolved to (not just the hint that was
+asked for) -- routed through a new `AudioManager.device_resolved`
+signal to a label in the Control Panel's bottom bar, next to the
+device row. Clears itself (via the same signal, empty string) the
+moment nothing is actually capturing. Would have made D1-D3 obvious at
+a glance without needing an audit to catch them.
+
+627 tests (618 -> 627).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

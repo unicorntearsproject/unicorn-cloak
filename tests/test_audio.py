@@ -203,6 +203,21 @@ def test_resolve_input_device_falls_back_when_hint_matches_nothing(monkeypatch):
     assert _DEVICES[index]["name"] == "Blue Microphones Analog Stereo"  # first usable
 
 
+def test_resolve_input_device_prefers_an_exact_match_over_a_longer_substring_match(monkeypatch):
+    # Regression, bug audit addendum 2026-09-23, D5 ("substring matching
+    # collision risk"): a hint that's a whole device name must win over a
+    # different device whose *longer* name merely contains it, even when
+    # that other device enumerates first.
+    devices = [
+        {"name": "USB Audio Pro", "hostapi": 2, "max_input_channels": 2},
+        {"name": "USB Audio", "hostapi": 2, "max_input_channels": 2},
+    ]
+    monkeypatch.setattr(audio_module.sd, "query_hostapis", lambda: _HOSTAPIS)
+    monkeypatch.setattr(audio_module.sd, "query_devices", lambda: devices)
+    index = resolve_input_device("USB Audio")
+    assert devices[index]["name"] == "USB Audio"
+
+
 def test_resolve_input_device_strict_does_not_fall_back_on_an_unmatched_hint(monkeypatch):
     # Regression, bug audit addendum 2026-09-23, D2/D3: strict=True
     # (Desktop Audio) must report "not found," not silently open
@@ -339,6 +354,73 @@ def test_microphone_strict_device_reports_and_retries_without_opening_a_stream(m
     assert opened == []  # never actually opened a stream against the wrong device
     assert "Some Unplugged Sink" in errors[0]
     assert "not found" in errors[0]
+
+
+def test_microphone_reports_the_resolved_device_name_once_connected(monkeypatch):
+    # Quick-win enhancement E2 (bug audit addendum 2026-09-23): the "Now
+    # capturing: …" label needs the device PortAudio *actually* opened,
+    # not just the hint that was asked for -- this is what would have
+    # made D1-D3 obvious at a glance without an audit.
+    resolved = []
+    connected = threading.Event()
+
+    def fake_input_stream(**kwargs):
+        return _FakeStream(["ok"], on_read=connected.set, **kwargs)
+
+    def fake_query_devices(device_index=None, kind=None):
+        return {
+            "name": "Blue Microphones Analog Stereo",
+            "default_samplerate": 48000.0,
+            "max_input_channels": 4,
+        }
+
+    monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
+    monkeypatch.setattr(audio_module.sd, "query_devices", fake_query_devices)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: 4)
+
+    mic = Microphone(
+        on_volume=lambda v: None,
+        on_error=lambda m: None,
+        on_device_resolved=resolved.append,
+    )
+    mic.start()
+    try:
+        assert connected.wait(timeout=2.0)
+    finally:
+        mic.stop()
+
+    assert resolved == ["Blue Microphones Analog Stereo"]
+
+
+def test_microphone_reports_system_default_when_the_device_query_fails(monkeypatch):
+    # No hint, and the follow-up sd.query_devices(kind="input") call
+    # itself fails -- on_device_resolved must still fire with something
+    # honest rather than silently never firing at all.
+    resolved = []
+    connected = threading.Event()
+
+    def fake_input_stream(**kwargs):
+        return _FakeStream(["ok"], on_read=connected.set, **kwargs)
+
+    def fake_query_devices(*args, **kwargs):
+        raise RuntimeError("no such device")
+
+    monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
+    monkeypatch.setattr(audio_module.sd, "query_devices", fake_query_devices)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
+
+    mic = Microphone(
+        on_volume=lambda v: None,
+        on_error=lambda m: None,
+        on_device_resolved=resolved.append,
+    )
+    mic.start()
+    try:
+        assert connected.wait(timeout=2.0)
+    finally:
+        mic.stop()
+
+    assert resolved == ["system default"]
 
 
 def test_microphone_reconnects_after_read_failure_mid_stream(monkeypatch):

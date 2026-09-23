@@ -199,6 +199,52 @@ def _fake_microphone_class(
     return _FakeMic, started, stopped
 
 
+def test_starting_the_microphone_wires_a_device_resolved_callback_into_the_signal(qapp, monkeypatch):
+    # Quick-win enhancement E2 (bug audit addendum 2026-09-23): whatever
+    # name Microphone's own background thread reports, AudioManager just
+    # forwards it through device_resolved -- no translation needed since
+    # Signal.emit() is thread-safe (see this class's own docstring).
+    callbacks = []
+
+    class _FakeMic:
+        def __init__(self, **kwargs):
+            self.blocksize = 1024
+            self.samplerate = 44100
+            callbacks.append(kwargs.get("on_device_resolved"))
+
+        def start(self):
+            pass
+
+        def stop(self, *, abandon=False):
+            pass
+
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", _FakeMic)
+
+    manager = AudioManager(Config())
+    resolved = []
+    manager.device_resolved.connect(resolved.append)
+    manager.start()
+
+    callbacks[0]("Blue Microphones Analog Stereo")
+    assert resolved == ["Blue Microphones Analog Stereo"]
+
+
+def test_stopping_the_microphone_emits_an_empty_device_resolved(qapp, monkeypatch):
+    # Clears the "Now capturing: …" label the moment nothing actually is
+    # -- a stale name left showing after Stop/switch would be exactly the
+    # kind of misleading-at-a-glance state E2 was meant to fix.
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    resolved = []
+    manager.device_resolved.connect(resolved.append)
+    manager.start()
+    manager.switch_to_file("/tmp/whatever.wav")
+
+    assert resolved == [""]
+
+
 def test_start_recording_and_loop_captures_fed_volumes_then_loops(qapp, monkeypatch):
     FakeMic, _started, _stopped = _fake_microphone_class()
     monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)

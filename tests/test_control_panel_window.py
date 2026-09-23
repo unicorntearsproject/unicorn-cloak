@@ -1192,6 +1192,54 @@ def test_rewind_button_enabled_state_matches_play(qapp, tmp_path):
     assert panel._rewind_file_btn.isEnabled() == panel.play_file_btn.isEnabled()
 
 
+# --- "Now capturing" label (quick-win enhancement E2, 2026-09-23) -------
+
+
+def test_now_capturing_label_starts_hidden(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._now_capturing_label.isVisible() is False
+
+
+def test_now_capturing_label_shows_the_resolved_device_name(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+    panel.show()
+
+    manager.device_resolved.emit("Blue Microphones Analog Stereo")
+    qapp.processEvents()
+
+    assert panel._now_capturing_label.isVisible() is True
+    assert panel._now_capturing_label.text() == "Now capturing: Blue Microphones Analog Stereo"
+
+
+def test_now_capturing_label_hides_on_an_empty_device_resolved(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+    panel.show()
+
+    manager.device_resolved.emit("Blue Microphones Analog Stereo")
+    qapp.processEvents()
+    assert panel._now_capturing_label.isVisible() is True
+
+    manager.device_resolved.emit("")
+    qapp.processEvents()
+    assert panel._now_capturing_label.isVisible() is False
+
+
 # --- Desktop audio source / device dropdown (owner's request, 2026-09-23) ---
 
 

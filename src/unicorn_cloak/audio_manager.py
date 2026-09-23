@@ -72,6 +72,13 @@ class AudioManager(QObject):
     # QueuedConnection is needed for either.
     recording_started = Signal()
     recording_finished = Signal()
+    # Fires with the real device name Microphone actually opened, once a
+    # stream connects -- quick-win enhancement E2 (bug audit addendum
+    # 2026-09-23). Fires from Microphone's own background thread, same as
+    # volume_measured/error_occurred (see this class's own docstring for
+    # why that's safe -- Signal.emit() itself is thread-safe, only the
+    # receiving slot needs a QueuedConnection).
+    device_resolved = Signal(str)
     # Private/internal: see the module and class docstrings for why
     # FilePlayback's on_finished (a background-thread callback) routes
     # through this instead of touching self._file directly. Carries the
@@ -403,6 +410,7 @@ class AudioManager(QObject):
             # vanished desktop device must report and keep retrying,
             # never silently fall back to an unrelated device either.
             strict_device=is_desktop,
+            on_device_resolved=self.device_resolved.emit,
         )
         self._mic.start()
 
@@ -410,6 +418,12 @@ class AudioManager(QObject):
         if self._mic is not None:
             self._mic.stop(abandon=abandon)
             self._mic = None
+            # Clears the "Now capturing: …" label -- E2's whole point is
+            # showing what's *actually* open, and nothing is once this
+            # returns (a stale name left showing after Stop/switch would
+            # be exactly the kind of misleading-at-a-glance state E2 was
+            # meant to fix).
+            self.device_resolved.emit("")
 
     def _stop_file(self) -> None:
         if self._file is not None:
