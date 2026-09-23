@@ -305,6 +305,27 @@ def test_preview_variant_forces_which_sprite_of_a_shared_band_shows(qapp, tmp_pa
     assert panel._items[2].opacity() == 1.0
 
 
+def test_preview_two_sprites_sharing_default_variant_stay_both_visible(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#4, third affected site):
+    # _preview_variant_counts used to count raw eligible sprites, not
+    # distinct Variant *values* -- two sprites that were never meant to
+    # alternate (neither had Variant touched, both default to 0) wrongly
+    # reported a count of 2, implying a second, real preview value
+    # exists to scrub to at index 1, when nothing in the rig has one.
+    png = make_test_png_bytes()
+    sprites = [
+        Sprite(id=1, path="mouth.png", image_data=png, talk_state=1, variant=0),
+        Sprite(id=2, path="eyebrows.png", image_data=png, talk_state=1, variant=0),
+    ]
+    rig = AvatarRig(name="t", sprites=sprites)
+    config, window, panel, _ = make_panel(tmp_path, rig=rig)
+    panel.ghost_btn.setChecked(False)
+    panel.preview_talk_combo.setCurrentIndex(panel.preview_talk_combo.findData(1))  # "Mild"
+
+    assert panel._items[1].opacity() == 1.0
+    assert panel._items[2].opacity() == 1.0
+
+
 def test_forcing_preview_expression_shows_the_matching_sprite(qapp, tmp_path):
     png = make_test_png_bytes()
     sprites = [

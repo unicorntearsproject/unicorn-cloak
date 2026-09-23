@@ -898,6 +898,77 @@ def test_talk_variant_does_not_advance_while_band_is_inactive(qapp):
     assert (item_a.opacity(), item_b.opacity()) == (0.0, 0.0)
 
 
+# --- Bug audit 2026-09-23, #4: distinct variant *values*, not sprite count -
+
+
+def test_two_sprites_sharing_a_band_and_default_variant_never_both_vanish(qapp):
+    # The core repro: two sprites that were simply never meant to
+    # alternate (neither had its Variant field ever touched, so both
+    # sit at the shared default, 0) must coexist, always -- not be
+    # treated as "2 rivals" that only ever half-show. Old bug: raw
+    # eligible-sprite count (2) fed a cycling index 0..1; on index 1,
+    # neither sprite (both variant=0) matched, and both vanished for
+    # half of every cycle.
+    png = make_test_png_bytes()
+    mouth = Sprite(id=1, path="mild-mouth.png", image_data=png, talk_state=1, variant=0)
+    eyebrows = Sprite(id=2, path="raised-eyebrows.png", image_data=png, talk_state=1, variant=0)
+    rig = AvatarRig(name="t", sprites=[mouth, eyebrows])
+    config = MotionConfig(mouth_variant_hz=60.0)  # 1 flip per sim tick at 60Hz
+    window = RenderWindow(rig, config)
+    window.set_talk_level(1)
+    item_mouth, item_eyebrows = window._runtimes[1].item, window._runtimes[2].item
+
+    for _ in range(10):
+        window._simulate_step()
+        window._apply_to_scene()
+        assert item_mouth.opacity() == 1.0
+        assert item_eyebrows.opacity() == 1.0
+
+
+def test_non_contiguous_variants_both_eventually_show(qapp):
+    # Variants 0 and 2 (no 1) -- the old cycling-index approach only
+    # ever reached 0..count-1 (0..1 here, for 2 sprites), so the
+    # variant=2 sprite could never show at all; the cycle must instead
+    # visit the *real* values present, 0 and 2.
+    png = make_test_png_bytes()
+    variant_0 = Sprite(id=1, path="mild-0.png", image_data=png, talk_state=1, variant=0)
+    variant_2 = Sprite(id=2, path="mild-2.png", image_data=png, talk_state=1, variant=2)
+    rig = AvatarRig(name="t", sprites=[variant_0, variant_2])
+    config = MotionConfig(mouth_variant_hz=60.0)
+    window = RenderWindow(rig, config)
+    window.set_talk_level(1)
+    item_0, item_2 = window._runtimes[1].item, window._runtimes[2].item
+
+    seen_variant_2_visible = False
+    for _ in range(10):
+        window._simulate_step()
+        window._apply_to_scene()
+        if item_2.opacity() == 1.0:
+            seen_variant_2_visible = True
+        assert (item_0.opacity(), item_2.opacity()) in [(1.0, 0.0), (0.0, 1.0)]
+    assert seen_variant_2_visible
+
+
+def test_blink_variant_same_default_never_both_vanish(qapp):
+    # Blink-axis counterpart of the talk-axis test above -- the audit's
+    # own cited realistic trigger: separate left/right eye sprites, both
+    # "Only eyes open", both left at the default variant.
+    png = make_test_png_bytes()
+    left_eye = Sprite(id=1, path="eye-left.png", image_data=png, blink_state=1, variant=0)
+    right_eye = Sprite(id=2, path="eye-right.png", image_data=png, blink_state=1, variant=0)
+    rig = AvatarRig(name="t", sprites=[left_eye, right_eye])
+    config = MotionConfig(eye_variant_hz=60.0)
+    window = RenderWindow(rig, config)
+    item_left, item_right = window._runtimes[1].item, window._runtimes[2].item
+
+    for _ in range(10):
+        window._simulate_step()
+        window.blink_level = 1  # pin "eyes open" -- blink_step's own randomness isn't what this test is about
+        window._apply_to_scene()
+        assert item_left.opacity() == 1.0
+        assert item_right.opacity() == 1.0
+
+
 def _two_open_eyes_rig():
     png = make_test_png_bytes()
     wide = Sprite(id=1, path="eyes-open-wide-01.png", image_data=png, blink_state=1, variant=0)
@@ -1070,7 +1141,6 @@ def test_talk_level_change_without_a_simulate_step_does_not_blank_the_mouth(qapp
     # there (3 mild sprites, variants 0-2), but the wide band only has
     # variants 0-1.
     window._talk_variant_frame = 2
-    window._talk_variant_count = 3
 
     window.set_talk_level(2)  # wide -- no _simulate_step in between, by design
     window._apply_to_scene()

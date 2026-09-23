@@ -2803,17 +2803,27 @@ class ControlPanelWindow(QWidget):
         self._rebuild_costume_and_expression_editors()
 
     def _preview_variant_counts(self) -> tuple[int, int]:
-        talk_count = 0
-        blink_count = 0
+        """How many *distinct* `variant` values are in play for the Edit
+        canvas's manual talk/blink preview spinboxes -- not a raw
+        eligible-sprite count. Same fix as render.py's
+        _talk_variant_values_at/_blink_variant_values_at (bug audit
+        2026-09-23, #4, which named this method as a third affected
+        site): two sprites sharing a talk/blink band by coincidence,
+        both left at the default variant=0 since neither was ever meant
+        to alternate against the other, used to report a count of 2 --
+        wrongly implying a second, distinct preview value exists to
+        scrub to, when nothing in the rig actually has one."""
+        talk_values: set[int] = set()
+        blink_values: set[int] = set()
         for item in self._items.values():
             sprite = item.sprite
             if sprite.manual_driven or sprite.hidden or not sprite.costume_layers[self.rig.active_costume]:
                 continue
             if sprite.talk_state != 0 and motion.axis_visible(sprite.talk_state, self.preview_talk_level):
-                talk_count += 1
+                talk_values.add(sprite.variant)
             if sprite.blink_state != 0 and sprite.blink_state == self.preview_blink_level:
-                blink_count += 1
-        return max(1, talk_count), max(1, blink_count)
+                blink_values.add(sprite.variant)
+        return max(1, len(talk_values)), max(1, len(blink_values))
 
     def _apply_preview_opacity(self, item: EditableSpriteItem) -> None:
         talk_variant_count, blink_variant_count = self._preview_variant_counts()

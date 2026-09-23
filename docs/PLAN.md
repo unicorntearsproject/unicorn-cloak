@@ -870,6 +870,73 @@ operation to support).
 
 530 tests (517 -> 530).
 
+**2026-09-23, same-day follow-up: bug audit stage 2 -- findings #4 and
+#5, the visible rendering bugs.** Both were the same root mistake in
+two different places: counting eligible *sprites* sharing a band
+instead of the distinct `variant` *values* actually present among
+them.
+
+**#4:** `render.py`'s talk/blink variant-alternation counters
+(`_talk_variant_sibling_count`, and blink's own inline version in
+`_simulate_step`) counted raw eligible sprites and cycled an index
+`0..count-1`, comparing it against each sprite's own `variant` for an
+exact match. Two sprites that share a band *by coincidence* -- a mild
+mouth and an unrelated talk-gated accessory, or separate left/right eye
+sprites, both left at the shared default `variant=0` since neither was
+ever meant to alternate against the other -- still counted as "2," so
+half the cycle landed on an index (1) neither of them had, and *both*
+vanished periodically. A non-contiguous set (variants 0 and 2, no 1)
+had the mirror-image bug: the index only ever reached 0..1, so the
+variant-2 sprite could never show at all. Fixed by cycling through the
+*sorted set of distinct values* instead: two sprites can only ever
+"lose" a slot to each other if the rig author actually gave them
+different variant numbers, which is the field's own documented purpose
+(`rig.Sprite.variant`'s docstring). `control_panel_window.py`'s Edit
+canvas preview (`_preview_variant_counts`) had the identical bug in its
+own copy of this logic -- fixed the same way. Deliberately *not* also
+scoped by `group_name` (part of a fully complete fix, and the audit's
+own suggestion) -- see `_talk_variant_values_at`'s docstring for the
+reasoning: the distinct-values fix alone already resolves every
+concrete repro in the audit, the remaining gap (two unrelated,
+*each independently multi-variant* groups on the same axis syncing to
+one shared timer instead of running independently) has no real rig
+hitting it today, and a full per-group-timer refactor is meaningfully
+more invasive for a currently theoretical case.
+
+**#5:** `snapshot.py`'s `_rest_alpha` called `motion.sprite_alpha`
+without `manual_driven`/`manual_active` or any variant/variant_count
+args at all -- so a Manually driven sprite (typically
+`talk_state=0`/`blink_state=0`, gated purely by a live override that a
+static snapshot never has) fell through to `axis_visible`'s "state 0 =
+always visible" case and showed regardless, and every sprite sharing a
+band showed simultaneously (the variant-gating branch in
+`motion.sprite_alpha` never activates when `variant_count` is never
+passed as anything but its default, 1) -- confirmed on the demo avatar:
+three stacked eye layers in one exported PNG. Fixed by computing each
+axis's distinct-variant pool once per snapshot (mirroring #4's
+`render.py` fix, just picking the *lowest* value deterministically
+instead of animating through all of them -- a snapshot is static) and
+passing `manual_driven=sprite.manual_driven, manual_active=False`
+always -- a snapshot has no live expression active, so a
+Manually-driven sprite is correctly never shown in one.
+
+Two related, lower-severity snapshot bugs fixed alongside it, same
+function, same read-through: an invisible sprite used to be skipped
+entirely, so its children (whose authored Position is relative to
+*that* sprite, not its grandparent) attached straight to the
+grandparent's item, silently misplacing them -- fixed by always
+building a real (if visually empty) item for every sprite, mirroring
+how `render.py`'s own `_build_items` never skips item creation either.
+`ItemStacksBehindParent` (negative `z_index`) and `clipped`
+(`ItemClipsChildrenToShape`/`MaskShape`) were also simply never applied
+here, unlike `render.py` -- both now match. The bounding-box auto-fit
+now unions only the actually-visible items' own rects, not
+`scene.itemsBoundingRect()`, so an invisible sprite's now-real
+(zero-size) item can't pad or skew a snapshot's dimensions around
+content nobody will ever see in it.
+
+537 tests (530 -> 537).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

@@ -241,10 +241,10 @@ class RenderWindow(QWidget):
         # the random blink timer).
         self._talk_variant_frame = 0
         self._talk_variant_ticks = 0
-        self._talk_variant_count = 1
+        self._talk_variant_values: list[int] = [0]
         self._blink_variant_frame = 0
         self._blink_variant_ticks = 0
-        self._blink_variant_count = 1
+        self._blink_variant_values: list[int] = [0]
         self._last_bounce_tick = -1_000_000  # far enough back to always
         # qualify for a bounce on the very first speaking frame
         self._accumulator = 0.0
@@ -518,31 +518,79 @@ class RenderWindow(QWidget):
         correct for whenever one does."""
         return not sprite.hidden and sprite.costume_layers[self.rig.active_costume]
 
-    def _talk_variant_sibling_count(self, level: int) -> int:
-        """How many sprites currently share the talk-axis variant pool
-        at a given talk level -- e.g. 2 while "mild" and two mild-open
-        mouth sprites exist. Shared by _simulate_step (which uses it to
-        advance self._talk_variant_frame at mouth_variant_hz, in real
-        time) and _apply_to_scene (which recomputes its own, against
-        whatever level is actually being painted -- see that method's
-        own comment for why it can't just trust self._talk_variant_count
-        the way _simulate_step's own advance-over-time logic does)."""
-        return max(
-            1,
-            sum(
-                1
-                for rt in self._runtimes.values()
-                if not rt.sprite.manual_driven
-                and rt.sprite.talk_state != 0
-                # axis_visible, not a direct == check: talk_state can be
-                # motion.TALK_QUIET_ONLY (3), which is "visible when
-                # effective_talk_level == 0" rather than "equal to 3" --
-                # a direct equality check would silently exclude a
-                # quiet-only mouth from ever sharing a variant pool.
-                and motion.axis_visible(rt.sprite.talk_state, level)
-                and self._sprite_currently_eligible(rt.sprite)
-            ),
-        )
+    def _talk_variant_values_at(self, level: int) -> list[int]:
+        """The sorted, de-duplicated `variant` values actually present
+        among sprites eligible to show at this talk level right now --
+        the real alternation pool. Shared by _simulate_step (which uses
+        it to advance self._talk_variant_frame at mouth_variant_hz, in
+        real time) and _apply_to_scene (which recomputes its own,
+        against whatever level is actually being painted -- see that
+        method's own comment for why it can't just trust
+        self._talk_variant_values the way _simulate_step's own
+        advance-over-time logic does).
+
+        Distinct *values*, not a raw sprite count -- bug audit
+        2026-09-23, finding #4. The old version counted eligible
+        sprites and cycled an index 0..count-1, comparing it against
+        each sprite's own `variant` for an exact match. Two sprites
+        that happen to share a talk_state/level by coincidence (e.g. a
+        mild mouth and an unrelated talk-gated accessory), both left at
+        the default variant=0 since neither was ever meant to
+        alternate against the other, still counted as "2" -- so half
+        the cycle landed on an index (1) neither of them had, and both
+        vanished. A non-contiguous set (variants 0 and 2, no 1) had the
+        same problem in reverse: the cycling index only ever reached
+        0..1, so the variant=2 sprite could never show at all. Cycling
+        through the sorted *set* of values actually present fixes both:
+        sprites sharing one value are members of the same slot (they
+        show together, not "vs" each other -- correct for any pair
+        never given distinct variant numbers to begin with), and a
+        pool of {0, 2} cycles between exactly those two real values.
+
+        Still rig-wide, not scoped by group_name, despite that also
+        being part of a genuinely correct fix (per the audit): two
+        *different*, unrelated multi-variant groups on the same axis
+        would share one timer and switch in lockstep instead of
+        independently. No real rig has that today (this app's own
+        docstring for Sprite.variant: "two use cases today," one per
+        axis) and it's a much milder symptom (everything still shows,
+        just synced) than the vanishing bug above -- not worth a
+        second, genuinely more invasive per-group-timer refactor for a
+        theoretical case. Flagging it here in case a future rig does
+        hit it, same spirit as _sprite_currently_eligible's own "no
+        real rig exercises this today" note."""
+        return sorted({
+            rt.sprite.variant
+            for rt in self._runtimes.values()
+            if not rt.sprite.manual_driven
+            and rt.sprite.talk_state != 0
+            # axis_visible, not a direct == check: talk_state can be
+            # motion.TALK_QUIET_ONLY (3), which is "visible when
+            # effective_talk_level == 0" rather than "equal to 3" --
+            # a direct equality check would silently exclude a
+            # quiet-only mouth from ever sharing a variant pool.
+            and motion.axis_visible(rt.sprite.talk_state, level)
+            and self._sprite_currently_eligible(rt.sprite)
+        })
+
+    def _blink_variant_values_at(self, level: int) -> list[int]:
+        """Blink-axis counterpart of _talk_variant_values_at -- same fix,
+        same reasoning (bug audit 2026-09-23, #4). Named _at, not a
+        bare _blink_variant_values, to leave that name for the stored,
+        _simulate_step-time value _apply_to_scene actually reads (blink_
+        level is computed synchronously within _simulate_step itself,
+        not set asynchronously from another thread the way talk_level
+        is, so unlike the talk axis there's no cross-thread staleness
+        gap to guard against -- _apply_to_scene trusts the stored value
+        directly here, exactly as it already did before this fix)."""
+        return sorted({
+            rt.sprite.variant
+            for rt in self._runtimes.values()
+            if not rt.sprite.manual_driven
+            and rt.sprite.blink_state != 0
+            and rt.sprite.blink_state == level
+            and self._sprite_currently_eligible(rt.sprite)
+        })
 
     def _simulate_step(self) -> None:
         self.tick += 1
@@ -556,35 +604,28 @@ class RenderWindow(QWidget):
         )
         self.blink_level = 2 if self.blink.blinking else 1
 
-        self._blink_variant_count = max(
-            1,
-            sum(
-                1
-                for rt in self._runtimes.values()
-                if not rt.sprite.manual_driven
-                and rt.sprite.blink_state != 0
-                and rt.sprite.blink_state == self.blink_level
-                and self._sprite_currently_eligible(rt.sprite)
-            ),
-        )
+        self._blink_variant_values = self._blink_variant_values_at(self.blink_level)
         self._blink_variant_frame, self._blink_variant_ticks = motion.animation_frame_step(
             self._blink_variant_frame,
             self._blink_variant_ticks,
-            self._blink_variant_count,
+            len(self._blink_variant_values),
             self.motion_config.eye_variant_hz,
             SIM_DT,
         )
 
-        # How many sprites currently share the active talk band -- e.g.
-        # 2 while talk_level is "mild" and there are two mild-open mouth
-        # sprites. animation_frame_step already treats count<=1 as "never
-        # advance" (see motion.py), so a band with only one sprite in it
-        # just sits at variant 0 forever, matching every existing rig.
-        self._talk_variant_count = self._talk_variant_sibling_count(self.effective_talk_level)
+        # The distinct variant values sharing the active talk band -- e.g.
+        # {0, 1} while talk_level is "mild" and there are two mild-open
+        # mouth sprites. animation_frame_step already treats count<=1 as
+        # "never advance" (see motion.py), so a band with only one variant
+        # value in it (whether that's one sprite, or several sprites all
+        # left at the same default variant -- see _talk_variant_values_at's
+        # own docstring) just sits there forever, matching every existing
+        # rig.
+        self._talk_variant_values = self._talk_variant_values_at(self.effective_talk_level)
         self._talk_variant_frame, self._talk_variant_ticks = motion.animation_frame_step(
             self._talk_variant_frame,
             self._talk_variant_ticks,
-            self._talk_variant_count,
+            len(self._talk_variant_values),
             self.motion_config.mouth_variant_hz,
             SIM_DT,
         )
@@ -702,8 +743,12 @@ class RenderWindow(QWidget):
         # reaches sprite_alpha is always valid for the band actually
         # being painted.
         talk_level = self.effective_talk_level
-        talk_variant_count = self._talk_variant_sibling_count(talk_level)
-        active_talk_variant = self._talk_variant_frame % talk_variant_count
+        talk_variant_values = self._talk_variant_values_at(talk_level)
+        talk_variant_count = len(talk_variant_values)
+        active_talk_variant = (
+            talk_variant_values[self._talk_variant_frame % talk_variant_count]
+            if talk_variant_count > 0 else 0
+        )
 
         for rt in self._runtimes.values():
             sprite = rt.sprite
@@ -794,8 +839,11 @@ class RenderWindow(QWidget):
                 active_talk_variant=active_talk_variant,
                 talk_variant_count=talk_variant_count,
                 blink_variant=sprite.variant,
-                active_blink_variant=self._blink_variant_frame,
-                blink_variant_count=self._blink_variant_count,
+                active_blink_variant=(
+                    self._blink_variant_values[self._blink_variant_frame % len(self._blink_variant_values)]
+                    if self._blink_variant_values else 0
+                ),
+                blink_variant_count=len(self._blink_variant_values),
                 hidden=sprite.hidden or suppressed_by_other_expression,
                 manual_driven=sprite.manual_driven,
                 manual_active=(
