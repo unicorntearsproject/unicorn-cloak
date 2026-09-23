@@ -11,8 +11,9 @@ directly, the same established pattern it already uses for
 settings-changed signal.
 
 Threading: this class itself lives on the Qt thread and its public
-methods (switch_to_microphone, switch_to_file, play_file, stop_file) are
-only ever called from there. The `Microphone`/`FilePlayback` instances it
+methods (switch_to_microphone, switch_to_desktop, switch_to_file,
+play_file, stop_file) are only ever called from there. The
+`Microphone`/`FilePlayback` instances it
 owns still run their own background threads exactly as documented in
 audio.py -- volume_measured/error_occurred forward those threads'
 callbacks straight through (Signal.emit() is safe to call from any
@@ -47,7 +48,14 @@ import time
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 
-from .audio import EnvelopeLoopPlayback, EnvelopeRecorder, EnvelopeRecording, FilePlayback, Microphone
+from .audio import (
+    EnvelopeLoopPlayback,
+    EnvelopeRecorder,
+    EnvelopeRecording,
+    FilePlayback,
+    Microphone,
+    list_input_devices,
+)
 from .config import Config
 
 
@@ -131,8 +139,11 @@ class AudioManager(QObject):
         already points -- but never auto-plays a file even if that's
         what a previous session left selected: starting to burn through
         a recording the instant the app opens would be a bad surprise.
-        Playback is always an explicit play_file() call (a Play click)."""
-        if self.config.audio.source != "file":
+        Playback is always an explicit play_file() call (a Play click).
+        "microphone" and "desktop" both start capture immediately though
+        -- neither one has an equivalent "don't auto-start" concern, they
+        just read whatever's live."""
+        if self.config.audio.source in ("microphone", "desktop"):
             self._start_microphone()
 
     def switch_to_microphone(self) -> None:
@@ -140,6 +151,37 @@ class AudioManager(QObject):
         self._stop_file()
         self._stop_loop()
         self._start_microphone()
+
+    def switch_to_desktop(self) -> None:
+        """Drives the mouth from whatever's actually playing out the
+        speakers (game audio, a video, music) instead of a mic --
+        owner's request, 2026-09-23. Under the hood this is the exact
+        same audio.Microphone capture path as switch_to_microphone(),
+        just pointed at config.audio.desktop_device (a separately
+        remembered device hint, chosen from the device dropdown in
+        control_panel_window.py -- see that field's own comment in
+        config.py for why there's no automatic detection here)."""
+        self.config.audio.source = "desktop"
+        self._stop_file()
+        self._stop_loop()
+        self._start_microphone()
+
+    def set_device(self, device: str | None) -> None:
+        """Changes which capture device backs whichever of microphone/
+        desktop is currently selected, live -- restarts capture on the
+        new device immediately if one of those is actually running right
+        now. Device dropdown's onChange in control_panel_window.py is
+        the only caller; a "file" source has nothing here to change."""
+        if self.config.audio.source == "desktop":
+            self.config.audio.desktop_device = device
+        else:
+            self.config.audio.device = device
+        if self._mic is not None:
+            self._stop_microphone()
+            self._start_microphone()
+
+    def list_devices(self) -> list[str]:
+        return list_input_devices()
 
     def switch_to_file(self, path: str | None = None) -> None:
         """Records the chosen file (if given) and stops the mic, but does
@@ -188,13 +230,17 @@ class AudioManager(QObject):
         QTimer.singleShot(int(duration_s * 1000), self._finish_recording)
 
     def stop_loop(self) -> None:
-        """Stops looping and restores whichever source (mic or file) was
-        active before start_recording_and_loop() was called, so tuning
-        against the loop never leaves nothing driving the mouth."""
+        """Stops looping and restores whichever source (mic, desktop
+        audio, or file) was active before start_recording_and_loop() was
+        called, so tuning against the loop never leaves nothing driving
+        the mouth -- and never silently swaps desktop audio back to the
+        mic either, now that there are two device-backed sources."""
         self._stop_loop()
         if self._restore_source == "file" and self._restore_file_path:
             self.switch_to_file(self._restore_file_path)
             self.play_file()
+        elif self._restore_source == "desktop":
+            self.switch_to_desktop()
         else:
             self.switch_to_microphone()
 
@@ -255,11 +301,20 @@ class AudioManager(QObject):
         self.file_playback_stopped.emit()
 
     def _start_microphone(self) -> None:
+        # Named for the common case, but this is also desktop-audio's own
+        # capture path -- audio.Microphone doesn't care what's on the
+        # other end of the device index, only which config field
+        # supplies the hint differs (see switch_to_desktop/set_device).
         if self._mic is not None:
             return
+        device = (
+            self.config.audio.desktop_device
+            if self.config.audio.source == "desktop"
+            else self.config.audio.device
+        )
         self._mic = Microphone(
             on_volume=self._handle_volume_from_source,
-            device=self.config.audio.device,
+            device=device,
             on_error=self.error_occurred.emit,
         )
         self._mic.start()

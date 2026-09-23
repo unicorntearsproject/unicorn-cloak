@@ -172,15 +172,17 @@ def test_blocksize_and_samplerate_default_when_nothing_active(qapp):
     assert manager.samplerate > 0
 
 
-def _fake_microphone_class(started=None, stopped=None):
+def _fake_microphone_class(started=None, stopped=None, devices=None):
     started = started if started is not None else []
     stopped = stopped if stopped is not None else []
+    devices = devices if devices is not None else []
 
     class _FakeMic:
         def __init__(self, **kwargs):
             self._on_volume = kwargs["on_volume"]
             self.blocksize = 1024
             self.samplerate = 44100
+            devices.append(kwargs.get("device"))
 
         def start(self):
             started.append(True)
@@ -361,3 +363,116 @@ def test_gain_is_clamped_to_the_zero_to_one_range(qapp):
     manager._handle_volume_from_source(0.5)  # 0.5 * 10.0 = 5.0, clamped to 1.0
 
     assert volumes == [1.0]
+
+
+# --- Desktop audio source (owner's request, 2026-09-23) ---------------------
+
+
+def test_switch_to_desktop_starts_a_microphone_with_the_desktop_device(qapp, monkeypatch):
+    devices = []
+    FakeMic, started, _stopped = _fake_microphone_class(devices=devices)
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    config = Config()
+    config.audio.desktop_device = "Built-in Audio Analog Stereo"
+    manager = AudioManager(config)
+
+    manager.switch_to_desktop()
+
+    assert manager.config.audio.source == "desktop"
+    assert started == [True]
+    assert devices == ["Built-in Audio Analog Stereo"]  # not config.audio.device
+
+
+def test_start_at_startup_picks_up_a_persisted_desktop_source(qapp, monkeypatch):
+    # start() used to only ever start a mic for "anything that isn't
+    # file" -- still correct today, but this pins the desktop case
+    # explicitly now that "anything that isn't file" is no longer just
+    # "microphone".
+    FakeMic, started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    config = Config()
+    config.audio.source = "desktop"
+    manager = AudioManager(config)
+
+    manager.start()
+
+    assert started == [True]
+
+
+def test_set_device_writes_to_the_field_matching_the_current_source(qapp, monkeypatch):
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+
+    manager.switch_to_microphone()
+    manager.set_device("USB Mic")
+    assert manager.config.audio.device == "USB Mic"
+    assert manager.config.audio.desktop_device is None
+
+    manager.switch_to_desktop()
+    manager.set_device("Built-in Audio Analog Stereo")
+    assert manager.config.audio.desktop_device == "Built-in Audio Analog Stereo"
+    assert manager.config.audio.device == "USB Mic"  # untouched by the desktop change
+
+
+def test_set_device_restarts_a_running_microphone_on_the_new_device(qapp, monkeypatch):
+    devices = []
+    FakeMic, started, stopped = _fake_microphone_class(devices=devices)
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.switch_to_microphone()
+    assert devices == [None]
+
+    manager.set_device("USB Mic")
+
+    assert devices == [None, "USB Mic"]
+    assert stopped == [False]  # the old device's mic was torn down, not abandoned
+    assert started == [True, True]
+
+
+def test_set_device_does_not_start_a_microphone_while_on_file_source(qapp, monkeypatch):
+    FakeMic, started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+
+    manager.set_device("USB Mic")  # device combo is disabled on File in the UI, but be safe
+
+    assert started == []  # no mic should ever start just from picking a device on File
+    assert manager.config.audio.device == "USB Mic"  # still recorded for next time
+
+
+def test_stop_loop_restores_desktop_audio_not_the_microphone(qapp, monkeypatch):
+    # Regression: stop_loop() used to fall back to switch_to_microphone()
+    # for any restore_source other than "file" -- correct back when
+    # "microphone" was the only non-file source, but silently wrong now
+    # that desktop audio is one too (would swap the owner from desktop
+    # audio to their mic the moment they stopped tuning against a loop).
+    FakeMic, started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.switch_to_desktop()
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    manager.stop_loop()
+
+    assert manager.config.audio.source == "desktop"
+
+
+def test_list_devices_delegates_to_audio_module(qapp, monkeypatch):
+    monkeypatch.setattr(
+        "unicorn_cloak.audio_manager.list_input_devices",
+        lambda: ["Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"],
+    )
+    manager = AudioManager(Config())
+    assert manager.list_devices() == [
+        "Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo",
+    ]

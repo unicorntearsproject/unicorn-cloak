@@ -144,15 +144,38 @@ class AudioConfig:
     hold_ms: float = 120.0
     release_ms: float = 200.0
 
-    device: str | None = None  # None = system default input device
+    device: str | None = None  # None = system default input device, while source == "microphone"
 
-    # Which volume source drives talk_level -- "microphone" (default) or
+    # Which capture-capable device backs "desktop" (see source below),
+    # remembered separately from the mic's own `device` above -- same
+    # reasoning as file_path staying independent of source: switching
+    # between microphone/desktop shouldn't make either one forget its own
+    # chosen device. None = whatever usable_input_devices() finds first
+    # (audio.py), same fallback microphone gets.
+    #
+    # Added 2026-09-23: there's no dedicated "desktop loopback" device on
+    # this owner's PipeWire/JACK setup -- unlike PulseAudio's own naming,
+    # a sink's monitor isn't exposed as a separately-named "Monitor of
+    # ..." device here, it's just the sink node itself also showing
+    # nonzero input channels (confirmed live: e.g. "Built-in Audio
+    # Analog Stereo" has both). No reliable name-based heuristic exists
+    # to auto-pick "the" desktop output, so this is manual, via the
+    # device dropdown (control_panel_window.py's source row) -- not
+    # auto-detected.
+    desktop_device: str | None = None
+
+    # Which volume source drives talk_level -- "microphone" (default),
     # "file" (audio.FilePlayback, added 2026-09-16 for re-recording a
     # video where the avatar needs to be driven by a participant's
     # isolated track while a *different*, already-combined recording is
-    # what actually gets captured -- see FilePlayback's own docstring).
+    # what actually gets captured -- see FilePlayback's own docstring),
+    # or "desktop" (added 2026-09-23, owner's request: drive the mouth
+    # from whatever's actually playing out the speakers, e.g. game/video
+    # audio, without needing a separate isolated mic-style recording of
+    # it -- same underlying audio.Microphone capture as "microphone",
+    # just pointed at desktop_device above instead of device).
     # file_path is remembered across restarts even while source is
-    # "microphone", so switching back to "file" doesn't lose it.
+    # something else, so switching back to "file" doesn't lose it.
     source: str = "microphone"
     file_path: str | None = None
 

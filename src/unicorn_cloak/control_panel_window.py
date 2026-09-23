@@ -2065,14 +2065,17 @@ class ControlPanelWindow(QWidget):
         self.source_row = QHBoxLayout()
         self.audio_source = QComboBox()
         self.audio_source.addItem("Microphone", "microphone")
+        self.audio_source.addItem("Desktop audio (what's playing)", "desktop")
         self.audio_source.addItem("File (play a recording instead)", "file")
         self.audio_source.setToolTip(
-            "What drives the mouth: a live microphone (normal setup), or a\n"
-            "local audio/video file played back through this app instead --\n"
-            "for driving the avatar from a pre-recorded isolated track\n"
-            "while a *different* recording is what actually gets captured\n"
-            "(e.g. a combined track played separately through an OBS\n"
-            "Media Source). See the Help window for the full workflow."
+            "What drives the mouth: a live microphone (normal setup),\n"
+            "desktop audio (whatever's actually playing out your\n"
+            "speakers -- a game, a video, music), or a local audio/video\n"
+            "file played back through this app instead -- for driving\n"
+            "the avatar from a pre-recorded isolated track while a\n"
+            "*different* recording is what actually gets captured (e.g.\n"
+            "a combined track played separately through an OBS Media\n"
+            "Source). See the Help window for the full workflow."
         )
         index = self.audio_source.findData(self.config.audio.source)
         self.audio_source.setCurrentIndex(max(index, 0))
@@ -2135,6 +2138,52 @@ class ControlPanelWindow(QWidget):
         self.record_loop_btn.clicked.connect(self._on_record_loop_clicked)
         self.source_row.addWidget(self.record_loop_btn)
         root.addLayout(self.source_row)
+
+        # Own row, not source_row -- owner's request, 2026-09-23, for
+        # Desktop Audio (added alongside this dropdown). source_row is
+        # already the app's single biggest driver of this pane's minimum
+        # width (measured 2026-09-17, the reason the button row was ever
+        # split across two rows in the first place -- see actions_row_1/
+        # actions_row_2 below); adding this here instead of squeezing it
+        # into source_row is exactly that same lesson applied again
+        # (confirmed: cramming it into source_row broke the splitter-
+        # ratio tests by pushing the pane's minimum width past what they
+        # assume).
+        self.device_row = QHBoxLayout()
+        self.device_row.addWidget(QLabel("Device:"))
+        # Backs both Microphone and Desktop Audio, which share the exact
+        # same audio.Microphone capture path and the exact same device
+        # list (this owner's PipeWire/JACK setup doesn't distinguish
+        # "real mic" from "sink with a monitor tap" by name -- both just
+        # show up as capture-capable devices, see config.py's
+        # desktop_device comment), so one dropdown covers both; only
+        # *which* config field it writes to changes, handled by
+        # AudioManager.set_device via the currently selected source.
+        # "System default" (data=None) reproduces the zero-config
+        # behavior this app always had before this dropdown existed --
+        # audio.resolve_input_device(None) picks the first usable
+        # device, same as an empty hint always has.
+        self.audio_device = QComboBox()
+        self.audio_device.setToolTip(
+            "Which capture device feeds the mouth. \"System default\"\n"
+            "picks automatically (this app's original zero-config\n"
+            "behavior). Remembered separately for Microphone and Desktop\n"
+            "Audio -- switching between them keeps each one's own choice.\n"
+            "Grayed out on File, which doesn't use a capture device at all."
+        )
+        self.audio_device.currentIndexChanged.connect(self._on_audio_device_changed)
+        self.device_row.addWidget(self.audio_device, stretch=1)
+
+        self._audio_device_refresh_btn = QPushButton("Refresh")
+        self._audio_device_refresh_btn.setToolTip(
+            "Re-scan for capture devices -- e.g. after plugging in\n"
+            "headphones or a new mic, which this app has no way to\n"
+            "detect on its own."
+        )
+        self._audio_device_refresh_btn.clicked.connect(self._on_refresh_audio_devices_clicked)
+        self.device_row.addWidget(self._audio_device_refresh_btn)
+        root.addLayout(self.device_row)
+        self._populate_audio_devices()
 
         self.audio_file_label = QLabel(self._elided_file_label())
         self.audio_file_label.setToolTip(self.config.audio.file_path or "No file chosen yet -- click Browse….")
@@ -3478,6 +3527,46 @@ class ControlPanelWindow(QWidget):
         has_file = is_file and bool(self.config.audio.file_path)
         self.play_file_btn.setEnabled(has_file)
         self._rewind_file_btn.setEnabled(has_file)
+        is_device_source = not is_file
+        self.audio_device.setEnabled(is_device_source)
+        self._audio_device_refresh_btn.setEnabled(is_device_source)
+
+    def _current_device_hint(self) -> str | None:
+        if self.config.audio.source == "desktop":
+            return self.config.audio.desktop_device
+        return self.config.audio.device
+
+    def _populate_audio_devices(self) -> None:
+        """(Re)builds the device dropdown's item list from whatever's
+        actually plugged in right now, then restores the selection for
+        whichever source (Microphone/Desktop Audio) is currently active
+        -- see _current_device_hint. Called once at startup and again on
+        a manual Refresh click (see that button's own tooltip for why
+        this never happens automatically)."""
+        self.audio_device.blockSignals(True)
+        self.audio_device.clear()
+        self.audio_device.addItem("System default", None)
+        if self.audio_manager is not None:
+            for name in self.audio_manager.list_devices():
+                self.audio_device.addItem(name, name)
+        self.audio_device.blockSignals(False)
+        self._sync_audio_device_selection()
+
+    def _sync_audio_device_selection(self) -> None:
+        hint = self._current_device_hint()
+        index = self.audio_device.findData(hint) if hint else 0
+        self.audio_device.blockSignals(True)
+        self.audio_device.setCurrentIndex(max(index, 0))
+        self.audio_device.blockSignals(False)
+
+    def _on_audio_device_changed(self, index: int) -> None:
+        device = self.audio_device.itemData(index)
+        if self.audio_manager is not None:
+            self.audio_manager.set_device(device)
+        self._save_config()
+
+    def _on_refresh_audio_devices_clicked(self) -> None:
+        self._populate_audio_devices()
 
     def _update_play_button_text(self) -> None:
         playing = self.audio_manager is not None and self.audio_manager.is_file_playing
@@ -3497,6 +3586,9 @@ class ControlPanelWindow(QWidget):
                 self.audio_manager.switch_to_file()
             elif source == "microphone":
                 self.audio_manager.switch_to_microphone()
+            elif source == "desktop":
+                self.audio_manager.switch_to_desktop()
+        self._sync_audio_device_selection()
         self._update_source_controls_enabled()
         self._update_play_button_text()
         self._update_record_loop_button_text()

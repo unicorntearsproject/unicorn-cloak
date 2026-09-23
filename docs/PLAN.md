@@ -745,6 +745,70 @@ confirms the current, actually-playing file survives it untouched and
 covers the playing case explicitly, plus a new one confirms it's a
 no-op while stopped.
 
+**2026-09-23: a third audio source, Desktop Audio, plus the device
+dropdown this app never actually had.** Owner's request: drive the
+mouth from whatever's playing out the speakers (a game, a video,
+music), not just a mic or a file. Same underlying capture path as
+Microphone (`audio.Microphone`, unchanged) -- `AudioManager.
+switch_to_desktop()` just points it at a new, separately-remembered
+`config.audio.desktop_device` hint instead of `device`, the same way
+`file_path` already stays independent of `source`.
+
+Checked live on this machine first, since the obvious approach
+(auto-detect "the" desktop-loopback device by name) doesn't hold up:
+PortAudio's JACK hostapi here (PipeWire's JACK-compatible shim) exposes
+a sink's monitor capability as extra input channels on the sink's own
+node -- e.g. "Built-in Audio Analog Stereo" simply reports both input
+and output channels -- not as a separately-named "Monitor of ..."
+device the way raw PulseAudio would. No name-based heuristic can tell
+"the real desktop output" apart from a webcam mic or a DJ controller's
+own sink on this list, so device selection is manual, not automatic.
+
+That's also what exposed a real, previously-inert gap:
+`audio.list_input_devices()` has existed since this app's audio.py was
+written, but nothing in the UI ever called it -- there was no device
+picker at all, for the mic either, just a config field nobody could
+reach without hand-editing settings.json. Added one dropdown
+("Device:", its own row under Source -- see below for why not crammed
+into source_row) that backs *both* Microphone and Desktop Audio, since
+they share the same device list and the same capture path; only which
+config field it writes to changes, based on whichever source is
+currently selected. "System default" reproduces this app's original
+zero-config behavior (`resolve_input_device(None)`) for anyone who
+never touches it. A Refresh button re-scans, since device hot-plugs
+(headphones, a new mic) have no other way to reach an already-open
+dropdown.
+
+Found and fixed one real bug while extending source-switching to a
+third value: `AudioManager.stop_loop()` restored *any* non-file
+restore-source to the microphone unconditionally -- correct back when
+microphone was the only non-file source, silently wrong now (would
+have swapped Desktop Audio back to the mic the instant a tuning loop
+recorded from desktop audio stopped). Fixed with an explicit
+`elif self._restore_source == "desktop"` branch.
+
+Also found, while first wiring the device dropdown into the existing
+button row: cramming it into `source_row` alongside the file
+Rewind/Play/Browse/Record buttons pushed this pane's minimum width up
+enough to break both existing splitter-ratio tests (measured: the
+canvas pane's actual width came in 93px under its persisted/expected
+size, Qt redistributing space to the now-wider right pane). Same
+lesson as 2026-09-17's two-row button split, applied again -- moved to
+its own row instead of trying to squeeze it in.
+
+517 tests (503 -> 517): `AudioManager` -- switching to desktop starts
+capture on `desktop_device` (not `device`), `start()` picks up a
+persisted "desktop" source at launch, `set_device` writes to the field
+matching the current source and restarts a *running* mic on the new
+device (but never starts one from File), and `stop_loop` restores
+desktop audio rather than the mic. `ControlPanelWindow` -- the source
+combo offers Desktop Audio, the device row disables only on File, the
+dropdown lists "System default" plus whatever `AudioManager.
+list_devices()` returns, selecting one calls `set_device` and
+persists, switching source shows each source's own remembered device,
+and Refresh repopulates the list. Confirmed live (screenshots, both
+sources) that the two-row layout doesn't look cramped.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

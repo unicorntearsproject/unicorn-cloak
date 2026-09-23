@@ -791,6 +791,117 @@ def test_rewind_button_enabled_state_matches_play(qapp, tmp_path):
     assert panel._rewind_file_btn.isEnabled() == panel.play_file_btn.isEnabled()
 
 
+# --- Desktop audio source / device dropdown (owner's request, 2026-09-23) ---
+
+
+def test_audio_source_combo_offers_desktop_audio(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    values = [panel.audio_source.itemData(i) for i in range(panel.audio_source.count())]
+    assert values == ["microphone", "desktop", "file"]
+
+
+def test_device_row_disabled_only_on_file_source(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel.audio_device.isEnabled() is True  # source defaults to microphone
+    assert panel._audio_device_refresh_btn.isEnabled() is True
+
+    config.audio.source = "file"
+    panel._update_source_controls_enabled()
+    assert panel.audio_device.isEnabled() is False
+    assert panel._audio_device_refresh_btn.isEnabled() is False
+
+    config.audio.source = "desktop"
+    panel._update_source_controls_enabled()
+    assert panel.audio_device.isEnabled() is True
+
+
+def test_device_dropdown_always_offers_system_default_first(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)  # audio_manager=None here
+    assert panel.audio_device.count() == 1
+    assert panel.audio_device.itemText(0) == "System default"
+    assert panel.audio_device.itemData(0) is None
+
+
+def test_device_dropdown_lists_audio_manager_devices(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    monkeypatch.setattr(manager, "list_devices", lambda: ["Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"])
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    names = [panel.audio_device.itemText(i) for i in range(panel.audio_device.count())]
+    assert names == ["System default", "Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"]
+
+
+def test_selecting_a_device_calls_set_device_and_persists(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    monkeypatch.setattr(manager, "list_devices", lambda: ["Built-in Audio Analog Stereo"])
+    calls = []
+    monkeypatch.setattr(manager, "set_device", lambda device: calls.append(device))
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    index = panel.audio_device.findData("Built-in Audio Analog Stereo")
+    panel.audio_device.setCurrentIndex(index)
+
+    assert calls == ["Built-in Audio Analog Stereo"]
+
+
+def test_switching_source_shows_each_sources_own_device_choice(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    config.audio.device = "Mic A"
+    config.audio.desktop_device = "Desktop B"
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    monkeypatch.setattr(manager, "list_devices", lambda: ["Mic A", "Desktop B"])
+    monkeypatch.setattr(manager, "switch_to_microphone", lambda: None)
+    monkeypatch.setattr(manager, "switch_to_desktop", lambda: None)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+    assert panel.audio_device.currentText() == "Mic A"
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    assert panel.audio_device.currentText() == "Desktop B"
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("microphone"))
+    assert panel.audio_device.currentText() == "Mic A"
+
+
+def test_refresh_button_repopulates_the_device_list(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    device_names = ["Blue Microphones Analog Stereo"]
+    monkeypatch.setattr(manager, "list_devices", lambda: list(device_names))
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+    assert panel.audio_device.count() == 2  # System default + the one device
+
+    device_names.append("Built-in Audio Analog Stereo")  # e.g. headphones just plugged in
+    panel._audio_device_refresh_btn.click()
+
+    assert panel.audio_device.count() == 3
+
+
 def test_browsing_a_file_shows_the_elided_label(qapp, tmp_path, monkeypatch):
     config, window, panel, _ = make_panel(tmp_path)
     panel.show()
