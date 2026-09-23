@@ -489,6 +489,16 @@ class RenderWindow(QWidget):
         this exists."""
         self.muted = muted
 
+    def set_window_size(self, width: int, height: int) -> None:
+        """Live Render Window size change -- quick-win enhancement E6
+        (bug audit addendum 2026-09-23), driven by the Application tab's
+        size presets/Width/Height fields. Just a plain resize():
+        resizeEvent already keeps self.scene's sceneRect pinned to the
+        widget's actual size and re-centers root_item (which reads
+        self.width()/self.height() live, every _apply_to_scene call), so
+        no extra re-layout step is needed here."""
+        self.resize(width, height)
+
     def set_manual_muted(self, muted: bool) -> None:
         """The Control Panel's own manual "mouth closed" toggle (E12) --
         see self.manual_muted's own comment for why this is a separate

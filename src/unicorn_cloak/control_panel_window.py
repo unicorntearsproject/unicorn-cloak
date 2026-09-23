@@ -117,6 +117,22 @@ _BACKGROUND_LABELS = {
     "video": "Video, looping (choose a file below)",
 }
 
+# Render Window size presets -- quick-win enhancement E6 (bug audit
+# addendum 2026-09-23). (label, QSize) pairs, in display order; "Custom"
+# (data=None) is added separately in _build_application_tab since it has
+# no fixed dims of its own. QSize, not a plain (width, height) tuple --
+# PySide6's QComboBox.findData() compares generic Python-object item data
+# (a bare tuple has no native QMetaType) by *identity*, not by value, so
+# two different-but-equal tuples never match each other there -- confirmed
+# empirically, not assumed, after the combo silently never found a match
+# for a freshly-built tuple even though `==` was true in plain Python.
+# QSize is a registered Qt value type, so findData compares it correctly.
+_WINDOW_SIZE_PRESETS = [
+    ("1280 × 720", QSize(1280, 720)),
+    ("1920 × 1080", QSize(1920, 1080)),
+    ("1080 × 1080", QSize(1080, 1080)),
+]
+
 
 def _is_input_widget_focused() -> bool:
     """True while the focused widget is something the user is typing or
@@ -2032,6 +2048,43 @@ class ControlPanelWindow(QWidget):
         self._update_background_controls_visible()
         display_section.body_layout.addLayout(display_form)
 
+        # Render Window size presets -- quick-win enhancement E6 (bug
+        # audit addendum 2026-09-23). Previously only editable by hand in
+        # settings.json; now live here, applied immediately to the real
+        # Render Window (see RenderWindow.set_window_size), not just on
+        # next launch.
+        size_form = QFormLayout()
+        size_form.setContentsMargins(0, 0, 0, 0)
+        self.window_size_preset = QComboBox()
+        for label, dims in _WINDOW_SIZE_PRESETS:
+            self.window_size_preset.addItem(label, dims)
+        self.window_size_preset.addItem("Custom", None)
+        self.window_size_preset.setToolTip(
+            "The Render Window's own pixel size -- match whatever OBS\n"
+            "source size you're capturing at. Picking a preset here sets\n"
+            "Width/Height below (and applies immediately); editing either\n"
+            "one by hand switches this back to \"Custom\" on its own."
+        )
+        self.window_size_preset.currentIndexChanged.connect(self._on_window_size_preset_changed)
+        size_form.addRow("Render Window size", self.window_size_preset)
+
+        self.window_width = self._add_int(
+            size_form, "Width (px)", 64, 7680, self.config.window, "width",
+            "The Render Window's own pixel width -- match whatever OBS\n"
+            "source size you're capturing at. Picking a preset above\n"
+            "overwrites this.",
+        )
+        self.window_height = self._add_int(
+            size_form, "Height (px)", 64, 4320, self.config.window, "height",
+            "The Render Window's own pixel height -- match whatever OBS\n"
+            "source size you're capturing at. Picking a preset above\n"
+            "overwrites this.",
+        )
+        self.window_width.valueChanged.connect(self._on_window_size_field_changed)
+        self.window_height.valueChanged.connect(self._on_window_size_field_changed)
+        self._sync_window_size_preset_selection()
+        display_section.body_layout.addLayout(size_form)
+
         canvas_form = QFormLayout()
         canvas_form.setContentsMargins(0, 0, 0, 0)
         self.grid_spacing = ScrollSafeSpinBox()
@@ -2499,7 +2552,7 @@ class ControlPanelWindow(QWidget):
         )
         return box
 
-    def _add_int(self, form, label, lo, hi, target, field_name, tooltip: str) -> None:
+    def _add_int(self, form, label, lo, hi, target, field_name, tooltip: str) -> ScrollSafeSpinBox:
         box = ScrollSafeSpinBox()
         box.setRange(lo, hi)
         box.setValue(getattr(target, field_name))
@@ -2508,6 +2561,7 @@ class ControlPanelWindow(QWidget):
         self._add_row_with_reset_and_lock(
             form, label, box, self._default_for(target, field_name), tooltip
         )
+        return box
 
     @staticmethod
     def _default_for(target, field_name: str):
@@ -4084,6 +4138,33 @@ class ControlPanelWindow(QWidget):
             self.render_window.set_background(mode)
         self._update_background_controls_visible()
         self._save_config()
+
+    def _sync_window_size_preset_selection(self) -> None:
+        current = QSize(self.config.window.width, self.config.window.height)
+        index = self.window_size_preset.findData(current)
+        self.window_size_preset.blockSignals(True)
+        # No match -> "Custom", always the last entry.
+        self.window_size_preset.setCurrentIndex(
+            index if index >= 0 else self.window_size_preset.count() - 1
+        )
+        self.window_size_preset.blockSignals(False)
+
+    def _on_window_size_preset_changed(self, index: int) -> None:
+        preset = self.window_size_preset.itemData(index)
+        if preset is None:
+            return  # "Custom" -- Width/Height below are already the source of truth
+        # Each setValue below runs through the exact same path a manual
+        # edit does (_add_int's own _setter persists it, then
+        # _on_window_size_field_changed applies it live and re-syncs this
+        # combo) -- no separate "apply a preset" code path to keep in
+        # sync with that one.
+        self.window_width.setValue(preset.width())
+        self.window_height.setValue(preset.height())
+
+    def _on_window_size_field_changed(self, _value: int) -> None:
+        if self.render_window is not None:
+            self.render_window.set_window_size(self.window_width.value(), self.window_height.value())
+        self._sync_window_size_preset_selection()
 
     def _current_background_path(self) -> str:
         if self.config.window.background == "image":

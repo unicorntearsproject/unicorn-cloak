@@ -674,11 +674,17 @@ selection. Click <b>Refresh</b> after plugging in a new mic or headphones
 OBS use), a solid color (chroma-keying/previewing), or an Image/Video of
 your own choosing (Browse… appears once selected; video loops
 continuously and is always silent, regardless of its own audio track).
-Also Grid spacing (px): how far apart the Edit-mode canvas's grid lines
-are, toggled on/off with the Guide button in the bottom bar. (Zoom lives
-on the Behavior tab's Position &amp; Hierarchy section instead, since it's
-saved with the avatar, not app-wide like everything else here — see
-Behavior tab below.)</li>
+<b>Render Window size</b>: pick a preset (1280×720, 1920×1080, 1080×1080)
+or "Custom", with Width/Height fields below it -- match whatever OBS
+source size you're capturing at. Changes apply immediately to the real
+Render Window, not just on next launch; editing Width/Height by hand
+switches the preset dropdown to "Custom" on its own, and typing in a
+preset's exact values switches it back. Also Grid spacing (px): how far
+apart the Edit-mode canvas's grid lines are, toggled on/off with the
+Guide button in the bottom bar. (Zoom lives on the Behavior tab's
+Position &amp; Hierarchy section instead, since it's saved with the
+avatar, not app-wide like everything else here — see Behavior tab
+below.)</li>
 </ul>
 <p>Costume/Expression hotkey setup moved to its own <b>Costume
 Hotkeys</b>/<b>Expression Hotkeys</b> tabs, immediately right of Sprites

@@ -246,6 +246,26 @@ def test_manual_muted_and_obs_muted_are_independent_flags(qapp):
     assert window.effective_talk_level == 2
 
 
+def test_set_window_size_resizes_the_window_and_the_scene_rect(qapp):
+    # Quick-win enhancement E6 (bug audit addendum 2026-09-23):
+    # previously only editable by hand in settings.json (applied once,
+    # at construction, via the window_size constructor arg) -- must now
+    # also work live. resizeEvent already keeps sceneRect pinned to the
+    # widget's actual size (see its own comment), so a plain resize()
+    # should be enough for both to end up correct.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig(), window_size=(1280, 720))
+    window.show()
+    qapp.processEvents()
+
+    window.set_window_size(1920, 1080)
+    qapp.processEvents()
+
+    assert (window.width(), window.height()) == (1920, 1080)
+    scene_rect = window.scene.sceneRect()
+    assert (scene_rect.width(), scene_rect.height()) == (1920, 1080)
+
+
 def test_on_frame_does_not_simulate_before_one_sim_dt_elapses(qapp):
     rig = make_test_rig()
     window = RenderWindow(rig, MotionConfig())

@@ -1428,6 +1428,52 @@ def test_browsing_a_video_background_sets_the_path_and_updates_the_window(qapp, 
     assert window._background_video_item is not None
 
 
+# --- Render Window size presets (quick-win enhancement E6, 2026-09-23) ----
+
+
+def test_window_size_preset_combo_starts_matching_the_default_config(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert (config.window.width, config.window.height) == (1280, 720)
+    assert panel.window_size_preset.currentText() == "1280 × 720"
+    assert panel.window_width.value() == 1280
+    assert panel.window_height.value() == 720
+
+
+def test_selecting_a_preset_updates_fields_and_applies_to_the_render_window(qapp, tmp_path):
+    from PySide6.QtCore import QSize
+
+    config, window, panel, _ = make_panel(tmp_path)
+
+    index = panel.window_size_preset.findData(QSize(1920, 1080))
+    panel.window_size_preset.setCurrentIndex(index)
+
+    assert panel.window_width.value() == 1920
+    assert panel.window_height.value() == 1080
+    assert config.window.width == 1920
+    assert config.window.height == 1080
+    assert (window.width(), window.height()) == (1920, 1080)
+
+
+def test_editing_width_by_hand_switches_the_preset_combo_to_custom(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+
+    panel.window_width.setValue(999)
+
+    assert panel.window_size_preset.currentText() == "Custom"
+    assert config.window.width == 999
+    assert window.width() == 999
+
+
+def test_editing_height_back_to_a_preset_value_re_selects_that_preset(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.window_width.setValue(1920)
+    assert panel.window_size_preset.currentText() == "Custom"  # height still 720
+
+    panel.window_height.setValue(1080)
+
+    assert panel.window_size_preset.currentText() == "1920 × 1080"
+
+
 def test_switching_back_to_a_solid_color_hides_the_browse_controls(qapp, tmp_path, monkeypatch):
     config, window, panel, _ = make_panel(tmp_path)
     _show_application_tab(panel)

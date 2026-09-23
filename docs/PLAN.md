@@ -1277,6 +1277,27 @@ directly.
 
 640 tests (627 -> 640).
 
+**2026-09-23, still later:** E6, Render Window size presets. The
+Application tab's Display & Canvas section gained a "Render Window
+size" preset combo (1280×720, 1920×1080, 1080×1080, Custom) plus
+Width/Height fields, applying live via a new `RenderWindow.
+set_window_size()` (a plain `resize()` -- `resizeEvent` already keeps
+the scene rect pinned and re-centers `root_item`, so no extra
+re-layout step was needed). Previously only editable by hand in
+`settings.json`, and only took effect on next launch.
+
+Real gotcha, worth recording: the preset combo's items were first
+built with a plain `(width, height)` tuple as `itemData`, matched via
+`QComboBox.findData()` -- this silently never found a match for a
+freshly-constructed tuple with the same values, even though `==` was
+true in plain Python. Confirmed empirically: PySide6 compares generic
+Python-object item data (anything with no native `QMetaType`, which a
+bare tuple has none of) by *identity*, not by value. Switched to
+`QSize(width, height)` instead -- a registered Qt value type, so
+`findData` compares it correctly.
+
+646 tests (640 -> 646).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

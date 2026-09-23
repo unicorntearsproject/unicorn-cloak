@@ -95,3 +95,12 @@ def test_reference_tab_documents_the_calibrate_noise_gate_button(qapp):
     tabs = dlg.findChild(QTabWidget)
     reference_text = tabs.widget(4).toPlainText()
     assert "Calibrate noise gate" in reference_text
+
+
+def test_reference_tab_documents_render_window_size_presets(qapp):
+    # Quick-win enhancement E6 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    reference_text = tabs.widget(4).toPlainText()
+    assert "Render Window size" in reference_text
+    assert "1920×1080" in reference_text
