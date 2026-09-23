@@ -630,6 +630,29 @@ def test_envelope_recording_duration_is_zero_when_empty():
     assert EnvelopeRecording(samples=[]).duration_s == 0.0
 
 
+def test_envelope_recorder_carries_its_rate_into_the_recording():
+    # Bug audit 2026-09-23, #17: EnvelopeRecording used to have no rate
+    # info at all, so AudioManager.blocksize/samplerate fell back to a
+    # hardcoded 1024/44100 during loop playback regardless of the real
+    # rate the recording was actually captured at (e.g. a 48kHz mic),
+    # throwing off update_speaking's frame_seconds (attack/hold/release
+    # timing) by a real, measurable amount while tuning against the loop.
+    recorder = EnvelopeRecorder(max_duration_s=10.0, blocksize=512, samplerate=48000)
+    recorder.start()
+    recorder.record(0.5)
+    recording = recorder.finish()
+    assert recording.blocksize == 512
+    assert recording.samplerate == 48000
+
+
+def test_envelope_recording_rate_defaults_match_the_old_hardcoded_fallback():
+    # Any caller that doesn't know/care about the real rate (most
+    # existing tests below) gets exactly the old always-used values, so
+    # nothing behaves differently for them.
+    assert EnvelopeRecording(samples=[]).blocksize == 1024
+    assert EnvelopeRecording(samples=[]).samplerate == 44100
+
+
 def test_envelope_loop_playback_loops_recorded_values_until_stopped():
     recording = EnvelopeRecording(samples=[(0.0, 0.3), (0.01, 0.6), (0.02, 0.9)])
     values = []

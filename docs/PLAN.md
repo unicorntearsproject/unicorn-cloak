@@ -1027,6 +1027,29 @@ unreadable file.
 
 567 tests (546 -> 567).
 
+**2026-09-23, same-day follow-up: bug audit stage 5 -- findings #17,
+#18, #19, the remaining Low-severity items with a real, measurable
+effect.** `#17`: `AudioManager.blocksize`/`samplerate` fell back to a
+hardcoded 1024/44100 while looping (neither `_mic` nor `_file` is set
+then), regardless of the real rate the recording was actually captured
+at -- `EnvelopeRecording` now carries its own `blocksize`/`samplerate`
+(set from the live source at record time), and the properties fall
+back to the loop's own recording before the hardcoded default, so
+`update_speaking`'s `frame_seconds` (attack/hold/release timing) stays
+accurate against the loop. `#18`: `stop_loop` always called
+`play_file()` when restoring to "file," even if the file had already
+finished or been manually stopped before the loop ever started -- the
+same unrequested-auto-play surprise `afd2ed0` already fixed for
+Rewind; it now only resumes playback if the file was actually playing
+when the loop began. `#19`: the OBS Port spinbox was wired to
+`valueChanged` (fires on every keystroke/step) instead of
+`editingFinished` like the other three OBS fields -- each firing calls
+`ObsLinkManager.restart()`, which `stop()`s the watcher and joins its
+thread for up to 2s *on the Qt thread*, so typing a 4-digit port froze
+the UI four times over.
+
+574 tests (567 -> 574).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

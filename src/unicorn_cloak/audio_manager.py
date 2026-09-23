@@ -97,6 +97,16 @@ class AudioManager(QObject):
         self.last_recording: EnvelopeRecording | None = None
         self._restore_source: str = "microphone"
         self._restore_file_path: str | None = None
+        # Whether the file was actually *playing* (not just selected as
+        # the source) when start_recording_and_loop was called -- bug
+        # audit 2026-09-23, #18: stop_loop used to always call
+        # play_file() when restoring to "file", even if the file had
+        # already finished or been manually stopped before the loop
+        # ever started -- the same unrequested-auto-play surprise
+        # commit afd2ed0 already fixed for Rewind. A stopped file stays
+        # stopped; stop_loop only resumes playback if it was actually
+        # running.
+        self._restore_was_playing_file: bool = False
         # Set by _handle_volume_from_source right before every emit --
         # __main__.py's on_volume_on_qt_thread reads this to measure how
         # long the hop from "audio block captured" to "Qt thread
@@ -115,12 +125,27 @@ class AudioManager(QObject):
     @property
     def blocksize(self) -> int:
         active = self._file or self._mic
-        return active.blocksize if active is not None else 1024
+        if active is not None:
+            return active.blocksize
+        # Falls back to the loop's own recorded rate, not straight to
+        # the hardcoded default -- bug audit 2026-09-23, #17: neither
+        # _mic nor _file is set while looping, so this used to always
+        # fall through to a fixed 1024/44100 regardless of what the
+        # recording actually captured at, throwing off update_speaking's
+        # frame_seconds (attack/hold/release timing) during loop
+        # playback. See EnvelopeRecording's own docstring.
+        if self._loop is not None:
+            return self._loop.recording.blocksize
+        return 1024
 
     @property
     def samplerate(self) -> int:
         active = self._file or self._mic
-        return active.samplerate if active is not None else 44100
+        if active is not None:
+            return active.samplerate
+        if self._loop is not None:
+            return self._loop.recording.samplerate
+        return 44100
 
     @property
     def is_file_playing(self) -> bool:
@@ -231,7 +256,16 @@ class AudioManager(QObject):
             return
         self._restore_source = self.config.audio.source
         self._restore_file_path = self.config.audio.file_path
-        self._recorder = EnvelopeRecorder(max_duration_s=duration_s)
+        self._restore_was_playing_file = self.is_file_playing
+        # blocksize/samplerate read here, not left to EnvelopeRecorder's
+        # own hardcoded defaults -- self._mic/self._file is still the
+        # one actually driving self.blocksize/samplerate at this exact
+        # point, before _start_loop (in _finish_recording, below) stops
+        # it. See EnvelopeRecording's own docstring (bug audit
+        # 2026-09-23, #17).
+        self._recorder = EnvelopeRecorder(
+            max_duration_s=duration_s, blocksize=self.blocksize, samplerate=self.samplerate
+        )
         self._recorder.start()
         self.recording_started.emit()
         QTimer.singleShot(int(duration_s * 1000), self._finish_recording)
@@ -245,7 +279,11 @@ class AudioManager(QObject):
         self._stop_loop()
         if self._restore_source == "file" and self._restore_file_path:
             self.switch_to_file(self._restore_file_path)
-            self.play_file()
+            # Only if it was actually playing before -- see
+            # _restore_was_playing_file's own comment (bug audit
+            # 2026-09-23, #18).
+            if self._restore_was_playing_file:
+                self.play_file()
         elif self._restore_source == "desktop":
             self.switch_to_desktop()
         else:

@@ -1867,7 +1867,14 @@ class ControlPanelWindow(QWidget):
         self.obs_port.setValue(self.config.obs.port)
         obs_port_tooltip = "obs-websocket's port -- 4455 is OBS's own default."
         self.obs_port.setToolTip(obs_port_tooltip)
-        self.obs_port.valueChanged.connect(self._on_obs_connection_field_changed)
+        # editingFinished, not valueChanged -- bug audit 2026-09-23,
+        # #19: valueChanged fires on every single step/keystroke, and
+        # _on_obs_connection_field_changed calls ObsLinkManager.restart()
+        # every time it runs, which stop()s the watcher and joins its
+        # thread for up to 2s *on the Qt thread* -- typing "4456" froze
+        # the UI four times over. The other three OBS fields already use
+        # editingFinished for exactly this reason; Port just missed it.
+        self.obs_port.editingFinished.connect(self._on_obs_connection_field_changed)
         self._add_row_with_reset_and_lock(
             obs_form, "Port", self.obs_port,
             self._default_for(self.config.obs, "port"), obs_port_tooltip,

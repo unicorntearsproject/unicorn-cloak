@@ -136,6 +136,8 @@ def test_late_finish_from_a_replaced_file_does_not_stop_the_new_one(qapp, monkey
             self.path = path
             self.on_finished = on_finished
             self.is_playing = True
+            self.blocksize = 1024
+            self.samplerate = 44100
             instances.append(self)
 
         def start(self):
@@ -172,7 +174,7 @@ def test_blocksize_and_samplerate_default_when_nothing_active(qapp):
     assert manager.samplerate > 0
 
 
-def _fake_microphone_class(started=None, stopped=None, devices=None):
+def _fake_microphone_class(started=None, stopped=None, devices=None, blocksize=1024, samplerate=44100):
     started = started if started is not None else []
     stopped = stopped if stopped is not None else []
     devices = devices if devices is not None else []
@@ -180,8 +182,8 @@ def _fake_microphone_class(started=None, stopped=None, devices=None):
     class _FakeMic:
         def __init__(self, **kwargs):
             self._on_volume = kwargs["on_volume"]
-            self.blocksize = 1024
-            self.samplerate = 44100
+            self.blocksize = blocksize
+            self.samplerate = samplerate
             devices.append(kwargs.get("device"))
 
         def start(self):
@@ -249,6 +251,54 @@ def test_stop_loop_restores_microphone_by_default(qapp, monkeypatch):
     assert manager.is_looping is False
     assert started == [True]  # switch_to_microphone restarted the mic
     manager.shutdown()
+
+
+def test_stop_loop_resumes_a_file_that_was_playing_before_the_loop(qapp, monkeypatch):
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+    manager.play_file()
+    assert manager.is_file_playing is True
+
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    manager.stop_loop()
+
+    assert manager.is_looping is False
+    assert manager.is_file_playing is True
+
+
+def test_stop_loop_does_not_auto_play_a_file_that_was_already_stopped(qapp, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#18): stop_loop used to always
+    # call play_file() when restoring to "file" -- even if the file had
+    # already finished or been manually stopped before the loop ever
+    # started (e.g. "Record 10s & loop" clicked from a stopped state, to
+    # tune against ambient silence). Same unrequested-auto-play surprise
+    # commit afd2ed0 already fixed for Rewind -- a stopped file must
+    # stay stopped.
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+    assert manager.is_file_playing is False  # source is "file", but nothing is playing
+
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    manager.stop_loop()
+
+    assert manager.is_looping is False
+    assert manager.config.audio.source == "file"
+    assert manager.is_file_playing is False  # still stopped, not auto-played
+    assert instances == []  # play_file() was never even called
 
 
 def test_shutdown_abandons_the_microphone_but_switching_sources_does_not(qapp, monkeypatch):
@@ -506,6 +556,8 @@ def _fake_file_playback_class(instances=None):
             self.path = path
             self.on_finished = on_finished
             self.is_playing = True
+            self.blocksize = 1024
+            self.samplerate = 44100
             instances.append(self)
 
         def start(self):
@@ -616,5 +668,31 @@ def test_start_recording_and_loop_replays_at_the_original_gained_level(qapp, mon
     manager.volume_measured.connect(volumes.append)
     assert _wait_until(qapp, lambda: len(volumes) > 0)
     assert all(v == 0.1 for v in volumes)  # replayed as-is, not gained a second time (0.2)
+
+    manager.shutdown()
+
+
+def test_looping_reports_the_recorded_rate_not_a_hardcoded_default(qapp, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#17): neither _mic nor _file is
+    # set while looping, so AudioManager.blocksize/samplerate used to
+    # always fall back to a hardcoded 1024/44100 -- regardless of the
+    # mic's real rate, throwing off update_speaking's frame_seconds
+    # (attack/hold/release timing, in __main__.py) during loop playback.
+    FakeMic, _started, _stopped = _fake_microphone_class(blocksize=512, samplerate=48000)
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    assert manager.blocksize == 512
+    assert manager.samplerate == 48000
+
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    # Mic is gone (looping stopped it) -- these must now come from the
+    # recording itself, not the old 1024/44100 fallback.
+    assert manager.blocksize == 512
+    assert manager.samplerate == 48000
 
     manager.shutdown()

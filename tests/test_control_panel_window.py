@@ -2112,6 +2112,30 @@ def test_typing_an_input_name_after_enabling_clears_the_hint(qapp, tmp_path):
     assert panel.obs_status_label.text() == "Not connected"
 
 
+def test_obs_port_step_alone_does_not_write_through_or_restart(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#19): obs_port.valueChanged was
+    # wired straight to _on_obs_connection_field_changed, which calls
+    # ObsLinkManager.restart() every time it runs -- restart() stop()s
+    # the watcher and joins its background thread for up to 2s *on the
+    # Qt thread*. valueChanged fires on every keystroke while typing a
+    # port number, so typing "4456" froze the UI four times over. The
+    # other three OBS fields already use editingFinished for exactly
+    # this reason (see the tests above) -- Port just missed it.
+    config, window, panel, _ = make_panel(tmp_path)
+    original_port = config.obs.port
+
+    panel.obs_port.setValue(original_port + 1)  # a step/keystroke, no editingFinished yet
+
+    assert config.obs.port == original_port  # not written through yet
+
+
+def test_obs_port_writes_through_on_editing_finished(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.obs_port.setValue(4456)
+    panel.obs_port.editingFinished.emit()
+    assert config.obs.port == 4456
+
+
 # --- Expressions ------------------------------------------------------------
 
 

@@ -573,9 +573,22 @@ class EnvelopeRecording:
     """A captured (seconds_since_start, volume) sequence -- what
     EnvelopeRecorder.finish() produces and EnvelopeLoopPlayback loops
     through. Kept as a plain dataclass, independent of any particular
-    recorder/player implementation, so it's trivial to test on its own."""
+    recorder/player implementation, so it's trivial to test on its own.
+
+    blocksize/samplerate (added 2026-09-23 bug audit, #17): the real
+    capture rate of whatever was actually recording (mic or file) at
+    the time -- not necessarily 1024/44100. AudioManager.blocksize/
+    samplerate fall back to these while a loop is playing, so
+    update_speaking's frame_seconds (attack/hold/release timing) stays
+    accurate against the loop instead of assuming a fixed, possibly
+    wrong rate: a live mic recorded at, say, 1024 samples @ 48kHz
+    (~21.3ms/block) but replayed against the old hardcoded fallback
+    (1024/44100, ~23.2ms/block) made the envelope behave about 9%
+    differently while tuning against the loop than it did live."""
 
     samples: list[tuple[float, float]]
+    blocksize: int = 1024
+    samplerate: int = 44100
 
     @property
     def duration_s(self) -> float:
@@ -600,8 +613,18 @@ class EnvelopeRecorder:
     need its own thread or locking.
     """
 
-    def __init__(self, max_duration_s: float = 10.0) -> None:
+    def __init__(
+        self, max_duration_s: float = 10.0, blocksize: int = 1024, samplerate: int = 44100
+    ) -> None:
+        # blocksize/samplerate: the real rate of whatever's actually
+        # recording (mic or file) -- see EnvelopeRecording's own
+        # docstring for why this matters (bug audit 2026-09-23, #17).
+        # Caller (AudioManager.start_recording_and_loop) passes its own
+        # blocksize/samplerate properties, read while the source being
+        # recorded is still active.
         self.max_duration_s = max_duration_s
+        self.blocksize = blocksize
+        self.samplerate = samplerate
         self._start_time: float | None = None
         self._samples: list[tuple[float, float]] = []
         self._finished = False
@@ -626,7 +649,9 @@ class EnvelopeRecorder:
 
     def finish(self) -> EnvelopeRecording:
         self._finished = True
-        return EnvelopeRecording(samples=list(self._samples))
+        return EnvelopeRecording(
+            samples=list(self._samples), blocksize=self.blocksize, samplerate=self.samplerate
+        )
 
 
 class EnvelopeLoopPlayback:
