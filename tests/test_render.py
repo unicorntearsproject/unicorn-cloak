@@ -211,6 +211,41 @@ def test_effective_talk_level_property(qapp):
     assert window.effective_talk_level == 2
 
 
+def test_manual_muted_forces_the_mouth_closed_independent_of_obs_mute(qapp):
+    # Quick-win enhancement E12 (bug audit addendum 2026-09-23): a manual
+    # "mouth closed" toggle for a cough or an aside, without touching
+    # OBS -- must work whether or not OBS mute (set_muted) is also
+    # currently applied.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_talk_level(2)
+    assert window.effective_talk_level == 2
+
+    window.set_manual_muted(True)
+    assert window.effective_talk_level == 0
+
+    window.set_manual_muted(False)
+    assert window.effective_talk_level == 2
+
+
+def test_manual_muted_and_obs_muted_are_independent_flags(qapp):
+    # Neither one silently clears the other -- both must be lifted
+    # before the mouth follows talk_level again.
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    window.set_talk_level(2)
+
+    window.set_muted(True)
+    window.set_manual_muted(True)
+    assert window.effective_talk_level == 0
+
+    window.set_muted(False)  # OBS unmutes -- manual toggle still forces shut
+    assert window.effective_talk_level == 0
+
+    window.set_manual_muted(False)  # now both are lifted
+    assert window.effective_talk_level == 2
+
+
 def test_on_frame_does_not_simulate_before_one_sim_dt_elapses(qapp):
     rig = make_test_rig()
     window = RenderWindow(rig, MotionConfig())

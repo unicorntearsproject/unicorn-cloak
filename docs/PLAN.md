@@ -1253,6 +1253,30 @@ a glance without needing an audit to catch them.
 
 627 tests (618 -> 627).
 
+**2026-09-23, yet later:** two more quick-win enhancements from the
+addendum.
+
+**E12, manual "mouth closed" toggle:** `RenderWindow` gained a second,
+independent `manual_muted` flag (not a reuse of `muted`, which is OBS's
+own -- reusing it would let whichever one fired last silently clear the
+other) and `set_manual_muted()`; `effective_talk_level` ORs the two
+together. A checkable "Mute mouth" button in the Control Panel's bottom
+bar drives it -- for a cough or an aside without touching OBS. Button
+only, no focus-only hotkey (that part of E12 was explicitly optional;
+not done).
+
+**E5, calibrate noise gate:** `AudioManager.calibrate_noise_gate()`
+samples 3 seconds of whatever's currently active (reusing
+`EnvelopeRecorder`, mutually exclusive with "Record 10s & loop" via the
+same `is_recording` guard) and reports 1.5x the loudest sample seen via
+a new `calibration_finished` signal. The Audio tab's Envelope section
+gained a "Calibrate noise gate" button that writes the result through
+the Noise gate field's own spin-box setter (so it persists exactly like
+any hand-typed edit), not by writing `config.audio.noise_gate`
+directly.
+
+640 tests (627 -> 640).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

@@ -2301,6 +2301,105 @@ def test_switching_source_while_obs_not_muted_leaves_render_window_unmuted(qapp,
     assert window.muted is False
 
 
+# --- Calibrate noise gate (quick-win enhancement E5, 2026-09-23) --------
+
+
+def test_calibrate_button_click_triggers_audio_manager_calibration(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    calls = []
+    manager.calibrate_noise_gate = lambda duration_s=3.0: calls.append(duration_s)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    panel._calibrate_gate_btn.click()
+
+    assert calls == [3.0]
+
+
+def test_calibration_started_disables_and_relabels_the_button(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    manager.calibration_started.emit()
+
+    assert panel._calibrate_gate_btn.isEnabled() is False
+    assert panel._calibrate_gate_btn.text() == "Calibrating… stay quiet"
+
+
+def test_calibration_finished_updates_the_noise_gate_field_and_persists(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    state_path = tmp_path / "settings.json"
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=state_path, audio_manager=manager,
+    )
+
+    manager.calibration_started.emit()
+    manager.calibration_finished.emit(0.0123)
+
+    assert panel._calibrate_gate_btn.isEnabled() is True
+    assert panel._calibrate_gate_btn.text() == "Calibrate noise gate (3s of quiet)"
+    assert panel.noise_gate_field.value() == pytest.approx(0.0123)
+    assert config.audio.noise_gate == pytest.approx(0.0123)
+
+
+# --- Manual "mouth closed" toggle (quick-win enhancement E12, 2026-09-23) ---
+
+
+def test_mute_mouth_button_starts_unchecked(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._mute_mouth_btn.isChecked() is False
+    assert panel._mute_mouth_btn.text() == "Mute mouth"
+    assert window.manual_muted is False
+
+
+def test_clicking_mute_mouth_forces_the_render_window_shut(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+
+    panel._mute_mouth_btn.click()
+
+    assert window.manual_muted is True
+    assert panel._mute_mouth_btn.text() == "Mouth muted"
+
+    panel._mute_mouth_btn.click()
+
+    assert window.manual_muted is False
+    assert panel._mute_mouth_btn.text() == "Mute mouth"
+
+
+def test_mute_mouth_is_independent_of_obs_mute(qapp, tmp_path):
+    # Neither one should clear the other -- see render.py's own
+    # effective_talk_level, which ORs manual_muted and muted together.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._obs_muted = True
+    window.set_muted(True)
+
+    panel._mute_mouth_btn.click()
+    assert window.manual_muted is True
+    assert window.muted is True  # OBS mute untouched by the manual toggle
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    assert window.muted is False  # OBS mute gated off on this source (D4)
+    assert window.manual_muted is True  # manual toggle still holds
+
+
 # --- OBS mute awareness status label -----------------------------------------
 
 

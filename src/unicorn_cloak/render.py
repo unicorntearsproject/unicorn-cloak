@@ -214,6 +214,16 @@ class RenderWindow(QWidget):
         # directly, so unmuting instantly reflects whatever talk_level
         # already is without waiting for a fresh audio update.
         self.muted = False
+        # A second, independent force-closed flag -- quick-win
+        # enhancement E12 (bug audit addendum 2026-09-23): a manual
+        # "mouth closed" toggle in the Control Panel, for a cough or an
+        # aside without needing to reach for OBS's own mute at all. Kept
+        # separate from self.muted (OBS's own signal) rather than reusing
+        # it, since obs_link.ObsMuteWatcher's own events would otherwise
+        # overwrite whichever one fired last -- effective_talk_level ORs
+        # the two together instead, so either one alone is enough to
+        # force the mouth shut, and neither can silently clear the other.
+        self.manual_muted = False
         # Plain telemetry for Settings' level meter -- see
         # set_envelope/set_measured_latency_ms's own docstrings.
         self.current_envelope = 0.0
@@ -479,9 +489,15 @@ class RenderWindow(QWidget):
         this exists."""
         self.muted = muted
 
+    def set_manual_muted(self, muted: bool) -> None:
+        """The Control Panel's own manual "mouth closed" toggle (E12) --
+        see self.manual_muted's own comment for why this is a separate
+        flag from set_muted's, not the same one reused."""
+        self.manual_muted = muted
+
     @property
     def effective_talk_level(self) -> int:
-        return 0 if self.muted else self.talk_level
+        return 0 if (self.muted or self.manual_muted) else self.talk_level
 
     def set_manual_override(self, group_name: str, state_name: str | None) -> None:
         """Forces every manual_driven sprite in `group_name` to show only

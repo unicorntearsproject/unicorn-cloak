@@ -72,6 +72,21 @@ class AudioManager(QObject):
     # QueuedConnection is needed for either.
     recording_started = Signal()
     recording_finished = Signal()
+    # Fire around calibrate_noise_gate()'s own capture window -- separate
+    # from recording_started/recording_finished (used by "Record 10s &
+    # loop") since the two features drive different buttons in the
+    # Control Panel; sharing one pair of signals would make the loop
+    # button relabel itself "Recording..." while calibration runs, and
+    # vice versa. Both fire on the Qt thread already, same as
+    # recording_started/recording_finished (see that pair's own comment).
+    calibration_started = Signal()
+    # Carries the newly-computed noise_gate value -- quick-win
+    # enhancement E5 (bug audit addendum 2026-09-23). The Control Panel
+    # writes it into config.audio.noise_gate itself (via the same
+    # spin-box setter every other field already uses, so it persists and
+    # displays consistently), rather than this class reaching into
+    # config directly.
+    calibration_finished = Signal(float)
     # Fires with the real device name Microphone actually opened, once a
     # stream connects -- quick-win enhancement E2 (bug audit addendum
     # 2026-09-23). Fires from Microphone's own background thread, same as
@@ -285,6 +300,34 @@ class AudioManager(QObject):
         self._recorder.start()
         self.recording_started.emit()
         QTimer.singleShot(int(duration_s * 1000), self._finish_recording)
+
+    def calibrate_noise_gate(self, duration_s: float = 3.0) -> None:
+        """Samples `duration_s` of whatever's currently active (mic,
+        desktop audio, or file -- the owner is expected to stay quiet),
+        then sets Noise gate to 1.5x the loudest sample measured -- a
+        safety margin above real ambient noise instead of a guess.
+        Quick-win enhancement E5 (bug audit addendum 2026-09-23). Reuses
+        EnvelopeRecorder exactly like start_recording_and_loop does
+        (mutually exclusive with it via the same is_recording guard --
+        this class only ever has one EnvelopeRecorder capturing at a
+        time), just without the loop-playback step afterward: this is a
+        one-shot measurement to apply once, not a tuning aid to replay."""
+        if self.is_recording:
+            return
+        self._recorder = EnvelopeRecorder(
+            max_duration_s=duration_s, blocksize=self.blocksize, samplerate=self.samplerate
+        )
+        self._recorder.start()
+        self.calibration_started.emit()
+        QTimer.singleShot(int(duration_s * 1000), self._finish_calibration)
+
+    def _finish_calibration(self) -> None:
+        if self._recorder is None:
+            return
+        recording = self._recorder.finish()
+        self._recorder = None
+        ambient_peak = max((value for _t, value in recording.samples), default=0.0)
+        self.calibration_finished.emit(ambient_peak * 1.5)
 
     def stop_loop(self) -> None:
         """Stops looping and restores whichever source (mic, desktop

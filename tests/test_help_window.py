@@ -76,3 +76,22 @@ def test_reference_tab_documents_desktop_audio_and_the_device_dropdown(qapp):
     assert "Desktop audio" in reference_text
     assert "Now capturing" in reference_text
     assert "Device dropdown" in reference_text
+
+
+def test_reference_tab_documents_the_mute_mouth_button(qapp):
+    # Quick-win enhancement E12 (bug audit addendum 2026-09-23): a manual
+    # mute toggle, independent of OBS mute -- must be documented, not
+    # just a mystery button in the bottom bar.
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    reference_text = tabs.widget(4).toPlainText()
+    assert "Mute mouth" in reference_text
+    assert "independent of OBS mute" in reference_text
+
+
+def test_reference_tab_documents_the_calibrate_noise_gate_button(qapp):
+    # Quick-win enhancement E5 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    reference_text = tabs.widget(4).toPlainText()
+    assert "Calibrate noise gate" in reference_text

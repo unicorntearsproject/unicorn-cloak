@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 from unicorn_cloak.audio_manager import AudioManager
 from unicorn_cloak.config import Config
 
@@ -243,6 +245,64 @@ def test_stopping_the_microphone_emits_an_empty_device_resolved(qapp, monkeypatc
     manager.switch_to_file("/tmp/whatever.wav")
 
     assert resolved == [""]
+
+
+def test_calibrate_noise_gate_sets_gate_to_1_5x_the_loudest_ambient_sample(qapp, monkeypatch):
+    # Quick-win enhancement E5 (bug audit addendum 2026-09-23):
+    # calibrate_noise_gate should report 1.5x the loudest sample it saw
+    # during the capture window, not an average or the raw peak itself.
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    started_events = []
+    finished_values = []
+    manager.calibration_started.connect(lambda: started_events.append(True))
+    manager.calibration_finished.connect(finished_values.append)
+
+    manager.calibrate_noise_gate(duration_s=0.02)
+    assert started_events == [True]
+
+    manager._handle_volume_from_source(0.01)
+    manager._handle_volume_from_source(0.03)
+    manager._handle_volume_from_source(0.02)
+
+    assert _wait_until(qapp, lambda: len(finished_values) == 1)
+    assert finished_values[0] == pytest.approx(0.03 * 1.5)
+    manager.shutdown()
+
+
+def test_calibrate_noise_gate_does_not_start_a_loop_afterward(qapp, monkeypatch):
+    # Distinct from "Record 10s & loop" -- a one-shot measurement, not a
+    # tuning aid to replay.
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    manager.calibrate_noise_gate(duration_s=0.02)
+    manager._handle_volume_from_source(0.01)
+
+    assert _wait_until(qapp, lambda: manager.is_recording is False)
+    assert manager.is_looping is False
+    manager.shutdown()
+
+
+def test_calibrate_noise_gate_is_a_noop_while_already_recording(qapp, monkeypatch):
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    started_events = []
+    manager.calibration_started.connect(lambda: started_events.append(True))
+
+    manager.start_recording_and_loop(duration_s=1.0)
+    manager.calibrate_noise_gate(duration_s=1.0)
+
+    assert started_events == []  # calibration never started -- a loop recording is already in progress
+    manager.shutdown()
 
 
 def test_start_recording_and_loop_captures_fed_volumes_then_loops(qapp, monkeypatch):

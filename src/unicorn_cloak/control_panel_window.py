@@ -1822,7 +1822,7 @@ class ControlPanelWindow(QWidget):
             "1.0 = no change. Raise it if the level meter barely moves;\n"
             "lower it if it's pinned at the top even when you're quiet.",
         )
-        self._add_double(
+        self.noise_gate_field = self._add_double(
             envelope_form, "Noise gate", 0.0, 0.5, 0.001, 4,
             self.config.audio, "noise_gate",
             "RMS volume below this is treated as silence -- filters out\n"
@@ -1869,6 +1869,26 @@ class ControlPanelWindow(QWidget):
             "How fast the mouth closes once the hold period ends.",
         )
         envelope_section.body_layout.addLayout(envelope_form)
+
+        # Quick-win enhancement E5 (bug audit addendum 2026-09-23):
+        # samples 3s of ambient noise and sets Noise gate to 1.5x the
+        # loudest sample measured -- a quick starting point, not a
+        # replacement for watching the level meter while talking.
+        calibrate_row = QHBoxLayout()
+        self._calibrate_gate_btn = QPushButton("Calibrate noise gate (3s of quiet)")
+        self._calibrate_gate_btn.setToolTip(
+            "Stay quiet for 3 seconds while this samples the current\n"
+            "source's own ambient noise floor, then sets Noise gate to\n"
+            "about 1.5x the loudest ambient sample measured. A quick\n"
+            "starting point -- fine-tune by ear afterward if needed."
+        )
+        self._calibrate_gate_btn.clicked.connect(self._on_calibrate_noise_gate_clicked)
+        calibrate_row.addWidget(self._calibrate_gate_btn)
+        calibrate_row.addStretch(1)
+        envelope_section.body_layout.addLayout(calibrate_row)
+        if self.audio_manager is not None:
+            self.audio_manager.calibration_started.connect(self._on_calibration_started)
+            self.audio_manager.calibration_finished.connect(self._on_calibration_finished)
 
         # Warning, not a live clamp -- owner's request, 2026-09-23 (bug
         # audit finding #20, "no threshold ordering checks"): nothing
@@ -2422,6 +2442,22 @@ class ControlPanelWindow(QWidget):
         )
         check_issues_btn.clicked.connect(self._on_check_for_issues)
         actions_row_2.addWidget(check_issues_btn)
+
+        # Quick-win enhancement E12 (bug audit addendum 2026-09-23): a
+        # manual "mouth closed" toggle, independent of OBS mute, for a
+        # cough or an aside without touching OBS at all. Checkable, not a
+        # momentary press-and-hold -- a stream aside can run longer than
+        # a single click-and-release, and a toggle is simpler to reason
+        # about mid-performance than "is it currently held."
+        self._mute_mouth_btn = QPushButton("Mute mouth")
+        self._mute_mouth_btn.setCheckable(True)
+        self._mute_mouth_btn.setToolTip(
+            "Forces the mouth closed, independent of OBS mute -- for a\n"
+            "cough or an aside without touching OBS. Click again to let\n"
+            "the mouth follow the mic/audio source again."
+        )
+        self._mute_mouth_btn.toggled.connect(self._on_mute_mouth_toggled)
+        actions_row_2.addWidget(self._mute_mouth_btn)
 
         actions_row_2.addStretch(1)
 
@@ -3886,6 +3922,24 @@ class ControlPanelWindow(QWidget):
         self.record_loop_btn.setEnabled(True)
         self._update_record_loop_button_text()
 
+    def _on_calibrate_noise_gate_clicked(self) -> None:
+        if self.audio_manager is None:
+            return
+        self.audio_manager.calibrate_noise_gate(duration_s=3.0)
+
+    def _on_calibration_started(self) -> None:
+        self._calibrate_gate_btn.setEnabled(False)
+        self._calibrate_gate_btn.setText("Calibrating… stay quiet")
+
+    def _on_calibration_finished(self, new_gate: float) -> None:
+        self._calibrate_gate_btn.setEnabled(True)
+        self._calibrate_gate_btn.setText("Calibrate noise gate (3s of quiet)")
+        # Goes through the spin box's own setValue, not
+        # self.config.audio.noise_gate directly -- that's what triggers
+        # its existing valueChanged -> _setter chain (persists via
+        # _save_config, same as any other hand-typed edit to this field).
+        self.noise_gate_field.setValue(new_gate)
+
     def _on_browse_audio_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -3927,6 +3981,11 @@ class ControlPanelWindow(QWidget):
 
     def _on_file_playback_stopped(self) -> None:
         self._update_play_button_text()
+
+    def _on_mute_mouth_toggled(self, checked: bool) -> None:
+        if self.render_window is not None:
+            self.render_window.set_manual_muted(checked)
+        self._mute_mouth_btn.setText("Mouth muted" if checked else "Mute mouth")
 
     def _on_device_resolved(self, name: str) -> None:
         if name:

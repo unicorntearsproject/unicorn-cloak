@@ -359,7 +359,10 @@ them) independently.</li>
 source controls on their own row (Source/Play/Browse…/Record, with the
 chosen file's path shown just below, shortened from the middle if it's
 long), then Undo/Redo/Help/Save/Save As…/Load…/Export Snapshot…/Check
-for Issues…/Guide/Ghost/Quit.</li>
+for Issues…/Guide/Ghost/<b>Mute mouth</b>/Quit. <b>Mute mouth</b> forces
+the mouth closed manually — independent of OBS mute, for a cough or an
+aside without touching OBS at all. Click it again to let the mouth
+follow the mic/audio source again.</li>
 </ul>
 
 <h3>Hotkeys</h3>
@@ -607,7 +610,11 @@ thresholds as marks (solid for "open", dashed for "close") plus a
 measured audio-to-frame latency reading -- it measures from audio
 capture to this app receiving it, not including mic hardware/driver
 buffering before that or the Render Window's own render timer (up to
-~16ms) after it.</li>
+~16ms) after it. <b>Calibrate noise gate</b> (below the fields) samples 3
+seconds of whatever's currently active while you stay quiet, then sets
+Noise gate to about 1.5x the loudest ambient sample it measured -- a
+quick starting point, not a replacement for fine-tuning by ear
+afterward.</li>
 <li><b>OBS mute awareness</b> section — reads a named OBS input's mute
 state live, over obs-websocket, and forces the mouth fully closed while
 it's muted -- so the avatar doesn't keep "talking" while the stream
