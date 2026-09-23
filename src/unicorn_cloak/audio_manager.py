@@ -203,6 +203,13 @@ class AudioManager(QObject):
             return
         self._stop_microphone()
         self._stop_file()
+        # Also the loop -- bug audit 2026-09-23, #11: without this, Play
+        # could start a *second*, real background thread feeding the
+        # envelope alongside an already-running loop (reachable via the
+        # Play/Stop button's own stale-label bug this same finding fixes
+        # below, in _start_loop) -- two sources driving talk_level at
+        # once, neither one in control.
+        self._stop_loop()
         self._file = FilePlayback(
             self.config.audio.file_path,
             on_volume=self._handle_volume_from_source,
@@ -270,11 +277,26 @@ class AudioManager(QObject):
         if self.last_recording is None or not self.last_recording.samples:
             return
         self._stop_microphone()
+        was_playing_a_file = self._file is not None
         self._stop_file()
+        if was_playing_a_file:
+            # _stop_file() (the private helper) doesn't emit
+            # file_playback_stopped -- bug audit 2026-09-23, #11: a
+            # loop starting while a file was playing (e.g. "Record 10s &
+            # loop" clicked mid-playback) silently interrupted it with
+            # no signal, so the Play/Stop button's label never refreshed
+            # (stuck on "Stop") and, worse, a later Play click -- reading
+            # that same now-stale is_file_playing==False -- called
+            # play_file() instead of stop_file(), starting a *second*
+            # real background thread feeding the envelope alongside the
+            # still-running loop. Emitting this here is exactly what
+            # stop_file() (the public method) itself does; only the
+            # trigger differs.
+            self.file_playback_stopped.emit()
         self._stop_loop()
         self._loop = EnvelopeLoopPlayback(
             self.last_recording,
-            on_volume=self._handle_volume_from_source,
+            on_volume=self._handle_volume_from_loop,
             on_error=self.error_occurred.emit,
         )
         self._loop.start()
@@ -350,6 +372,26 @@ class AudioManager(QObject):
         # meaningful and would just make the level meter's auto-scaling
         # (max(wide_open * 1.5, envelope)) chase an ever-growing number.
         value = min(max(value * self.config.audio.gain, 0.0), 1.0)
+        self.last_capture_monotonic = time.monotonic()
+        if self._recorder is not None:
+            self._recorder.record(value)
+        self.volume_measured.emit(value)
+
+    def _handle_volume_from_loop(self, value: float) -> None:
+        """EnvelopeLoopPlayback's own on_volume callback -- deliberately
+        NOT _handle_volume_from_source. The recorded samples it's
+        replaying already had config.audio.gain applied once, at the
+        moment they were originally captured (see that method's own
+        comment) -- routing loop playback back through the
+        gain-applying handler would apply gain a *second* time on every
+        replayed sample. Bug audit 2026-09-23, #6: at gain=2.0, a live
+        0.05 input showed 0.1, but the loop -- whose whole purpose is
+        tuning thresholds against a realistic, repeatable stand-in for
+        live speech -- replayed 0.2, silently doubling the effective
+        gain for anyone whose Sensitivity isn't exactly 1.0. Still feeds
+        the recorder/last_capture_monotonic/volume_measured exactly like
+        _handle_volume_from_source, just without the second gain step."""
+        value = min(max(value, 0.0), 1.0)  # already gained -- just re-clamp defensively
         self.last_capture_monotonic = time.monotonic()
         if self._recorder is not None:
             self._recorder.record(value)

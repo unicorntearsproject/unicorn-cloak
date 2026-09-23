@@ -68,6 +68,33 @@ def find_rig_issues(rig: AvatarRig) -> list[RigIssue]:
         issues.extend(_check_variant_collisions(automatic, "blink_state", motion.BLINK_STATE_LABELS, label))
 
     issues.extend(_check_inconsistent_state_labeling(rig))
+    issues.extend(_check_costume_pair_same_sprite(rig))
+    return issues
+
+
+def _check_costume_pair_same_sprite(rig: AvatarRig) -> list[RigIssue]:
+    """A costume row accepts the same sprite on both sides -- the editor
+    never blocks it, and the demo file shipped exactly this (a (7, 7)
+    pair in slot 0), whose net effect after AvatarRig.assign_costume_pair
+    (bug audit 2026-09-23, #10's fix: the hide_id sprite is now hidden
+    in every *other* slot, not just shown in this one) is that the
+    sprite ends up hidden in this slot (show_id's own write, applied
+    last) *and* hidden everywhere else (hide_id's write) -- permanently
+    invisible in every costume, almost certainly not what was intended."""
+    issues = []
+    for slot, pairs in enumerate(rig.costume_assignments):
+        for hide_id, show_id in pairs:
+            if hide_id == show_id:
+                sprite = rig.by_id(hide_id)
+                name = f"sprite {hide_id}" if sprite is None else f"sprite {hide_id} ({sprite.path})"
+                issues.append(RigIssue(
+                    message=(
+                        f"Costume hotkey slot {slot + 1} pairs {name} with "
+                        f"itself (same sprite in both Hide and Show) -- it "
+                        f"ends up hidden in every costume, not just this one."
+                    ),
+                    sprite_ids=(hide_id,),
+                ))
     return issues
 
 

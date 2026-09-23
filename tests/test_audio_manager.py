@@ -476,3 +476,145 @@ def test_list_devices_delegates_to_audio_module(qapp, monkeypatch):
     assert manager.list_devices() == [
         "Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo",
     ]
+
+
+# --- Loop playback does not double-apply gain (bug audit 2026-09-23, #6) ----
+
+
+def test_loop_volume_handler_does_not_apply_gain_again(qapp):
+    # _handle_volume_from_source (mic/file) applies gain once, at
+    # capture time, and that already-gained value is what gets
+    # recorded. Replaying a recording through that same handler would
+    # apply gain a *second* time -- _handle_volume_from_loop is the
+    # loop's own, separate callback specifically to avoid that.
+    config = Config()
+    config.audio.gain = 2.0
+    manager = AudioManager(config)
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+
+    manager._handle_volume_from_loop(0.1)  # already gained when it was recorded
+
+    assert volumes == [0.1]  # not 0.2
+
+
+def _fake_file_playback_class(instances=None):
+    instances = instances if instances is not None else []
+
+    class _FakeFilePlayback:
+        def __init__(self, path, on_volume, on_error=None, on_finished=None):
+            self.path = path
+            self.on_finished = on_finished
+            self.is_playing = True
+            instances.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            self.is_playing = False
+
+    return _FakeFilePlayback, instances
+
+
+# --- Loop/file playback never run at the same time (bug audit 2026-09-23, #11) --
+
+
+def test_starting_a_loop_while_a_file_is_playing_emits_file_playback_stopped(qapp, monkeypatch):
+    # Regression: _start_loop used to call the private _stop_file()
+    # (no signal), so the Play/Stop button's label never refreshed off
+    # "Stop" -- and a later Play click, reading that stale is_file_
+    # playing==False, called play_file() instead of stop_file(),
+    # starting a second real background thread alongside the loop.
+    FakeFilePlayback, _instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+    manager.play_file()
+    assert manager.is_file_playing is True
+
+    stopped_events = []
+    manager.file_playback_stopped.connect(lambda: stopped_events.append(True))
+
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    assert stopped_events == [True]
+    assert manager.is_file_playing is False
+
+    manager.shutdown()
+
+
+def test_starting_a_loop_with_no_file_playing_does_not_emit_file_playback_stopped(qapp, monkeypatch):
+    # The signal is specifically for interrupting a *file* -- starting a
+    # loop from the mic (the common case) has nothing to report here.
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    stopped_events = []
+    manager.file_playback_stopped.connect(lambda: stopped_events.append(True))
+
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    assert stopped_events == []
+    manager.shutdown()
+
+
+def test_play_file_stops_an_active_loop(qapp, monkeypatch):
+    # Regression: play_file() stopped the mic and any earlier file, but
+    # never the loop -- Play could start a file alongside a
+    # still-running loop, two background threads feeding the envelope
+    # at once.
+    FakeFilePlayback, _instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    manager = AudioManager(Config())
+    manager.start()
+    manager.start_recording_and_loop(duration_s=0.02)
+    manager._handle_volume_from_source(0.3)
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+
+    manager.config.audio.file_path = "/tmp/whatever.wav"
+    manager.play_file()
+
+    assert manager.is_looping is False
+    assert manager.is_file_playing is True
+
+    manager.shutdown()
+
+
+def test_start_recording_and_loop_replays_at_the_original_gained_level(qapp, monkeypatch):
+    # End-to-end: record a live value through the real gain-applying
+    # path, then confirm the loop it starts replays that exact recorded
+    # level, not a further-multiplied one.
+    FakeMic, _started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+
+    config = Config()
+    config.audio.gain = 2.0
+    manager = AudioManager(config)
+    manager.start()  # mic active by default
+    manager.start_recording_and_loop(duration_s=0.05)
+
+    manager._handle_volume_from_source(0.05)  # live raw input
+    assert manager.last_capture_monotonic is not None
+
+    assert _wait_until(qapp, lambda: manager.is_looping is True)
+    assert [v for _t, v in manager.last_recording.samples] == [0.1]  # 0.05 * gain 2.0, recorded once
+
+    volumes = []
+    manager.volume_measured.connect(volumes.append)
+    assert _wait_until(qapp, lambda: len(volumes) > 0)
+    assert all(v == 0.1 for v in volumes)  # replayed as-is, not gained a second time (0.2)
+
+    manager.shutdown()

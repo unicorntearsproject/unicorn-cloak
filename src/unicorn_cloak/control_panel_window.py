@@ -3830,10 +3830,35 @@ class ControlPanelWindow(QWidget):
         self._expression_buttons.clear()
 
         pairs = self._manual_expression_pairs()
+        if self.render_window is not None:
+            # Drop any live override whose (group, state) no longer
+            # matches a pair that actually exists in the current rig --
+            # e.g. after Load swapped to a different avatar. Left alone,
+            # a stale override keeps suppressing any *future* sprite
+            # that happens to share its group_name (render.py's
+            # suppressed_by_other_expression), invisibly, with no button
+            # left in this section to ever toggle it back off (bug audit
+            # 2026-09-23, #9).
+            pairs_set = set(pairs)
+            stale_groups = [
+                group for group, state in self.render_window.manual_overrides.items()
+                if (group, state) not in pairs_set
+            ]
+            for group in stale_groups:
+                self.render_window.set_manual_override(group, None)
         if pairs:
             for group, state in pairs:
                 btn = QPushButton(f"{group}: {state}")
                 btn.setCheckable(True)
+                # Restore checked state from the live override rather
+                # than always starting unchecked -- bug audit 2026-09-23,
+                # #9: this section rebuilds (destroying every button) on
+                # every property edit, Load, and hot reload, so without
+                # this an expression that's still actively forced live
+                # showed its button as off, needing an extra click to
+                # turn back on before it could be turned off again.
+                if self.render_window is not None and self.render_window.manual_overrides.get(group) == state:
+                    btn.setChecked(True)
                 btn.setToolTip(
                     f"Forces every sprite tagged Group name {group!r}, State\n"
                     f"name {state!r} to show, live, on the real Render Window\n"

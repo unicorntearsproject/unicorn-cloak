@@ -272,31 +272,43 @@ class AvatarRig:
 
     def assign_costume_pair(self, slot: int, hide_id: int, show_id: int) -> None:
         """Adds a hide/show pair to costume_assignments[slot] and writes
-        it straight through to both sprites' costume_layers[slot] -- see
-        that field's own comment for why the write-through matters.
+        it straight through to both sprites' costume_layers -- see that
+        field's own comment for why the write-through matters.
         `hide_id`'s sprite is hidden everywhere else and only shows in
         this slot (owner's own wording: "assumed off... the hotkey will
         toggle its display"); `show_id`'s sprite is the reverse -- shown
         everywhere else, hidden here ("what it swaps with... assumed
-        on"). A no-op if either id doesn't resolve to a real sprite."""
+        on"). A no-op if either id doesn't resolve to a real sprite.
+
+        hide_sprite's costume_layers is fully replaced (every *other*
+        slot set False, this one True), not just this slot flipped on --
+        bug audit 2026-09-23, #10: a fresh sprite already defaults to
+        all-True, so writing only costume_layers[slot]=True was a
+        no-op against every *other* slot, leaving it visible everywhere
+        despite the Help text's own promise ("hidden everywhere else").
+        show_sprite only needs this one slot touched -- "shown
+        everywhere else" is already exactly what the all-True default
+        gives it."""
         hide_sprite = self.by_id(hide_id)
         show_sprite = self.by_id(show_id)
         if hide_sprite is None or show_sprite is None:
             return
         self.costume_assignments[slot].append((hide_id, show_id))
-        hide_sprite.costume_layers = with_costume_layer(hide_sprite.costume_layers, slot, True)
+        hide_sprite.costume_layers = tuple(i == slot for i in range(NUM_COSTUMES))
         show_sprite.costume_layers = with_costume_layer(show_sprite.costume_layers, slot, False)
 
     def remove_costume_pair(self, slot: int, index: int) -> None:
         """Removes the pair at `index`, reverting both sprites'
-        costume_layers[slot] back to True (the default -- "assumed on")
-        rather than guessing whether some other pair still wants either
-        of them hidden in this slot."""
+        costume_layers back to the all-True default rather than
+        guessing whether some other pair still wants either of them
+        hidden somewhere. hide_sprite gets every slot reset (assign_
+        costume_pair set every slot, not just this one -- see its own
+        docstring); show_sprite only ever had this one slot touched."""
         hide_id, show_id = self.costume_assignments[slot].pop(index)
         hide_sprite = self.by_id(hide_id)
         show_sprite = self.by_id(show_id)
         if hide_sprite is not None:
-            hide_sprite.costume_layers = with_costume_layer(hide_sprite.costume_layers, slot, True)
+            hide_sprite.costume_layers = tuple(True for _ in range(NUM_COSTUMES))
         if show_sprite is not None:
             show_sprite.costume_layers = with_costume_layer(show_sprite.costume_layers, slot, True)
 

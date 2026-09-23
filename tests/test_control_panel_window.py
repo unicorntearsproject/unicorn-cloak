@@ -1853,6 +1853,47 @@ def test_expressions_section_refreshes_after_tagging_a_sprite_manual(qapp, tmp_p
     assert ("Mouth", "Laughing") in panel._expression_buttons
 
 
+def test_expression_button_stays_checked_across_a_rebuild_while_still_forced(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#9): _refresh_expressions_section
+    # destroys and recreates every button, always unchecked, and runs on
+    # every property edit -- so forcing "Eyes: Open" and then editing an
+    # unrelated sprite's Variant used to show the button as off while
+    # the Render Window kept forcing the expression live. The next
+    # Shift+<key> press just re-checked the button with no visible
+    # change; turning it off needed a second press.
+    rig = _make_manual_expression_rig()
+    config, window, panel, _ = make_panel(tmp_path, rig=rig)
+    panel._expression_buttons[("Mouth", "Laughing")].setChecked(True)
+    assert window.manual_overrides.get("Mouth") == "Laughing"
+
+    panel._select(1)  # the *other* sprite -- an edit unrelated to the expression
+    panel.variant.setValue(3)
+
+    assert panel._expression_buttons[("Mouth", "Laughing")].isChecked() is True
+    assert window.manual_overrides.get("Mouth") == "Laughing"  # still actually forced
+
+
+def test_refresh_expressions_section_drops_an_override_for_a_removed_group(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#9): after Load (or any edit
+    # that removes the sprite an override's group/state pair came
+    # from), a stale entry in render_window.manual_overrides used to
+    # stick around forever -- with no button left in this section to
+    # ever toggle it back off, and silently suppressing any *future*
+    # sprite that happens to share that group_name (render.py's
+    # suppressed_by_other_expression).
+    rig = _make_manual_expression_rig()
+    config, window, panel, _ = make_panel(tmp_path, rig=rig)
+    panel._expression_buttons[("Mouth", "Laughing")].setChecked(True)
+    assert window.manual_overrides.get("Mouth") == "Laughing"
+
+    rig.by_id(2).group_name = ""  # the sprite that pair came from no longer has it
+    rig.by_id(2).state_name = ""
+    panel._refresh_expressions_section()
+
+    assert window.manual_overrides.get("Mouth") is None
+    assert ("Mouth", "Laughing") not in panel._expression_buttons
+
+
 # --- Costume & Expression hotkey editors -------------------------------------
 
 

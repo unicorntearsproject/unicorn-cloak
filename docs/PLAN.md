@@ -937,6 +937,64 @@ content nobody will ever see in it.
 
 537 tests (530 -> 537).
 
+**2026-09-23, same-day follow-up: bug audit stage 3 -- findings #6, #9,
+#10, #11, the feature-level tuning/expression/costume/playback bugs.**
+
+**#6:** `AudioManager._handle_volume_from_source` applies
+`config.audio.gain` once, at capture time, and records that
+already-gained value. The tuning loop (`EnvelopeLoopPlayback`) was fed
+back through that exact same handler, applying gain a *second* time on
+every replayed sample -- at Sensitivity 2.0, a live 0.05 input read
+0.1, but the loop (whose whole purpose is tuning thresholds against a
+realistic stand-in for live speech) replayed 0.2. Fixed with a
+separate `_handle_volume_from_loop` callback that skips the gain step.
+
+**#9:** `_refresh_expressions_section` destroys and recreates every
+Expression button on every property edit, Load, and hot reload,
+unconditionally unchecked -- so forcing "Eyes: Open" and then editing
+an unrelated sprite's Variant showed the button as off while the
+Render Window (and OBS) kept forcing the expression live; the next
+Shift+&lt;key&gt; press just re-checked the button with no visible
+effect, needing a second press to actually turn it off. Fixed by
+restoring each button's checked state from
+`render_window.manual_overrides` when rebuilding -- and, since a rebuild
+now actually *reads* that dict, also dropping any entry whose
+(group, state) no longer matches a pair that exists in the current rig
+(e.g. after Load), which used to stick around forever with no button
+left to ever clear it, silently suppressing any future sprite sharing
+that group_name.
+
+**#10:** `AvatarRig.assign_costume_pair`'s `hide_id` sprite (the "Show"
+box in the UI -- picked to be visible *only* in this slot) only ever
+wrote `costume_layers[slot] = True`. A fresh sprite already defaults to
+all-True, so that write was a no-op against every *other* slot --
+contradicting both the Help text and this method's own docstring
+("hidden everywhere else"), and only ever appearing to work when a
+sprite happened to already carry legacy zeros from elsewhere. Fixed by
+replacing that sprite's whole `costume_layers` tuple (every slot False
+except this one), with `remove_costume_pair` reverting it back to
+all-True symmetrically. Added a `rig_lint` check for a row pairing a
+sprite with itself (the editor never blocked it) while here -- which
+immediately caught a real instance already shipped in
+`assets/unicorn-demo`: a `(7, 7)` pair in costume slot 1 that, combined
+with this same fix, left `bling_gold_heart_UT.png` hidden in *every*
+costume. Fixed with the owner's OK, through `AvatarRig.
+remove_costume_pair`/`persistence.save_avatar` (not a hand JSON edit,
+per this repo's own tooling rule) -- one line of the save file changed.
+
+**#11:** `_start_loop` interrupted an in-progress file with the
+*private* `_stop_file()` (no signal), so the Play/Stop button's label
+never refreshed off "Stop" -- clicking it then read that stale
+`is_file_playing == False` and called `play_file()` instead of
+`stop_file()`, starting a *second* real background thread feeding the
+envelope alongside the still-running loop. Fixed both directions:
+`_start_loop` now emits `file_playback_stopped` when it actually
+interrupts a file (not when starting from mic/desktop, which has
+nothing to report), and `play_file()` now also stops an active loop --
+mirroring what `switch_to_file` already did, just missing here.
+
+546 tests (537 -> 546).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

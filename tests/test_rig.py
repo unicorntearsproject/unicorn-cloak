@@ -42,9 +42,15 @@ def test_assign_costume_pair_shows_the_first_sprite_and_hides_the_second():
     assert rig.costume_assignments[2] == [(1, 2)]
     assert rig.by_id(1).costume_layers[2] is True  # "hide" sprite: assumed off, shown here
     assert rig.by_id(2).costume_layers[2] is False  # "show" sprite: assumed on, hidden here
-    # Untouched slots/sprites keep the "visible everywhere" default.
-    assert rig.by_id(1).costume_layers[0] is True
-    assert rig.by_id(2).costume_layers[0] is True
+    # Regression, bug audit 2026-09-23 (#10): this test used to assert
+    # the *bug* itself here -- "untouched slots/sprites keep the
+    # visible-everywhere default" for the hide_id sprite, contradicting
+    # both the Help text and assign_costume_pair's own docstring
+    # ("hidden everywhere else"). A fresh sprite defaults to all-True,
+    # so writing only costume_layers[slot]=True was a no-op against
+    # every other slot -- it never actually got hidden anywhere.
+    assert rig.by_id(1).costume_layers[0] is False  # "hide" sprite: hidden everywhere else
+    assert rig.by_id(2).costume_layers[0] is True  # "show" sprite: shown everywhere else (unchanged)
 
 
 def test_assign_costume_pair_is_a_noop_for_an_unknown_sprite_id():
@@ -61,6 +67,9 @@ def test_remove_costume_pair_reverts_both_sprites_to_visible():
     assert rig.costume_assignments[2] == []
     assert rig.by_id(1).costume_layers[2] is True
     assert rig.by_id(2).costume_layers[2] is True
+    # hide_id's sprite was hidden in every *other* slot too (#10's fix)
+    # -- removal must revert all of them, not just the slot involved.
+    assert rig.by_id(1).costume_layers[0] is True
 
 
 def test_costume_pair_can_be_added_multiple_times_to_the_same_slot():

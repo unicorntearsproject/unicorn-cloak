@@ -115,6 +115,26 @@ def test_consistent_state_labeling_across_variants_is_not_flagged():
     assert find_rig_issues(rig) == []
 
 
+def test_costume_pair_of_a_sprite_with_itself_is_flagged():
+    # Bug audit 2026-09-23, #10: the editor never blocked picking the
+    # same sprite for both Hide and Show, and the shipped demo avatar
+    # shipped exactly this (a (7, 7) pair) -- combined with #10's own
+    # fix (hide_id's sprite now hidden in every *other* slot, not just
+    # shown in this one), a self-pair leaves the sprite hidden in every
+    # costume, permanently.
+    rig = _rig([Sprite(id=7, path="bling.png")])
+    rig.assign_costume_pair(0, hide_id=7, show_id=7)
+    issues = find_rig_issues(rig)
+    assert any("pairs sprite 7" in i.message and "itself" in i.message for i in issues)
+
+
+def test_costume_pair_of_two_different_sprites_is_not_flagged():
+    rig = _rig([Sprite(id=1, path="a.png"), Sprite(id=2, path="b.png")])
+    rig.assign_costume_pair(0, hide_id=1, show_id=2)
+    issues = find_rig_issues(rig)
+    assert not any("Hide and Show" in i.message for i in issues)
+
+
 def test_ungrouped_sprites_fall_back_to_parent_id_bucketing():
     # No group_name set on any of these -- the parent_id heuristic should
     # still catch a real completeness gap, matching legacy/ungrouped
