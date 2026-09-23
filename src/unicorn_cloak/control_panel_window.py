@@ -638,6 +638,7 @@ class ControlPanelWindow(QWidget):
         state_path=None,
         audio_manager=None,
         obs_link_manager=None,
+        asset_watcher=None,
         autosave_interval_ms: int = AUTOSAVE_INTERVAL_MS,
     ) -> None:
         super().__init__()
@@ -647,6 +648,11 @@ class ControlPanelWindow(QWidget):
         self._state_path = state_path
         self.audio_manager = audio_manager
         self.obs_link_manager = obs_link_manager
+        # For note_own_write() -- see _on_save/_on_save_as and
+        # hot_reload.py's own docstring (bug audit 2026-09-23, #3).
+        # Optional the same way audio_manager/obs_link_manager are: every
+        # test builds a panel without a real one.
+        self.asset_watcher = asset_watcher
 
         # --- sprite-editing state (was EditorWindow) ---
         self._items: dict[int, EditableSpriteItem] = {}
@@ -2524,6 +2530,8 @@ class ControlPanelWindow(QWidget):
             self._on_save_as()
             return
         save_avatar(self.rig, self._current_avatar_path)
+        if self.asset_watcher is not None:
+            self.asset_watcher.note_own_write(self._current_avatar_path)
         self.config.avatar_path = self._current_avatar_path
         self._dirty = False
         self._update_dirty_indicator()
@@ -2538,6 +2546,8 @@ class ControlPanelWindow(QWidget):
         if not path.endswith(DEFAULT_EXTENSION):
             path += DEFAULT_EXTENSION
         save_avatar(self.rig, path)
+        if self.asset_watcher is not None:
+            self.asset_watcher.note_own_write(path)
         self._current_avatar_path = path
         self.config.avatar_path = path
         self._dirty = False
@@ -3432,12 +3442,21 @@ class ControlPanelWindow(QWidget):
         )
         if not path:
             return
-        self.push_undo_snapshot()
+        # Not push_undo_snapshot() -- Load is a history boundary, not an
+        # editable step in the current avatar's history. Bug audit
+        # 2026-09-23 (#2): pushing a snapshot then re-pointing
+        # _current_avatar_path at the *new* file meant Undo restored the
+        # *previous* avatar's sprites while the path/title still read
+        # the new file -- and the next Save overwrote the newly loaded
+        # file with the old avatar's contents. Undoing "past" a Load
+        # doesn't have a sensible meaning here (there's no single
+        # AvatarRig field for "which file/name was this undo entry
+        # for"), so Load simply starts a fresh history instead.
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._update_undo_redo_buttons()
         loaded = load_avatar_with_upgrade(path, parent=self)
-        self.rig.name = loaded.name
-        self.rig.sprites = loaded.sprites
-        self.rig.active_costume = loaded.active_costume
-        self.rig.zoom = loaded.zoom
+        self.rig.replace_contents_from(loaded)
         self._current_avatar_path = path
         self.config.avatar_path = path
         self._dirty = False

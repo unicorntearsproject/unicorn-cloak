@@ -142,3 +142,83 @@ def test_watching_a_nonexistent_path_does_not_raise(tmp_path):
     watcher.watch_avatar_file(str(tmp_path / "does-not-exist.uc"))
     watcher.watch_sprite_files([str(tmp_path / "also-missing.png")])
     watcher.stop()
+
+
+# --- Self-write suppression (bug audit 2026-09-23, #3) -----------------
+
+
+def test_note_own_write_suppresses_the_next_matching_change(qapp, tmp_path):
+    # save_avatar writes via temp-file + os.replace, which
+    # QFileSystemWatcher reports identically to an external edit -- this
+    # app's own Save was triggering its own hot reload. note_own_write,
+    # called right after writing, must make the resulting change event a
+    # no-op instead.
+    path = tmp_path / "avatar.uc"
+    path.write_text("v1")
+
+    watcher = AssetWatcher()
+    watcher.watch_avatar_file(str(path))
+    fired = []
+    watcher.avatar_file_changed.connect(lambda: fired.append(True))
+
+    path.write_text("v2")  # our own "save"
+    watcher.note_own_write(str(path))
+
+    # Give the debounce timer (200ms) time to settle, same as the burst
+    # test above -- the real check is that no reload ever fires.
+    time.sleep(0.3)
+    qapp.processEvents()
+    assert fired == []
+    watcher.stop()
+
+
+def test_a_real_change_after_a_suppressed_one_still_fires(qapp, tmp_path):
+    path = tmp_path / "avatar.uc"
+    path.write_text("v1")
+
+    watcher = AssetWatcher()
+    watcher.watch_avatar_file(str(path))
+    fired = []
+    watcher.avatar_file_changed.connect(lambda: fired.append(True))
+
+    path.write_text("v2")
+    watcher.note_own_write(str(path))
+    time.sleep(0.3)
+    qapp.processEvents()
+    assert fired == []  # suppressed
+
+    path.write_text("v3")  # a genuine external edit
+    assert _wait_until(qapp, lambda: len(fired) == 1)
+    watcher.stop()
+
+
+def test_note_own_write_on_content_that_then_changes_does_not_suppress(qapp, tmp_path):
+    # A fingerprint recorded for one piece of content must not suppress
+    # a change event that shows up with *different* content -- e.g. a
+    # real external edit racing in right after our own save.
+    path = tmp_path / "avatar.uc"
+    path.write_text("v1")
+    watcher = AssetWatcher()
+    watcher.watch_avatar_file(str(path))
+
+    watcher.note_own_write(str(path))  # fingerprints "v1"
+    path.write_text("v2")  # actual on-disk content is now different
+
+    fired = []
+    watcher.avatar_file_changed.connect(lambda: fired.append(True))
+    watcher._emit_for_path(str(path))
+
+    assert fired == [True]
+    watcher.stop()
+
+
+def test_stop_clears_pending_own_write_fingerprints(tmp_path):
+    path = tmp_path / "avatar.uc"
+    path.write_text("v1")
+    watcher = AssetWatcher()
+    watcher.watch_avatar_file(str(path))
+    watcher.note_own_write(str(path))
+
+    watcher.stop()
+
+    assert watcher._own_write_fingerprints == {}

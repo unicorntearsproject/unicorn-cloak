@@ -18,9 +18,21 @@ low-level write event in quick succession (e.g. a temp-file-then-rename
 sequence touches the directory too) -- a short timer coalesces a burst
 of fileChanged signals for the same path into one reload instead of
 several redundant ones.
+
+Self-write suppression (added 2026-09-23 bug audit, finding #3):
+persistence.save_avatar writes via temp-file + os.replace, which
+QFileSystemWatcher reports identically to an external edit -- so the
+app's own Save was triggering its own hot reload, snapping the live
+Render Window back to costume slot 1 and deselecting/rebuilding the
+Edit canvas mid-stream. note_own_write(path), called right after this
+app itself writes a watched file, records a content fingerprint that
+the next change event for that exact path is checked against; a match
+means "that's just the write we already know about" and the reload is
+skipped entirely, not just softened.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 
 from PySide6.QtCore import QFileSystemWatcher, QObject, QTimer, Signal
@@ -39,6 +51,7 @@ class AssetWatcher(QObject):
         self._avatar_path: str | None = None
         self._sprite_paths: set[str] = set()
         self._debounce_timers: dict[str, QTimer] = {}
+        self._own_write_fingerprints: dict[str, str] = {}
 
     def watch_avatar_file(self, path: str | None) -> None:
         if self._avatar_path and self._avatar_path in self._watcher.files():
@@ -59,6 +72,35 @@ class AssetWatcher(QObject):
         if real_paths:
             self._watcher.addPaths(real_paths)
 
+    def note_own_write(self, path: str) -> None:
+        """Call right after this app itself writes `path` (Save, Save
+        As) -- see the module docstring. A no-op if `path` isn't
+        actually readable right after writing it (nothing to suppress
+        against), which just means the next real change event for it
+        reloads normally, same as before this existed."""
+        fingerprint = self._fingerprint(path)
+        if fingerprint is not None:
+            self._own_write_fingerprints[path] = fingerprint
+
+    @staticmethod
+    def _fingerprint(path: str) -> str | None:
+        try:
+            with open(path, "rb") as f:
+                return hashlib.sha1(f.read()).hexdigest()
+        except OSError:
+            return None
+
+    def _is_own_write(self, path: str) -> bool:
+        # pop(), not a plain lookup: single-use. A mismatch (content
+        # diverged between the note_own_write() call and this change
+        # event -- e.g. a real external edit raced in right after our
+        # own save) must not keep suppressing *future* real changes to
+        # this path with a now-stale fingerprint.
+        expected = self._own_write_fingerprints.pop(path, None)
+        if expected is None:
+            return False
+        return self._fingerprint(path) == expected
+
     def stop(self) -> None:
         files = self._watcher.files()
         if files:
@@ -68,6 +110,7 @@ class AssetWatcher(QObject):
         for timer in self._debounce_timers.values():
             timer.stop()
         self._debounce_timers.clear()
+        self._own_write_fingerprints.clear()
 
     def _on_file_changed(self, path: str) -> None:
         timer = self._debounce_timers.get(path)
@@ -85,6 +128,8 @@ class AssetWatcher(QObject):
         # first save after startup would ever be noticed.
         if os.path.exists(path) and path not in self._watcher.files():
             self._watcher.addPath(path)
+        if self._is_own_write(path):
+            return
         if path == self._avatar_path:
             self.avatar_file_changed.emit()
         elif path in self._sprite_paths:

@@ -306,6 +306,35 @@ class AvatarRig:
     def remove_expression_hotkey(self, slot: int, index: int) -> None:
         del self.expression_hotkeys[slot][index]
 
+    def replace_contents_from(self, other: "AvatarRig", *, keep_active_costume: bool = False) -> None:
+        """Copies every field from `other` into this rig, in place -- the
+        one shared definition of what "load a different avatar's
+        contents in" means, so a caller (Load, hot-reload) can't forget
+        a field the other one remembers. Added 2026-09-23 bug audit
+        (#1/#15): Load and hot-reload each copied `name`/`sprites`/
+        `active_costume`/`zoom` by hand and independently forgot
+        `costume_assignments`/`expression_hotkeys` -- after Load, the
+        Costume/Expression Hotkeys tabs (and the next Save) kept the
+        *previous* avatar's assignments pointing at sprite ids that may
+        not even exist in the new rig.
+
+        keep_active_costume=True (hot-reload's own case, #3) leaves this
+        rig's current, live active_costume untouched. It isn't a real
+        exception to "copy every field" -- active_costume was never
+        actually part of `other`'s *file* content to begin with
+        (persistence.save_avatar/load_avatar don't round-trip it at
+        all; a freshly loaded AvatarRig always has the dataclass
+        default, 0), so a hot-reload "copying" it was really just
+        resetting it to 0 on every save -- snapping the live Render
+        Window (and OBS) back to costume slot 1 mid-stream."""
+        self.name = other.name
+        self.sprites = other.sprites
+        self.zoom = other.zoom
+        self.costume_assignments = other.costume_assignments
+        self.expression_hotkeys = other.expression_hotkeys
+        if not keep_active_costume:
+            self.active_costume = other.active_costume
+
     def by_id(self, sprite_id: int) -> Sprite | None:
         for sprite in self.sprites:
             if sprite.id == sprite_id:

@@ -615,6 +615,90 @@ def test_load_updates_current_path_and_clears_dirty(qapp, tmp_path, monkeypatch)
     assert config.avatar_path == str(save_path)
 
 
+def test_load_replaces_costume_and_expression_assignments_too(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#1): _on_load used to copy
+    # name/sprites/active_costume/zoom by hand and forget
+    # costume_assignments/expression_hotkeys -- the Costume/Expression
+    # Hotkeys tabs (and the next Save) kept the *previous* avatar's
+    # assignments after Load.
+    from unicorn_cloak.persistence import save_avatar
+
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.rig.assign_costume_pair(0, hide_id=1, show_id=2)
+    panel.rig.assign_expression_hotkey(1, "Mouth", "Laughing")
+    assert panel.rig.costume_assignments[0] == [(1, 2)]
+
+    other_rig = make_test_rig()
+    other_rig.assign_expression_hotkey(0, "Eyes", "Open")
+    save_path = tmp_path / "other.uc"
+    save_avatar(other_rig, save_path)
+
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(save_path), "")
+    )
+    panel._on_load()
+
+    assert panel.rig.costume_assignments[0] == []  # the old avatar's pair is gone
+    assert panel.rig.expression_hotkeys[0] == [("Eyes", "Open")]  # the new avatar's is here
+    assert panel.rig.expression_hotkeys[1] == []  # not the old avatar's leftover row
+
+
+def test_load_clears_undo_history_instead_of_pushing_a_snapshot(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#2): Load used to push_undo_
+    # snapshot() the old avatar, then re-point _current_avatar_path at
+    # the *new* file -- so Undo restored the old avatar's sprites while
+    # the path/title still read the new file, and the next Save
+    # overwrote the newly loaded file with the old avatar's contents.
+    from unicorn_cloak.persistence import save_avatar
+
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.pos_x.setValue(10.0)  # a real undo-able edit before Load
+    assert panel._undo_btn.isEnabled() is True
+
+    other_rig = make_test_rig()
+    save_path = tmp_path / "other.uc"
+    save_avatar(other_rig, save_path)
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(save_path), "")
+    )
+    panel._on_load()
+
+    assert panel._undo_btn.isEnabled() is False
+    assert panel._redo_btn.isEnabled() is False
+    loaded_sprite_ids = [s.id for s in panel.rig.sprites]
+
+    panel.undo()  # must be a no-op: nothing to undo "into" any more
+
+    assert [s.id for s in panel.rig.sprites] == loaded_sprite_ids
+    assert panel._current_avatar_path == str(save_path)
+
+
+def test_save_does_not_trigger_its_own_hot_reload(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#3): save_avatar writes via
+    # temp-file + os.replace, which QFileSystemWatcher reports the same
+    # as an external edit -- Save was triggering the app's own hot
+    # reload, which reset active_costume to 0 and deselected/rebuilt the
+    # live scene. asset_watcher.note_own_write() (called by _on_save)
+    # must make the *next* change event for this exact path a no-op.
+    from unicorn_cloak.hot_reload import AssetWatcher
+
+    config, window, panel, _ = make_panel(tmp_path)
+    out_path = tmp_path / "avatar.uc"
+    panel._current_avatar_path = str(out_path)
+    watcher = AssetWatcher()
+    panel.asset_watcher = watcher
+
+    panel._on_save()  # writes out_path, then note_own_write(out_path)
+    watcher.watch_avatar_file(str(out_path))
+
+    reload_events = []
+    watcher.avatar_file_changed.connect(lambda: reload_events.append(True))
+    watcher._emit_for_path(str(out_path))  # simulate the watcher noticing our own write
+
+    assert reload_events == []
+
+
 # --- Quit confirmation ------------------------------------------------------
 
 

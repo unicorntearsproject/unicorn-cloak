@@ -80,6 +80,36 @@ def reset_speaking_state_and_close_mouth(window: RenderWindow) -> SpeakingState:
     return SpeakingState()
 
 
+def handle_avatar_file_changed(rig, config, control_panel, asset_watcher) -> bool:
+    """Reloads config.avatar_path into `rig` in place and refreshes the
+    Control Panel/Render Window to match. Module-level (not a closure
+    inside main()) so it's actually testable -- see test___main__.py,
+    same reasoning as reset_speaking_state_and_close_mouth above.
+    Returns True on a successful reload, False if the file failed to
+    load (already printed to the console -- there's no dialog for this
+    today, see the bug audit's finding #16).
+
+    keep_active_costume=True on the replace_contents_from call below --
+    see that method's own docstring: active_costume is never actually
+    part of a file's persisted content, so copying it here (always 0)
+    used to silently reset the live costume slot on every reload,
+    including the app's own Save triggering its own hot reload (bug
+    audit 2026-09-23, #3) via the same watcher this function is wired
+    to."""
+    try:
+        reloaded = load_avatar_with_upgrade(config.avatar_path, parent=control_panel)
+    except Exception as exc:
+        print(f"[hot-reload] failed to reload {config.avatar_path!r}: {exc}", flush=True)
+        return False
+    rig.replace_contents_from(reloaded, keep_active_costume=True)
+    control_panel.refresh_after_external_change()
+    # The reload may have added/removed/renamed sprites -- re-point the
+    # sprite watch at whatever the file now actually contains.
+    asset_watcher.watch_sprite_files([s.path for s in rig.sprites])
+    print(f"[hot-reload] avatar file changed, reloaded ({len(rig.sprites)} sprites)", flush=True)
+    return True
+
+
 def main() -> int:
     # Owner's request, 2026-09-17: "hide the noise unless debug mode is
     # set" -- UNICORN_CLOAK_DEBUG_AUDIO (see on_volume_on_qt_thread below)
@@ -135,9 +165,15 @@ def main() -> int:
 
     audio_manager = AudioManager(config)
     obs_link_manager = ObsLinkManager(config)
+    # Created before ControlPanelWindow, not after -- passed in so Save/
+    # Save As can call note_own_write() and suppress the reload their
+    # own write would otherwise trigger (bug audit 2026-09-23, #3; see
+    # hot_reload.py's own docstring).
+    asset_watcher = AssetWatcher()
 
     control_panel = ControlPanelWindow(
-        rig, config, window, audio_manager=audio_manager, obs_link_manager=obs_link_manager
+        rig, config, window,
+        audio_manager=audio_manager, obs_link_manager=obs_link_manager, asset_watcher=asset_watcher,
     )
     control_panel.show()
 
@@ -153,25 +189,11 @@ def main() -> int:
 
     window.on_avatar_double_clicked = on_avatar_double_clicked
 
-    asset_watcher = AssetWatcher()
     asset_watcher.watch_avatar_file(config.avatar_path)
     asset_watcher.watch_sprite_files([s.path for s in rig.sprites])
 
     def on_avatar_file_changed_on_qt_thread() -> None:
-        try:
-            reloaded = load_avatar_with_upgrade(config.avatar_path, parent=control_panel)
-        except Exception as exc:
-            print(f"[hot-reload] failed to reload {config.avatar_path!r}: {exc}", flush=True)
-            return
-        rig.name = reloaded.name
-        rig.sprites = reloaded.sprites
-        rig.active_costume = reloaded.active_costume
-        rig.zoom = reloaded.zoom
-        control_panel.refresh_after_external_change()
-        # The reload may have added/removed/renamed sprites -- re-point
-        # the sprite watch at whatever the file now actually contains.
-        asset_watcher.watch_sprite_files([s.path for s in rig.sprites])
-        print(f"[hot-reload] avatar file changed, reloaded ({len(rig.sprites)} sprites)", flush=True)
+        handle_avatar_file_changed(rig, config, control_panel, asset_watcher)
 
     def on_sprite_file_changed_on_qt_thread(path: str) -> None:
         sprite = next((s for s in rig.sprites if s.path == path), None)

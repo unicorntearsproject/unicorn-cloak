@@ -91,3 +91,12 @@ class ObsLinkManager(QObject):
             self._watcher.stop()
             self._watcher = None
             self.connection_changed.emit(False)
+            # Also mute_changed(False), not just connection_changed --
+            # bug audit 2026-09-23, #8: RenderWindow.set_muted only ever
+            # heard about mute state through mute_changed, so stopping
+            # while muted (OBS closing, the checkbox unticked, or the
+            # Input name changing) left window.muted stuck True forever,
+            # even though this class's own connection status correctly
+            # went back to "not connected." Once we're not watching OBS
+            # any more, there's no mute state left to enforce.
+            self.mute_changed.emit(False)

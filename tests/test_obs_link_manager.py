@@ -107,6 +107,27 @@ def test_connection_changed_emits_false_on_stop(qapp, monkeypatch):
     assert received == [False]
 
 
+def test_mute_changed_emits_false_on_stop(qapp, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#8): _stop() used to emit
+    # connection_changed(False) but never mute_changed(False) --
+    # RenderWindow.set_muted only ever hears about mute state through
+    # mute_changed, so stopping while muted (OBS closing, the checkbox
+    # unticked, an Input name change while restart()ing) left the avatar's
+    # mouth force-closed forever, with no way back short of OBS
+    # reconnecting and reporting that input unmuted again, or an app
+    # restart.
+    _patch_watcher(monkeypatch)
+    manager = ObsLinkManager(_config_with_input_name())
+    manager.set_enabled(True)
+    manager.mute_changed.emit(True)  # simulate OBS reporting muted
+
+    mute_events = []
+    manager.mute_changed.connect(mute_events.append)
+    manager.set_enabled(False)
+
+    assert mute_events == [False]
+
+
 def test_enabling_with_a_blank_input_name_does_not_start_a_watcher(qapp, monkeypatch):
     # Regression 2026-09-19, owner's report: turning the checkbox on
     # before filling in an Input name produced a raw obs-websocket error

@@ -320,3 +320,49 @@ def test_stacking_order_sorts_children_by_their_own_z_too():
     )
     order = [s.id for s, _depth in rig.sprites_in_stacking_order()]
     assert order == [1, 3, 2]  # child z=5 in front of child z=0
+
+
+# --- replace_contents_from (bug audit 2026-09-23, #1/#3/#15) ----------------
+
+
+def _rig_with_assignments(name, active_costume=0) -> AvatarRig:
+    rig = AvatarRig(name=name, sprites=[make_sprite(1), make_sprite(2)], active_costume=active_costume)
+    rig.assign_costume_pair(0, hide_id=1, show_id=2)
+    rig.assign_expression_hotkey(1, "Eyes", "Open")
+    return rig
+
+
+def test_replace_contents_from_copies_every_field_including_assignments():
+    # Regression, #1: Load used to copy name/sprites/active_costume/zoom
+    # by hand and forget costume_assignments/expression_hotkeys entirely
+    # -- after Load, the Costume/Expression Hotkeys tabs (and the next
+    # Save) kept the *previous* avatar's assignments, pointing at sprite
+    # ids that might not even exist in the newly loaded rig.
+    live = AvatarRig(name="old", sprites=[make_sprite(9)])
+    loaded = _rig_with_assignments("new")
+    loaded.zoom = 2.5
+
+    live.replace_contents_from(loaded)
+
+    assert live.name == "new"
+    assert [s.id for s in live.sprites] == [1, 2]
+    assert live.zoom == 2.5
+    assert live.costume_assignments[0] == [(1, 2)]
+    assert live.expression_hotkeys[1] == [("Eyes", "Open")]
+    assert live.active_costume == loaded.active_costume
+
+
+def test_replace_contents_from_keep_active_costume_leaves_the_live_slot_alone():
+    # Regression, #3: hot-reload used to always copy active_costume from
+    # the reloaded file -- always 0, since it's never actually persisted
+    # (persistence.save_avatar/load_avatar don't round-trip it) -- which
+    # meant every reload, including the app's own Save triggering its
+    # own hot reload, silently snapped the live costume slot back to 1.
+    live = AvatarRig(name="old", sprites=[make_sprite(9)], active_costume=3)
+    loaded = _rig_with_assignments("new", active_costume=0)
+
+    live.replace_contents_from(loaded, keep_active_costume=True)
+
+    assert live.active_costume == 3  # untouched
+    assert live.name == "new"  # everything else still replaced
+    assert live.costume_assignments[0] == [(1, 2)]

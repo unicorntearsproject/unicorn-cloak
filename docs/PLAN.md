@@ -809,6 +809,67 @@ persists, switching source shows each source's own remembered device,
 and Refresh repopulates the list. Confirmed live (screenshots, both
 sources) that the two-row layout doesn't look cramped.
 
+**2026-09-23: `docs/audit/2026-09-23-bug-audit.md` landed -- a
+full-repo read-through for correctness bugs, 21 findings, none caught
+by the suite at the time. Working through it in the audit's own
+suggested fix order; first stage done (findings #1, #2, #3, #8, all in
+the Load/Save/hot-reload/OBS-mute area -- see the audit for full repro
+details on each).** All four shared one root theme: something writing
+into `rig`/`window` state that another code path never fully accounted
+for.
+
+**#3 (the loudest -- a live-stream breaker):** `save_avatar` writes via
+temp-file + `os.replace`, which `QFileSystemWatcher` reports
+identically to an external edit -- so every **Save** was triggering
+the app's own hot reload, which reset `active_costume` to 0 (snapping
+the live Render Window, and OBS, back to costume slot 1 mid-stream)
+and deselected/rebuilt the Edit canvas. Fixed two ways at once, not
+just one: `hot_reload.AssetWatcher` gained `note_own_write(path)`,
+called right after `_on_save`/`_on_save_as` write the file --
+records a content fingerprint so the resulting (self-triggered) change
+event is recognized as an echo and the reload is skipped *entirely*,
+not just softened. Second, independent safety net: `active_costume`
+turns out to never actually be part of a file's *persisted* content in
+the first place (`persistence.save_avatar`/`load_avatar` don't
+round-trip it at all -- a freshly loaded rig always has the dataclass
+default, 0), so a hot-reload "copying" it from the reloaded rig was
+never anything but a bug; it no longer does, for *any* reload, not
+only a self-triggered one.
+
+**#8:** `ObsLinkManager._stop()` emitted `connection_changed(False)`
+but never `mute_changed(False)` -- so `RenderWindow.muted` got stuck
+`True` forever after OBS closed, the checkbox was unticked, or the
+Input name changed while muted, with no way back short of OBS
+reconnecting and reporting that input unmuted again, or an app
+restart. One-line fix: `_stop()` now emits both.
+
+**#1/#15, surfaced together:** Load and hot-reload each hand-copied
+`AvatarRig`'s fields (`name`/`sprites`/`active_costume`/`zoom`) and
+each independently forgot `costume_assignments`/`expression_hotkeys`
+-- after Load, the Costume/Expression Hotkeys tabs (and the next Save)
+kept the *previous* avatar's assignments, pointing at sprite ids that
+might not even exist in the new rig. Fixed with the shared helper the
+audit itself suggested: `AvatarRig.replace_contents_from(other,
+*, keep_active_costume=False)`, one place that copies every field, so
+a future field can't be missed in one caller without also being missed
+in the other. `__main__.py`'s inline hot-reload closure was extracted
+into a module-level `handle_avatar_file_changed()` while touching it
+anyway -- same reasoning as `reset_speaking_state_and_close_mouth`
+before it (2026-09-20): a closure inside `main()` can't have its own
+test file.
+
+**#2:** `_on_load` used to `push_undo_snapshot()` the *old* avatar,
+then re-point `_current_avatar_path` at the *new* file -- so Undo
+restored the old avatar's sprites while the title/path still read the
+new file, and the next Save overwrote the newly loaded file with the
+old avatar's contents. Fixed by treating Load as a history boundary:
+it clears the undo/redo stacks instead of pushing a snapshot (there's
+no single `AvatarRig` field that could hold "which file this undo
+entry belongs to," so undoing "past" a Load was never a coherent
+operation to support).
+
+530 tests (517 -> 530).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
