@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 
 import pytest
 
@@ -357,3 +359,38 @@ def test_save_does_not_create_backup_on_first_write(tmp_path):
     path = tmp_path / "settings.json"
     save_state(Config(), path)
     assert not path.with_suffix(path.suffix + ".bak").exists()
+
+
+def test_save_state_through_a_symlink_leaves_the_link_itself_intact(tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "permissions and
+    # symlinks") -- same fix, same reasoning as persistence.py's
+    # save_avatar.
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    real_path = real_dir / "settings.json"
+    link_path = tmp_path / "settings-link.json"
+    link_path.symlink_to(real_path)
+
+    config = Config()
+    config.audio.mild_open = 0.111
+    save_state(config, link_path)
+
+    assert link_path.is_symlink()
+    assert link_path.resolve() == real_path
+    assert real_path.exists()
+    assert load_state(link_path).audio.mild_open == 0.111
+
+
+def test_save_state_preserves_the_existing_files_permissions(tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "permissions and
+    # symlinks") -- same fix, same reasoning as persistence.py's
+    # save_avatar: mkstemp always creates its temp file 0600 regardless
+    # of settings.json's own existing mode, and os.replace's rename
+    # doesn't carry the old file's permissions over the new one.
+    path = tmp_path / "settings.json"
+    save_state(Config(), path)
+    os.chmod(path, 0o664)
+
+    save_state(Config(), path)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o664

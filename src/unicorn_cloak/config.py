@@ -474,15 +474,31 @@ def save_state(config: Config, path: str | Path = DEFAULT_STATE_PATH) -> None:
     if path.exists():
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
 
+    # Existing permissions preserved explicitly -- see persistence.py's
+    # save_avatar, which has the same fix for the same reason (bug audit
+    # 2026-09-23, #20, "permissions and symlinks"): mkstemp always
+    # creates its file 0600 regardless of whatever mode settings.json
+    # already has, and os.replace's rename doesn't carry the old file's
+    # permissions over the new one.
+    original_mode = path.stat().st_mode if path.exists() else None
+
+    # Write through a symlink's real target, not the link itself -- see
+    # persistence.py's save_avatar for the full reasoning (same finding,
+    # #20, "permissions and symlinks"). The .bak backup above
+    # deliberately stays keyed on `path` (the symlink's own location).
+    write_path = path.resolve() if path.is_symlink() else path
+
     fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+        dir=write_path.parent, prefix=f".{write_path.name}.", suffix=".tmp"
     )
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(payload, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_name, path)
+        if original_mode is not None:
+            os.chmod(tmp_name, original_mode)
+        os.replace(tmp_name, write_path)
     except BaseException:
         try:
             os.remove(tmp_name)

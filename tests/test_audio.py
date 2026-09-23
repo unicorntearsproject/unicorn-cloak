@@ -384,6 +384,40 @@ def test_microphone_stop_is_prompt_even_mid_poll(monkeypatch):
     assert time.monotonic() - start < 1.0
 
 
+def test_microphone_start_gives_each_worker_its_own_stop_event(monkeypatch):
+    # Regression, bug audit 2026-09-23 (#20, "Microphone thread
+    # restart"): start() used to just self._stop_event.clear() a single,
+    # shared Event -- stop()'s own join(timeout=2.0) can return without
+    # the old worker thread having actually exited yet (stuck in a
+    # blocking stream.read()), and stop() discards self._worker_thread
+    # regardless of whether the join actually succeeded. A following
+    # start() clearing that same shared Event would "un-stop" that old,
+    # still-alive thread (its own `while not self._stop_event.is_set()`
+    # would see it false again) at the same moment a brand new thread
+    # starts too -- two real capture threads feeding
+    # _handle_volume_from_source concurrently. Each start() must hand
+    # its worker a genuinely separate Event, immune to whatever a later
+    # start() does to self._stop_event.
+    def fake_input_stream(**kwargs):
+        return _FakeStream(["ok"], **kwargs)
+
+    monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+
+    mic = Microphone(on_volume=lambda v: None)
+    mic.start()
+    first_event = mic._stop_event
+    mic.stop()
+
+    mic.start()
+    second_event = mic._stop_event
+    mic.stop()
+
+    assert first_event is not second_event
+    assert first_event.is_set()  # the first worker's own stop signal, untouched by the second start()
+    assert second_event.is_set()  # the second worker's own -- stop() above set it too
+
+
 def test_microphone_never_requests_mono_directly_from_the_device(monkeypatch):
     # Regression 2026-09-16: channels=1 requested directly from a device
     # whose own native channel count is higher (this machine's mic
@@ -684,6 +718,25 @@ def test_envelope_loop_playback_does_not_start_with_no_samples():
     playback = EnvelopeLoopPlayback(EnvelopeRecording(samples=[]), on_volume=lambda v: None)
     playback.start()
     assert playback.is_playing is False
+
+
+def test_envelope_loop_playback_does_not_busy_spin_on_a_single_sample_at_t_zero():
+    # Regression, bug audit 2026-09-23 (#20, "loop busy-spin"): a
+    # recording whose only sample sits at t=0.0 used to compute
+    # wait_s = 0.0 - 0.0 = 0 on every iteration, and the old
+    # "if wait_s > 0: wait(...)" skipped waiting entirely in that case
+    # -- an unthrottled busy-spin, calling on_volume (and so the
+    # Qt-queued volume_measured signal) as fast as the CPU allowed.
+    recording = EnvelopeRecording(samples=[(0.0, 0.5)])
+    calls = []
+    playback = EnvelopeLoopPlayback(recording, on_volume=calls.append)
+    playback.start()
+    time.sleep(0.1)  # 100ms
+    playback.stop()
+    # At the loop's own 5ms floor, 100ms allows on the order of 20
+    # calls -- a genuine busy-spin produces many thousands in the same
+    # window, so a generous margin still clearly distinguishes the two.
+    assert len(calls) < 100
 
 
 def test_envelope_loop_playback_stop_is_prompt():

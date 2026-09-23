@@ -425,6 +425,26 @@ def test_scrolling_up_on_the_edit_canvas_zooms_in(qapp, tmp_path):
     assert panel.edit_view.transform().m11() > scale_before
 
 
+def _horizontal_wheel_event(angle_delta_x: int) -> QWheelEvent:
+    return QWheelEvent(
+        QPointF(0, 0), QPointF(0, 0), QPoint(0, 0), QPoint(angle_delta_x, 0),
+        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.NoScrollPhase, False,
+    )
+
+
+def test_horizontal_only_scroll_does_not_change_zoom(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "wheel direction"): a bare
+    # `if angleDelta().y() > 0 else zoom-out` treated *anything* that
+    # wasn't scroll-up as scroll-down, including a purely horizontal
+    # trackpad swipe (y()==0) -- which zoomed out instead of doing
+    # nothing.
+    config, window, panel, _ = make_panel(tmp_path)
+    scale_before = panel.edit_view.transform().m11()
+    panel.edit_view.wheelEvent(_horizontal_wheel_event(120))
+    assert panel.edit_view.transform().m11() == scale_before
+
+
 def test_edit_canvas_scrollbars_are_always_off(qapp, tmp_path):
     # Regression 2026-09-19, owner's report: "the character jumps
     # forward real quick and snaps back... a horizontal scroll bar

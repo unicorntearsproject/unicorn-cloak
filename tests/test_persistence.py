@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -486,6 +488,47 @@ def test_save_does_not_create_backup_on_first_write(tmp_path):
     rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png")])
     save_avatar(rig, path)
     assert not path.with_suffix(path.suffix + ".bak").exists()
+
+
+def test_save_preserves_the_existing_files_permissions(tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "permissions and
+    # symlinks"): mkstemp always creates its temp file 0600 regardless
+    # of the real target's own mode, and os.replace's rename doesn't
+    # carry the old file's permissions over the new one -- so a first
+    # save through this app silently tightened an avatar file's
+    # permissions to owner-only, even one left more permissive (e.g.
+    # group-readable) by another tool or a hand chmod beforehand.
+    path = tmp_path / "out.save"
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="v1.png")])
+    save_avatar(rig, path)
+    os.chmod(path, 0o664)  # simulate a pre-existing, more permissive mode
+
+    save_avatar(rig, path)  # a second save, over the now-0o664 file
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o664
+
+
+def test_save_through_a_symlink_leaves_the_link_itself_intact(tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "permissions and
+    # symlinks"): os.replace(tmp, path) replaces whatever `path` itself
+    # names -- for a symlink (e.g. an avatar file pointed at a synced or
+    # shared location) that's the link, not its target, so saving
+    # through it used to silently replace the link with a plain regular
+    # file on the very first save.
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    real_path = real_dir / "avatar.save"
+    link_path = tmp_path / "avatar-link.save"
+    link_path.symlink_to(real_path)
+
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="v1.png")])
+    save_avatar(rig, link_path)
+
+    assert link_path.is_symlink()  # still a link, not replaced by a regular file
+    assert link_path.resolve() == real_path
+    assert real_path.exists()  # the actual content landed at the real target
+    loaded = load_avatar(link_path)
+    assert loaded.sprites[0].path == "v1.png"
 
 
 def test_needs_migration_true_for_file_with_no_version_key(tmp_path):

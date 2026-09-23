@@ -280,13 +280,39 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
     if path.exists():
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
 
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    # Existing permissions preserved explicitly -- bug audit 2026-09-23,
+    # #20 ("permissions and symlinks"). mkstemp always creates its file
+    # 0600 regardless of whatever mode the real target already has, and
+    # os.replace's rename doesn't carry the *old* file's permissions
+    # over the *new* one -- so a first save through this app silently
+    # tightened an avatar file's permissions to owner-only, even one
+    # authored (and left more permissive, e.g. group-readable) by
+    # another tool or hand-edited beforehand. Read before the file is
+    # replaced, obviously.
+    original_mode = path.stat().st_mode if path.exists() else None
+
+    # Write through a symlink's real target, not the link itself -- same
+    # finding (#20, "permissions and symlinks"). os.replace(tmp, path)
+    # replaces whatever `path` itself names; for a symlink (e.g. an
+    # avatar file pointed at a synced/shared location) that's the link,
+    # not its target, so the very first save silently replaced the link
+    # with a plain regular file. The temp file also has to live in the
+    # *real* target's directory, not the symlink's own -- os.replace
+    # requires both sides on the same filesystem to stay atomic, and a
+    # symlink can legitimately point across a mount boundary. The .bak
+    # backup above deliberately stays keyed on `path` (the symlink's own
+    # location) -- that's where the owner would actually look for it.
+    write_path = path.resolve() if path.is_symlink() else path
+
+    fd, tmp_name = tempfile.mkstemp(dir=write_path.parent, prefix=f".{write_path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(out, f)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_name, path)
+        if original_mode is not None:
+            os.chmod(tmp_name, original_mode)
+        os.replace(tmp_name, write_path)
     except BaseException:
         try:
             os.remove(tmp_name)

@@ -593,7 +593,19 @@ class GridCanvasView(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        factor = _VIEWPORT_ZOOM_STEP if event.angleDelta().y() > 0 else 1 / _VIEWPORT_ZOOM_STEP
+        delta_y = event.angleDelta().y()
+        if delta_y == 0:
+            # A horizontal-only wheel/trackpad scroll has nothing to do
+            # with zoom -- bug audit 2026-09-23, #20 ("wheel
+            # direction"): this used to fall into the "zoom out" branch
+            # below (a bare `if y() > 0 else zoom-out` treats *anything*
+            # that isn't scroll-up as scroll-down, including a purely
+            # horizontal delta), so a horizontal trackpad swipe zoomed
+            # out instead of doing nothing. Swallowed, not propagated
+            # (still accept()ed), same as this event always was before.
+            event.accept()
+            return
+        factor = _VIEWPORT_ZOOM_STEP if delta_y > 0 else 1 / _VIEWPORT_ZOOM_STEP
         new_zoom = self._viewport_zoom * factor
         if _MIN_VIEWPORT_ZOOM <= new_zoom <= _MAX_VIEWPORT_ZOOM:
             self._viewport_zoom = new_zoom

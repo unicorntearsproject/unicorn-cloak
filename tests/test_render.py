@@ -688,6 +688,34 @@ def test_background_video_constructs_a_muted_looping_player(qapp, tmp_path):
     assert window._background_player.loops() == QMediaPlayer.Loops.Infinite
 
 
+def test_switching_away_from_video_background_deletes_the_player(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#20, "media player leak"):
+    # _clear_background_media used to just drop the Python reference to
+    # self._background_player -- built as QMediaPlayer(self), so Qt's
+    # C++ side kept it alive via that parent-child ownership regardless,
+    # leaking one player (and its decoder resources) per background
+    # switch. Confirmed via a spy on deleteLater() itself, not by
+    # checking window._background_player is None afterward (which the
+    # old, buggy code already made true) or by relying on Qt's own
+    # deferred-deletion timing (real, but not reliably observable from
+    # plain processEvents() calls in a test, especially with FFmpeg's
+    # own async decode-error probing racing it for this fake file).
+    rig = make_test_rig()
+    window = RenderWindow(rig, MotionConfig())
+    fake_video = tmp_path / "bg.mp4"
+    fake_video.write_bytes(b"not a real video, just needs to exist for the path check")
+    window.set_background("video", str(fake_video))
+    old_player = window._background_player
+    assert old_player is not None
+
+    delete_later_calls = []
+    monkeypatch.setattr(old_player, "deleteLater", lambda: delete_later_calls.append(True))
+
+    window.set_background("transparent")
+
+    assert delete_later_calls == [True]
+
+
 def test_switching_away_from_image_background_cleans_up_the_pixmap_item(qapp, tmp_path):
     png_path = tmp_path / "bg.png"
     png_path.write_bytes(make_test_png_bytes())

@@ -290,9 +290,26 @@ class Microphone:
         self._abandon_on_stop = False
 
     def start(self) -> None:
-        self._stop_event.clear()
+        # A fresh Event, not self._stop_event.clear() -- bug audit
+        # 2026-09-23, #20 ("Microphone thread restart"). stop()'s own
+        # join(timeout=2.0) can time out without the old worker thread
+        # having actually exited yet (stuck in a blocking stream.read()
+        # -- see stop()'s own docstring on why abandon exists at all);
+        # stop() still discards self._worker_thread regardless. Passed
+        # into _worker_loop as its own argument, not read back off self
+        # in there -- an old, still-running thread must keep watching
+        # the *specific* Event it was actually given, not whatever
+        # self._stop_event happens to point to by the time it next
+        # checks; otherwise a later start() reassigning self._stop_event
+        # would just as easily "un-stop" that orphaned thread by a
+        # different route (it would start reading the *new* instance's
+        # event via self, still cleared) as the old shared-Event.clear()
+        # bug did, and two real capture threads would run concurrently,
+        # both feeding _handle_volume_from_source.
+        stop_event = threading.Event()
+        self._stop_event = stop_event
         self._worker_thread = threading.Thread(
-            target=self._worker_loop, name="unicorn-cloak-audio", daemon=True
+            target=self._worker_loop, args=(stop_event,), name="unicorn-cloak-audio", daemon=True
         )
         self._worker_thread.start()
 
@@ -319,22 +336,22 @@ class Microphone:
             self._worker_thread.join(timeout=2.0)
             self._worker_thread = None
 
-    def _worker_loop(self) -> None:
-        while not self._stop_event.is_set():
+    def _worker_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.is_set():
             try:
-                self._run_one_connection()
+                self._run_one_connection(stop_event)
             except Exception as exc:
-                if not self._stop_event.is_set():
+                if not stop_event.is_set():
                     self._report_error(f"microphone stream failed: {exc}")
-            if self._stop_event.is_set():
+            if stop_event.is_set():
                 break
-            self._stop_event.wait(self._reconnect_delay_s)
+            stop_event.wait(self._reconnect_delay_s)
 
     def _report_error(self, message: str) -> None:
         if self._on_error is not None:
             self._on_error(message)
 
-    def _run_one_connection(self) -> None:
+    def _run_one_connection(self, stop_event: threading.Event) -> None:
         device_index = resolve_input_device(self.device)
         # The JACK/PipeWire hostapi runs at a fixed server-wide rate
         # (commonly 48000, not the 44100 this class used to hardcode) and
@@ -376,7 +393,7 @@ class Microphone:
         stream.start()
         self._stream = stream
         try:
-            while not self._stop_event.is_set():
+            while not stop_event.is_set():
                 if stream.read_available < self.blocksize:
                     time.sleep(_POLL_INTERVAL_S)
                     continue
@@ -654,6 +671,15 @@ class EnvelopeRecorder:
         )
 
 
+# Floor for EnvelopeLoopPlayback._run's own per-sample wait -- see that
+# method's own comment (bug audit 2026-09-23, #20, "loop busy-spin").
+# 5ms, not smaller: fast enough that a real multi-sample recording's own
+# timing is unaffected (samples are already at least a mic capture
+# block apart, tens of ms), but a real floor against a busy-spin, not
+# just a token nonzero one.
+_MIN_STEP_S = 0.005
+
+
 class EnvelopeLoopPlayback:
     """Loops a recorded EnvelopeRecording forever, feeding on_volume at
     the same relative timing it was captured at -- a real 10-second
@@ -708,8 +734,18 @@ class EnvelopeLoopPlayback:
                     if self._stop_event.is_set():
                         return
                     wait_s = t - prev_t
-                    if wait_s > 0:
-                        self._stop_event.wait(wait_s)
+                    # Always waits at least _MIN_STEP_S, even when wait_s
+                    # is 0 or negative (a recording whose only/first
+                    # sample sits at t <= 0 -- e.g. record() fired right
+                    # at start(), close enough in time.monotonic()'s own
+                    # resolution to compute an elapsed of exactly 0.0) --
+                    # bug audit 2026-09-23, #20 ("loop busy-spin"). The
+                    # old `if wait_s > 0: wait(...)` skipped waiting
+                    # entirely in that case, so this loop just called
+                    # on_volume as fast as the CPU allowed, forever,
+                    # flooding the Qt queue with volume_measured emits
+                    # instead of pacing them at the recorded rhythm.
+                    self._stop_event.wait(max(wait_s, _MIN_STEP_S))
                     prev_t = t
                     if self._stop_event.is_set():
                         return

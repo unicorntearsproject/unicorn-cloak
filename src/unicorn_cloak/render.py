@@ -283,6 +283,15 @@ class RenderWindow(QWidget):
     def _clear_background_media(self) -> None:
         if self._background_player is not None:
             self._background_player.stop()
+            # deleteLater(), not just dropping the Python reference --
+            # bug audit 2026-09-23, #20 ("media player leak"). Built as
+            # QMediaPlayer(self), i.e. parented to this window, so Qt's
+            # C++ side keeps it alive via that parent-child ownership
+            # regardless of what Python's own refcounting does; without
+            # this it (and its decoder resources) only actually got
+            # freed when the whole Render Window itself closed -- one
+            # leaked player per background switch until then.
+            self._background_player.deleteLater()
             self._background_player = None
         self._background_audio_output = None
         if self._background_video_item is not None:

@@ -1093,6 +1093,76 @@ movement in between.
 
 585 tests (574 -> 585).
 
+**2026-09-23, same-day follow-up: bug audit stage 7 -- finding #20's
+remaining sub-items, and #21. The audit is now closed out**: 20 of 21
+findings fixed, one (#20) fixed on 9 of its 11 own sub-items, with the
+last two deliberately deferred for the owner rather than guessed at
+(see `docs/audit/2026-09-23-bug-audit.md`'s own resolution note, added
+alongside this entry).
+
+**Microphone thread restart** (the trickiest of the remaining items):
+`Microphone.start()` used to `self._stop_event.clear()` a single Event
+shared for the object's whole lifetime. `stop()`'s own
+`join(timeout=2.0)` can return without the old worker thread having
+actually exited (stuck in a blocking `stream.read()`), and `stop()`
+discards `self._worker_thread` regardless of whether the join actually
+succeeded. A following `start()` clearing that same shared Event would
+"un-stop" that old, still-alive thread the moment it next checked --
+two real capture threads feeding `_handle_volume_from_source`
+concurrently. Fixed by giving each `start()` call its own, genuinely
+separate `Event`, passed into `_worker_loop`/`_run_one_connection` as
+an explicit argument rather than read back off `self` -- reassigning
+`self._stop_event` for a *new* thread can no longer affect what an
+*old*, still-running one is watching, since it's holding its own
+reference, not `self`'s.
+
+**Loop busy-spin:** `EnvelopeLoopPlayback._run`'s `if wait_s > 0:
+wait(...)` skipped waiting entirely whenever a recording's sample sat
+at `t <= 0` (e.g. its only sample, recorded right at `start()`) --
+`on_volume` called (and the Qt-queued `volume_measured` signal fired)
+as fast as the CPU allowed, unthrottled. Now always waits at least a
+5ms floor.
+
+**Media player leak:** `_clear_background_media` dropped its Python
+reference to `self._background_player` without `deleteLater()` --
+built as `QMediaPlayer(self)`, so Qt's C++ side kept it alive via that
+parent-child ownership regardless, one leaked player (and its decoder
+resources) per background switch.
+
+**Wheel direction:** `wheelEvent`'s `if angleDelta().y() > 0 else
+zoom-out` treated *any* non-scroll-up delta as scroll-down, including a
+purely horizontal trackpad swipe (`y()==0`) -- it zoomed out instead of
+doing nothing.
+
+**Dangling references / short hotkey list / unvalidated state values /
+no-op undo entries:** covered in stage 6, above.
+
+**Permissions and symlinks:** `save_avatar`/`save_state` write via
+`tempfile.mkstemp` (always `0600`) + `os.replace`, which silently
+tightened an avatar/settings file's permissions on first save (even
+one authored more permissively by another tool) and replaced a
+symlinked avatar path with a plain regular file instead of writing
+through to its target. Both now read/carry over the existing file's
+mode before replacing it, and resolve a symlink to its real target
+first (using that target's directory for the temp file too, since
+`os.replace` requires both sides on the same filesystem to stay
+atomic, and a symlink can legitimately cross a mount boundary) -- the
+`.bak` backup still lands next to the symlink itself, where the owner
+would actually look for it.
+
+**#21 (missing test module):** added `tests/test_spritesheet.py`.
+While writing it, checked the audit's own aside about
+`slice_frame(frames > pixmap width)` empirically rather than trusting
+the write-up: it doesn't return an empty pixmap (that guess didn't
+hold on this PySide6 version) -- `QPixmap.copy()` treats any
+zero-*width* `QRect` as "empty" and falls back to copying the *whole*
+pixmap, so every frame index silently returns the entire, unsliced
+filmstrip instead. Documented via a real, checked test rather than
+repeating the unverified claim; not changed, since what the *right*
+fallback should be here is a separate design question.
+
+601 tests (585 -> 601).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
