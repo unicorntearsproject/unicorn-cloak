@@ -212,6 +212,29 @@ def test_property_edit_writes_through_and_marks_dirty(qapp, tmp_path):
     assert panel._dirty is True
 
 
+def test_editing_an_unrelated_property_does_not_round_or_clamp_transform_fields(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#7): _on_property_changed writes
+    # back *every* transform field on *any* property edit, reading each
+    # spinbox's current value -- at the old 2-decimal default and a
+    # +/-4000 Position/Offset range, changing only Talk state silently
+    # rounded (12.3456 -> 12.35) and clamped (-4500 -> -4000) values a
+    # canvas drag (unrounded, unbounded) had written directly to the
+    # sprite, the moment they got reflected into these boxes and read
+    # back out.
+    config, window, panel, _ = make_panel(tmp_path)
+    sprite = panel.rig.by_id(1)
+    sprite.position = (12.3456, -4500.0)
+    sprite.scale_x = 0.843
+    sprite.rotation_deg = 7.125
+    panel._select(1)  # loads the property form from the sprite's current values
+
+    panel.talk_state.setCurrentIndex(panel.talk_state.findData(1))  # unrelated edit
+
+    assert panel.rig.by_id(1).position == (12.3456, -4500.0)
+    assert panel.rig.by_id(1).scale_x == 0.843
+    assert panel.rig.by_id(1).rotation_deg == 7.125
+
+
 def test_talk_state_combo_offers_quiet_only_option(qapp, tmp_path):
     config, window, panel, _ = make_panel(tmp_path)
     panel._select(1)
@@ -626,6 +649,14 @@ def test_load_updates_current_path_and_clears_dirty(qapp, tmp_path, monkeypatch)
     panel.pos_x.setValue(10.0)
     assert panel._dirty is True
 
+    # Bug audit 2026-09-23, #16: Load now confirms first when dirty,
+    # same as Quit already does -- Discard here to proceed with the
+    # load, matching this test's own intent (loading over unsaved
+    # changes and checking they're gone after).
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: cpw_module.QMessageBox.StandardButton.Discard,
+    )
     monkeypatch.setattr(
         cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(save_path), "")
     )
@@ -634,6 +665,104 @@ def test_load_updates_current_path_and_clears_dirty(qapp, tmp_path, monkeypatch)
     assert panel._dirty is False
     assert panel._current_avatar_path == str(save_path)
     assert config.avatar_path == str(save_path)
+
+
+# --- Load confirmation / I/O error dialogs (bug audit 2026-09-23, #16) ------
+
+
+def test_load_cancel_when_dirty_does_not_open_the_file_dialog(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.pos_x.setValue(10.0)
+    assert panel._dirty is True
+
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: cpw_module.QMessageBox.StandardButton.Cancel,
+    )
+    dialog_calls = []
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName",
+        lambda *a, **k: dialog_calls.append(True) or ("", ""),
+    )
+    panel._on_load()
+
+    assert dialog_calls == []  # never even got to picking a file
+    assert panel._dirty is True  # nothing discarded
+
+
+def test_load_does_not_confirm_when_not_dirty(qapp, tmp_path, monkeypatch):
+    # The common case -- no unsaved changes, so Load must go straight
+    # to the file dialog with no confirmation in the way.
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._dirty is False
+
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not be asked")),
+    )
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: ("", "")
+    )
+    panel._on_load()  # must not raise
+
+
+def test_load_shows_a_dialog_for_a_malformed_file_instead_of_raising(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#16): a malformed or unreadable
+    # file used to print a traceback to the console and nothing else.
+    config, window, panel, _ = make_panel(tmp_path)
+    bad_path = tmp_path / "bad.uc"
+    bad_path.write_text("{not valid json")
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(bad_path), "")
+    )
+    warnings = []
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning", lambda *a, **k: warnings.append(True),
+    )
+
+    panel._on_load()  # must not raise
+
+    assert warnings == [True]
+
+
+def test_save_shows_a_dialog_instead_of_raising_on_an_unwritable_path(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#16): a failed save (unwritable
+    # directory, a full disk) used to print a traceback to the console
+    # and nothing else -- the title's "*" never clearing was the only
+    # clue, easy to miss entirely.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.pos_x.setValue(10.0)  # a real edit, so there's something to fail to save
+    panel._current_avatar_path = str(tmp_path / "no-such-directory" / "avatar.uc")
+    warnings = []
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning", lambda *a, **k: warnings.append(True),
+    )
+
+    panel._on_save()  # must not raise
+
+    assert warnings == [True]
+    assert panel._dirty is True  # the failed save did not clear it
+
+
+def test_add_shows_a_dialog_instead_of_raising_when_the_file_cannot_be_read(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    missing_path = tmp_path / "does-not-exist.png"
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(missing_path), "")
+    )
+    warnings = []
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning", lambda *a, **k: warnings.append(True),
+    )
+    sprite_count_before = len(panel.rig.sprites)
+
+    panel._on_add()  # must not raise
+
+    assert warnings == [True]
+    assert len(panel.rig.sprites) == sprite_count_before  # nothing added
+    assert panel._undo_stack == []  # no no-op undo entry left behind
 
 
 def test_load_replaces_costume_and_expression_assignments_too(qapp, tmp_path, monkeypatch):
@@ -680,6 +809,12 @@ def test_load_clears_undo_history_instead_of_pushing_a_snapshot(qapp, tmp_path, 
     other_rig = make_test_rig()
     save_path = tmp_path / "other.uc"
     save_avatar(other_rig, save_path)
+    # Bug audit 2026-09-23, #16: Load now confirms first when dirty --
+    # Discard to proceed, matching this test's own intent.
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: cpw_module.QMessageBox.StandardButton.Discard,
+    )
     monkeypatch.setattr(
         cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(save_path), "")
     )
@@ -718,6 +853,147 @@ def test_save_does_not_trigger_its_own_hot_reload(qapp, tmp_path):
     watcher._emit_for_path(str(out_path))  # simulate the watcher noticing our own write
 
     assert reload_events == []
+
+
+def test_save_as_re_points_the_avatar_watch_at_the_new_file(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#14): watch_avatar_file was only
+    # ever called once, at startup -- Save As left the *old* file
+    # watched and the newly current one entirely unwatched.
+    from unicorn_cloak.hot_reload import AssetWatcher
+
+    config, window, panel, _ = make_panel(tmp_path)
+    old_path = tmp_path / "old.uc"
+    panel._current_avatar_path = str(old_path)
+    watcher = AssetWatcher()
+    watcher.watch_avatar_file(str(old_path))
+    panel.asset_watcher = watcher
+
+    new_path = tmp_path / "new.uc"
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getSaveFileName", lambda *a, **k: (str(new_path), "")
+    )
+    panel._on_save_as()
+
+    assert watcher._avatar_path == str(new_path)
+
+
+def test_load_re_points_both_watches_at_the_newly_loaded_avatar(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#14): Load left the *previous*
+    # avatar's file (and sprite PNGs no longer even part of the rig)
+    # watched instead of the one actually now open.
+    from unicorn_cloak.hot_reload import AssetWatcher
+    from unicorn_cloak.persistence import save_avatar
+
+    config, window, panel, _ = make_panel(tmp_path)
+    old_path = tmp_path / "old.uc"
+    panel._current_avatar_path = str(old_path)
+    watcher = AssetWatcher()
+    watcher.watch_avatar_file(str(old_path))
+    panel.asset_watcher = watcher
+
+    other_rig = make_test_rig()
+    save_path = tmp_path / "other.uc"
+    save_avatar(other_rig, save_path)
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(save_path), "")
+    )
+    panel._on_load()
+
+    assert watcher._avatar_path == str(save_path)
+    assert watcher._sprite_paths == {s.path for s in panel.rig.sprites}
+
+
+def test_adding_a_sprite_watches_its_new_source_png(qapp, tmp_path, monkeypatch):
+    # Regression, bug audit 2026-09-23 (#14): a sprite added through the
+    # Control Panel was never actually watched -- only __main__.py's own
+    # startup/hot-reload paths ever called watch_sprite_files.
+    from unicorn_cloak.hot_reload import AssetWatcher
+
+    config, window, panel, _ = make_panel(tmp_path)
+    watcher = AssetWatcher()
+    panel.asset_watcher = watcher
+
+    new_png = tmp_path / "new-sprite.png"
+    new_png.write_bytes(make_test_png_bytes())
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(new_png), "")
+    )
+    panel._on_add()
+
+    assert str(new_png) in watcher._sprite_paths
+
+
+def test_replacing_a_sprite_watches_its_new_source_png(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.hot_reload import AssetWatcher
+
+    config, window, panel, _ = make_panel(tmp_path)
+    watcher = AssetWatcher()
+    panel.asset_watcher = watcher
+    panel._select(1)
+
+    new_png = tmp_path / "replacement.png"
+    new_png.write_bytes(make_test_png_bytes())
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(new_png), "")
+    )
+    panel._on_replace()
+
+    assert str(new_png) in watcher._sprite_paths
+
+
+# --- refresh_after_external_avatar_reload (bug audit 2026-09-23, #15) -------
+
+
+def test_external_avatar_reload_clears_dirty_and_undo_history(qapp, tmp_path, monkeypatch):
+    # Regression: replace_contents_from already overwrites self.rig by
+    # the time this runs (see __main__.handle_avatar_file_changed), but
+    # _dirty and the undo stack used to be left completely untouched --
+    # the title kept showing "*" for the wrong reason (a stale flag, not
+    # real unsaved changes against what's now on disk), and Undo would
+    # have restored pre-reload sprites that no longer correspond to
+    # anything on disk.
+    monkeypatch.setattr(cpw_module.QMessageBox, "warning", lambda *a, **k: None)
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.pos_x.setValue(10.0)  # a real undo-able edit, and marks dirty
+    assert panel._dirty is True
+    assert panel._undo_btn.isEnabled() is True
+
+    panel.refresh_after_external_avatar_reload()
+
+    assert panel._dirty is False
+    assert panel._undo_btn.isEnabled() is False
+    assert panel._redo_btn.isEnabled() is False
+
+
+def test_external_avatar_reload_warns_when_it_discards_unsaved_changes(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    panel.pos_x.setValue(10.0)
+    assert panel._dirty is True
+
+    warnings = []
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: warnings.append(True),
+    )
+    panel.refresh_after_external_avatar_reload()
+
+    assert warnings == [True]
+
+
+def test_external_avatar_reload_does_not_warn_when_nothing_was_unsaved(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._dirty is False
+
+    warnings = []
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: warnings.append(True),
+    )
+    panel.refresh_after_external_avatar_reload()
+
+    assert warnings == []
 
 
 # --- Quit confirmation ------------------------------------------------------

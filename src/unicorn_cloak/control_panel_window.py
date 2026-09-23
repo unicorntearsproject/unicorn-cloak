@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import math
 import time
 from collections.abc import Callable
@@ -1375,7 +1376,16 @@ class ControlPanelWindow(QWidget):
             "How high the avatar hops on a speech bounce.",
         )
         self._add_double(
-            motion_form, "Gravity", 0.0, 5000.0, 10.0, 0,
+            # Minimum 100.0, not 0.0 -- bug audit 2026-09-23, #13:
+            # gravity 0 never decays a bounce's velocity at all, so the
+            # avatar's first speak-bounce just drifts permanently
+            # off-screen instead of settling. motion.bounce_step floors
+            # it the same way independently, at the same value (a
+            # hand-edited settings.json bypasses this range entirely --
+            # see that constant's own comment for why 100.0 specifically,
+            # not a token nonzero minimum), but there's no reason to let
+            # the UI itself offer a value that's silently broken.
+            motion_form, "Gravity", 100.0, 5000.0, 10.0, 0,
             self.config.motion, "gravity",
             "How fast a bounce falls back down. Higher = snappier and\n"
             "shorter hops, lower = slower and floatier.",
@@ -1492,10 +1502,23 @@ class ControlPanelWindow(QWidget):
 
         self.property_form = QFormLayout()
         self.property_form.setContentsMargins(0, 0, 0, 0)
-        self.pos_x = self._spin(-4000, 4000)
-        self.pos_y = self._spin(-4000, 4000)
-        self.offset_x = self._spin(-4000, 4000)
-        self.offset_y = self._spin(-4000, 4000)
+        # Range widened from an earlier +/-4000, decimals from the
+        # QDoubleSpinBox default (2) to 4 -- bug audit 2026-09-23, #7:
+        # _on_property_changed (below) writes back *every* transform
+        # field on *any* property edit, whichever widget's signal
+        # actually fired, reading each spinbox's current .value(). A
+        # canvas drag writes unrounded, unbounded floats straight to
+        # sprite.position -- at 2 decimals and a +/-4000 range, the next
+        # unrelated edit (e.g. Talk state) silently rounded (12.3456 ->
+        # 12.35) or clamped (a drag past 4000 -> 4000) that value the
+        # moment _load_property_form reflected it back into these boxes.
+        # 4 decimals and a much larger range don't eliminate the
+        # possibility entirely (still a bounded, rounded float), but
+        # cover anything this canvas could plausibly produce.
+        self.pos_x = self._spin(-1_000_000, 1_000_000, decimals=4)
+        self.pos_y = self._spin(-1_000_000, 1_000_000, decimals=4)
+        self.offset_x = self._spin(-1_000_000, 1_000_000, decimals=4)
+        self.offset_y = self._spin(-1_000_000, 1_000_000, decimals=4)
         self.z_index = QSpinBox()
         self.z_index.setRange(-1000, 1000)
         self.parent_combo = QComboBox()
@@ -1544,7 +1567,7 @@ class ControlPanelWindow(QWidget):
         # this same sprite.rotation_deg and keeps this spinbox in sync via
         # on_sprite_rotated, the same pattern on_sprite_moved already uses
         # for drag-to-move.
-        self.rotation = self._spin(-360.0, 360.0)
+        self.rotation = self._spin(-360.0, 360.0, decimals=4)  # decimals: see pos_x's own comment, bug audit #7
         self.rotation.setToolTip(
             "Permanently rotates this sprite, e.g. for an accessory drawn\n"
             "at the wrong angle, or a limb that should hang at a fixed\n"
@@ -1566,8 +1589,8 @@ class ControlPanelWindow(QWidget):
         # its own separate control the same day: a session-wide editing
         # preference (do the two axes track each other), independent of
         # whether the sprite is fully locked or not.
-        self.scale_x = self._spin(0.01, 100.0)
-        self.scale_y = self._spin(0.01, 100.0)
+        self.scale_x = self._spin(0.01, 100.0, decimals=4)  # decimals: see pos_x's own comment, bug audit #7
+        self.scale_y = self._spin(0.01, 100.0, decimals=4)
         self.scale_lock = QPushButton("🔗 Lock proportions")
         self.scale_lock.setCheckable(True)
         self.scale_lock.setChecked(True)
@@ -2340,9 +2363,10 @@ class ControlPanelWindow(QWidget):
     # =====================================================================
 
     @staticmethod
-    def _spin(lo: float, hi: float) -> QDoubleSpinBox:
+    def _spin(lo: float, hi: float, decimals: int = 2) -> QDoubleSpinBox:
         box = ScrollSafeDoubleSpinBox()
         box.setRange(lo, hi)
+        box.setDecimals(decimals)
         return box
 
     def _add_double(
@@ -2529,7 +2553,17 @@ class ControlPanelWindow(QWidget):
         if not self._current_avatar_path:
             self._on_save_as()
             return
-        save_avatar(self.rig, self._current_avatar_path)
+        try:
+            save_avatar(self.rig, self._current_avatar_path)
+        except OSError as exc:
+            # Bug audit 2026-09-23, #16: a failed save (unwritable
+            # directory, a full disk) used to print a traceback to the
+            # console and nothing else -- the only visible clue was that
+            # the title's "*" never cleared, easy to miss entirely.
+            QMessageBox.warning(
+                self, "Save failed", f"Could not save {self._current_avatar_path!r}:\n{exc}"
+            )
+            return
         if self.asset_watcher is not None:
             self.asset_watcher.note_own_write(self._current_avatar_path)
         self.config.avatar_path = self._current_avatar_path
@@ -2545,9 +2579,21 @@ class ControlPanelWindow(QWidget):
             return
         if not path.endswith(DEFAULT_EXTENSION):
             path += DEFAULT_EXTENSION
-        save_avatar(self.rig, path)
+        try:
+            save_avatar(self.rig, path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Save failed", f"Could not save {path!r}:\n{exc}")
+            return
         if self.asset_watcher is not None:
             self.asset_watcher.note_own_write(path)
+            # Re-point the watch at the new path -- bug audit 2026-09-23,
+            # #14: watch_avatar_file was only ever called once, at
+            # startup, so Save As left the *old* file watched and the
+            # newly current one entirely unwatched -- a change to the
+            # old file would even trigger a reload that read
+            # config.avatar_path, i.e. this new file, not the one that
+            # actually changed.
+            self.asset_watcher.watch_avatar_file(path)
         self._current_avatar_path = path
         self.config.avatar_path = path
         self._dirty = False
@@ -3342,12 +3388,26 @@ class ControlPanelWindow(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Add sprite", "", "Images (*.png)")
         if not path:
             return
+        try:
+            with open(path, "rb") as f:
+                image_data = f.read()
+        except OSError as exc:
+            # Bug audit 2026-09-23, #16. Read before push_undo_snapshot()
+            # (not after), so a failed read never leaves a no-op undo
+            # entry behind for a change that didn't actually happen.
+            QMessageBox.warning(self, "Add sprite failed", f"Could not read {path!r}:\n{exc}")
+            return
         self.push_undo_snapshot()
-        with open(path, "rb") as f:
-            image_data = f.read()
         sprite = Sprite(id=self.rig.new_sprite_id(), path=path, image_data=image_data)
         self.rig.add_sprite(sprite)
         self._mark_dirty()
+        if self.asset_watcher is not None:
+            # Bug audit 2026-09-23, #14: sprite PNG watches were only
+            # ever set from __main__.py's own startup/hot-reload paths,
+            # never re-synced from here -- a sprite added through the
+            # Control Panel was never actually watched, so re-exporting/
+            # touching its source PNG afterward did nothing.
+            self.asset_watcher.watch_sprite_files([s.path for s in self.rig.sprites])
         self._rebuild_scene()
         self._rebuild_list()
         self._select(sprite.id)
@@ -3359,12 +3419,19 @@ class ControlPanelWindow(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Replace sprite image", "", "Images (*.png)")
         if not path:
             return
+        try:
+            with open(path, "rb") as f:
+                image_data = f.read()
+        except OSError as exc:
+            QMessageBox.warning(self, "Replace sprite failed", f"Could not read {path!r}:\n{exc}")
+            return
         self.push_undo_snapshot()
         sprite = self.rig.by_id(self._selected_id)
-        with open(path, "rb") as f:
-            sprite.image_data = f.read()
+        sprite.image_data = image_data
         sprite.path = path
         self._mark_dirty()
+        if self.asset_watcher is not None:
+            self.asset_watcher.watch_sprite_files([s.path for s in self.rig.sprites])
         self._rebuild_scene()
         self._rebuild_list()
         self._select(sprite.id)
@@ -3446,11 +3513,75 @@ class ControlPanelWindow(QWidget):
         self._sync_zoom_controls()
         self.render_window.rebuild()
 
+    def refresh_after_external_avatar_reload(self) -> None:
+        """__main__.py's handle_avatar_file_changed calls this instead
+        of refresh_after_external_change directly, specifically for a
+        reload of the *avatar file itself* (not a sprite-PNG-only
+        change, which still goes straight to refresh_after_external_change).
+
+        Bug audit 2026-09-23, #15: replace_contents_from has already
+        overwritten self.rig's sprites/assignments with whatever was on
+        disk by the time this runs, but self._dirty and the undo stack
+        used to be left completely untouched. If there were real
+        unsaved edits (_dirty already True), they're gone now with no
+        warning at all -- and the stale True flag afterward gave a
+        misleading reason for the title's "*" (looks like "still have
+        unsaved changes" when what actually happened is "the reload
+        just silently discarded some"). The undo stack is a history
+        boundary here too, same reasoning as Load (#2) -- Undo
+        afterward would restore pre-reload sprites that may not
+        correspond to anything on disk any more."""
+        had_unsaved_changes = self._dirty
+        self.refresh_after_external_change()
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+        self._update_undo_redo_buttons()
+        self._dirty = False
+        self._update_dirty_indicator()
+        if had_unsaved_changes:
+            QMessageBox.warning(
+                self,
+                "Avatar file changed externally",
+                "This avatar's save file changed outside Unicorn Cloak and "
+                "was reloaded -- your unsaved changes here were discarded.",
+            )
+
     def _on_load(self) -> None:
+        # Confirm first if dirty -- bug audit 2026-09-23, #16: this used
+        # to swap avatars unconditionally, silently discarding unsaved
+        # changes with no prompt at all. Same Save/Discard/Cancel dialog
+        # confirm_and_quit already uses for the same situation on Quit.
+        if self._dirty:
+            result = QMessageBox.warning(
+                self,
+                "Load avatar?",
+                "The current avatar has unsaved changes that will be lost.\n\n"
+                "Load a different avatar anyway?",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if result == QMessageBox.StandardButton.Cancel:
+                return
+            if result == QMessageBox.StandardButton.Save:
+                self._on_save()
+                if self._dirty:
+                    # Save As was cancelled (no current path yet) -- don't
+                    # load out from under an avatar that still isn't saved.
+                    return
+
         path, _ = QFileDialog.getOpenFileName(
             self, "Load avatar", "", f"Unicorn Cloak avatar (*{DEFAULT_EXTENSION} *.save)"
         )
         if not path:
+            return
+        try:
+            loaded = load_avatar_with_upgrade(path, parent=self)
+        except (OSError, json.JSONDecodeError, KeyError) as exc:
+            # Bug audit 2026-09-23, #16: a malformed or unreadable file
+            # used to print a traceback to the console and nothing
+            # else -- no visible sign anything went wrong at all.
+            QMessageBox.warning(self, "Load failed", f"Could not load {path!r}:\n{exc}")
             return
         # Not push_undo_snapshot() -- Load is a history boundary, not an
         # editable step in the current avatar's history. Bug audit
@@ -3465,10 +3596,21 @@ class ControlPanelWindow(QWidget):
         self._undo_stack.clear()
         self._redo_stack.clear()
         self._update_undo_redo_buttons()
-        loaded = load_avatar_with_upgrade(path, parent=self)
         self.rig.replace_contents_from(loaded)
         self._current_avatar_path = path
         self.config.avatar_path = path
+        if self.asset_watcher is not None:
+            # Re-point both watches at the newly loaded avatar -- bug
+            # audit 2026-09-23, #14: watch_avatar_file/watch_sprite_files
+            # were only ever called once, at startup, so Load left the
+            # *previous* avatar's file (and sprite PNGs no longer even
+            # part of this rig) watched instead of the one now actually
+            # open -- a hand-edit to the newly loaded file was never
+            # picked up, while an edit to the old, no-longer-open file
+            # would trigger a reload that read config.avatar_path, i.e.
+            # this new file, not the one that actually changed.
+            self.asset_watcher.watch_avatar_file(path)
+            self.asset_watcher.watch_sprite_files([s.path for s in self.rig.sprites])
         self._dirty = False
         self._update_dirty_indicator()
         self._rebuild_scene()

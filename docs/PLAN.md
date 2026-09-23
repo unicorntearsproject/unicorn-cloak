@@ -995,6 +995,38 @@ mirroring what `switch_to_file` already did, just missing here.
 
 546 tests (537 -> 546).
 
+**2026-09-23, same-day follow-up: bug audit stage 4 -- findings #7,
+#12, #13, #14, #15, #16.** `#7`: `_on_property_changed` writes back
+every transform field on any edit, reading each spinbox's current
+value -- at the old 2-decimal default and a +/-4000 Position/Offset
+range, an unrelated edit silently rounded or clamped a value a canvas
+drag had already written straight to the sprite. Position/Offset/
+Rotation/Scale spinboxes now use 4 decimals and (Position/Offset) a
+much wider range. `#12`: `_migrate_raw_config` used to `break` at the
+first version step with nothing registered, which for an unstamped
+(version-0) file meant *immediately* -- skipping every real migration
+after it too, including the real `window.zoom` removal, so an old file
+that still had it crashed startup. Now always advances the version and
+keeps going. `load_state` also now falls back to `settings.json.bak`,
+then to defaults, instead of crashing on any parse/merge failure.
+`#13`: `gravity=0` (allowed by the Gravity field's own range) never
+decayed a bounce's velocity, so the avatar's first speak-bounce
+drifted permanently off-screen; `motion.bounce_step` now floors
+gravity to a sane minimum, and the UI's own range matches. `#14`:
+`AssetWatcher.watch_avatar_file`/`watch_sprite_files` were only ever
+called once, at startup -- Save As, Load, Add, and Replace now
+re-point the watch at whatever's actually current. `#15`: an avatar
+*file* hot-reload now clears the undo stack and the dirty flag
+(previously left stale after `replace_contents_from` had already
+overwritten the rig), and warns if it just silently discarded real
+unsaved edits. `#16`: Load now confirms (Save/Discard/Cancel, same
+dialog `confirm_and_quit` already uses) when there are unsaved
+changes, and Save/Save As/Load/Add/Replace show a dialog instead of
+printing a traceback to the console on a failed write or a malformed/
+unreadable file.
+
+567 tests (546 -> 567).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

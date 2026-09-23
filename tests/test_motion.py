@@ -233,6 +233,38 @@ def test_bounce_step_settles_back_to_zero():
     assert seen_negative
 
 
+def test_bounce_step_settles_even_with_zero_gravity():
+    # Regression, bug audit 2026-09-23 (#13): gravity=0 is allowed by
+    # the Behavior tab's own Gravity field (range used to start at 0.0)
+    # -- with no floor inside bounce_step, y_velocity never decayed at
+    # all, so the avatar's very first speak-bounce drifted permanently
+    # off-screen (~2,500px within 10s) instead of settling, and
+    # should_retrigger_bounce (gated on "at rest") never fired again.
+    state = bounce_trigger(BounceState(), bounce_strength=250)
+    settled = False
+    for _ in range(10 * 60):  # 10 simulated seconds at 60fps
+        state, _ = bounce_step(state, gravity=0.0)
+        if should_retrigger_bounce(state, ticks_since_last_trigger=10_000, retrigger_ticks=1):
+            settled = True
+            break
+    assert settled
+    assert state.y_position > -3000  # nowhere near the old unbounded drift
+
+
+def test_bounce_step_settles_even_with_negative_gravity():
+    # Only reachable via a hand-edited settings.json (the UI's own
+    # range floors at a positive minimum) -- motion.bounce_step floors
+    # it independently regardless of how an out-of-range value arrives.
+    state = bounce_trigger(BounceState(), bounce_strength=250)
+    settled = False
+    for _ in range(10 * 60):
+        state, _ = bounce_step(state, gravity=-500.0)
+        if should_retrigger_bounce(state, ticks_since_last_trigger=10_000, retrigger_ticks=1):
+            settled = True
+            break
+    assert settled
+
+
 def test_should_retrigger_bounce_waits_for_settle_not_just_elapsed_time():
     # Regression: retrigger_ticks shorter than the natural settle time
     # (~2*bounce_strength/gravity) must not fire mid-flight -- doing so

@@ -48,7 +48,7 @@ def test_load_state_applies_a_registered_migration(tmp_path, monkeypatch):
     assert config.audio.gain == 2.5
 
 
-def test_load_state_stops_migrating_when_no_migration_is_registered_for_a_step(tmp_path):
+def test_load_state_skips_a_step_with_no_migration_registered(tmp_path):
     # A version behind current with nothing registered for *that*
     # particular step (true for step 0 -> 1, even though step 1 -> 2 now
     # has a real migration -- see _migrate_window_zoom_to_avatar) must
@@ -57,6 +57,24 @@ def test_load_state_stops_migrating_when_no_migration_is_registered_for_a_step(t
     path.write_text(json.dumps({"__config_version__": 0, "avatar_path": "/tmp/x.uc"}))
     config = load_state(path)
     assert config.avatar_path == "/tmp/x.uc"
+
+
+def test_load_state_applies_a_later_migration_even_with_an_unstamped_earlier_step(tmp_path):
+    # Regression, bug audit 2026-09-23 (#12): _migrate_raw_config used
+    # to *break* at the first version with nothing registered -- for a
+    # version-0 file (no stamp at all, every settings.json written
+    # before version-stamping existed) that's immediately, since
+    # nothing is registered at key 0 (only 1 -> 2, the real
+    # window.zoom-removal migration). That skipped every migration
+    # after it too, so an old, unstamped file that still had a leftover
+    # window.zoom key (entirely plausible -- it predates the whole
+    # versioning feature) crashed at _merge with "unknown WindowConfig
+    # setting(s): ['zoom']" instead of ever reaching the fix for it.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"window": {"zoom": 1.5, "width": 1920}}))  # no stamp at all
+    config = load_state(path)  # must not raise
+    assert config.window.width == 1920
+    assert not hasattr(config.window, "zoom")
 
 
 def test_load_state_strips_old_window_zoom(tmp_path):
@@ -98,6 +116,67 @@ def test_load_state_reads_scale_lock_proportions_when_present(tmp_path):
     assert config.control_panel.scale_lock_proportions is False
 
 
+# --- load_state falls back to .bak, then defaults (bug audit 2026-09-23, #12) --
+
+
+def test_load_state_falls_back_to_bak_on_malformed_json(tmp_path, capsys):
+    # Regression: load_state used to have no fallback at all -- a
+    # genuinely malformed settings.json crashed the whole app at
+    # startup, even with a valid save_state-written .bak (rewritten on
+    # every save, see save_state's own docstring) sitting right next to
+    # it, ready to recover from.
+    path = tmp_path / "settings.json"
+    good = Config()
+    good.audio.mild_open = 0.05
+    save_state(good, path)
+    save_state(good, path)  # second save writes settings.json.bak from the first
+    path.write_text("{not valid json")  # corrupt the primary in place
+
+    config = load_state(path)
+
+    assert config.audio.mild_open == 0.05
+    assert "failed to load" in capsys.readouterr().out
+
+
+def test_load_state_falls_back_to_bak_on_an_unknown_key(tmp_path):
+    path = tmp_path / "settings.json"
+    good = Config()
+    good.audio.mild_open = 0.05
+    save_state(good, path)
+    save_state(good, path)
+    path.write_text(json.dumps({
+        "__config_version__": config_module.CURRENT_CONFIG_VERSION,
+        "audio": {"not_a_real_field": 1},
+    }))
+
+    config = load_state(path)
+
+    assert config.audio.mild_open == 0.05
+
+
+def test_load_state_falls_back_to_defaults_when_bak_is_also_bad(tmp_path, capsys):
+    path = tmp_path / "settings.json"
+    path.write_text("{not valid json")
+    backup_path = path.with_suffix(path.suffix + ".bak")
+    backup_path.write_text("{also not valid json")
+
+    config = load_state(path)
+
+    assert config == Config()
+    out = capsys.readouterr().out
+    assert "failed to load" in out
+    assert "starting with default settings" in out
+
+
+def test_load_state_falls_back_to_defaults_when_there_is_no_bak(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{not valid json")
+
+    config = load_state(path)  # must not raise even with no .bak to recover from
+
+    assert config == Config()
+
+
 def test_save_then_load_round_trips(tmp_path):
     path = tmp_path / "settings.json"
     original = Config()
@@ -118,11 +197,23 @@ def test_save_is_atomic_no_leftover_tmp_file(tmp_path):
     assert leftovers == []
 
 
-def test_unknown_key_raises(tmp_path):
+def test_merge_raises_for_an_unknown_key():
+    # _merge's own raise is exactly what makes load_state's fallback-to-
+    # .bak/defaults behavior (bug audit 2026-09-23, #12) meaningful --
+    # load_state itself no longer raises for this (see the "falls back"
+    # tests above), it catches this and recovers instead.
+    with pytest.raises(ValueError, match="typo_field"):
+        config_module._merge(config_module.AudioConfig, Config().audio, {"typo_field": 1.0})
+
+
+def test_load_state_does_not_raise_for_an_unknown_key_with_no_backup(tmp_path, capsys):
+    # Regression, bug audit 2026-09-23 (#12): this exact input used to
+    # crash the whole app at startup via _merge's ValueError, uncaught.
     path = tmp_path / "settings.json"
     path.write_text('{"audio": {"typo_field": 1.0}}')
-    with pytest.raises(ValueError, match="typo_field"):
-        load_state(path)
+    config = load_state(path)  # must not raise
+    assert config == Config()
+    assert "failed to load" in capsys.readouterr().out
 
 
 def test_avatar_path_override(tmp_path):

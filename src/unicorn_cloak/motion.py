@@ -256,12 +256,35 @@ def should_retrigger_bounce(
     return at_rest and ticks_since_last_trigger >= retrigger_ticks
 
 
+# Gravity is floored to this, never allowed to reach (or go below) zero
+# -- bug audit 2026-09-23, #13. gravity==0 (allowed by the Behavior
+# tab's own Gravity field, whose range started at 0.0) never decays
+# y_velocity back toward 0 at all: the avatar's very first bounce
+# impulse (bounce_trigger's -bounce_strength) just keeps drifting
+# upward forever (~2,500px within 10s, confirmed), and
+# should_retrigger_bounce (gated on "at rest," i.e. y_velocity >= 0)
+# never fires again either, since velocity never actually changes.
+# Floored here, not just in the UI's own range, so a hand-edited
+# settings.json (gravity 0 or negative -- config.py doesn't validate
+# numeric ranges at all, only types) can't reach the same failure.
+#
+# 100.0, not some tiny epsilon like 1.0 -- technically nonzero still
+# isn't a real fix: settle time is roughly 2*bounce_strength/gravity,
+# so a near-zero floor against a max Bounce strength (2000) would take
+# minutes to settle, indistinguishable from "never" in practice. 100.0
+# keeps worst case (max bounce_strength) under a minute and the default
+# (250) around 5s, while still leaving a wide, genuinely floaty tuning
+# range (100-5000) above it.
+_MIN_GRAVITY = 100.0
+
+
 def bounce_step(state: BounceState, gravity: float, frame_seconds: float = 1 / 60) -> tuple[BounceState, float]:
     """One frame of the bounce-and-settle integrator.
 
     Returns the new state and bounce_delta_y (previous y_position minus
     new y_position) for drag_velocity_y's ignore_bounce compensation.
     """
+    gravity = max(gravity, _MIN_GRAVITY)
     prev_y = state.y_position
     new_y = state.y_position + state.y_velocity * frame_seconds
     new_velocity = state.y_velocity + gravity * frame_seconds

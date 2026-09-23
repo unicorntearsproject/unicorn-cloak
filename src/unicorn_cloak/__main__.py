@@ -102,7 +102,11 @@ def handle_avatar_file_changed(rig, config, control_panel, asset_watcher) -> boo
         print(f"[hot-reload] failed to reload {config.avatar_path!r}: {exc}", flush=True)
         return False
     rig.replace_contents_from(reloaded, keep_active_costume=True)
-    control_panel.refresh_after_external_change()
+    # Not the bare refresh_after_external_change -- this wraps it with
+    # the dirty-flag/undo-stack handling specific to an avatar *file*
+    # reload (bug audit 2026-09-23, #15: see that method's own
+    # docstring in control_panel_window.py).
+    control_panel.refresh_after_external_avatar_reload()
     # The reload may have added/removed/renamed sprites -- re-point the
     # sprite watch at whatever the file now actually contains.
     asset_watcher.watch_sprite_files([s.path for s in rig.sprites])

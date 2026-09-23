@@ -47,7 +47,7 @@ class _FakeControlPanel:
     def __init__(self) -> None:
         self.refresh_calls = 0
 
-    def refresh_after_external_change(self) -> None:
+    def refresh_after_external_avatar_reload(self) -> None:
         self.refresh_calls += 1
 
 

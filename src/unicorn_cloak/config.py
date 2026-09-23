@@ -84,12 +84,21 @@ _CONFIG_MIGRATIONS: dict[int, Callable[[dict], dict]] = {
 
 
 def _migrate_raw_config(raw: dict) -> dict:
+    # Always advances version and keeps going, even for a step with
+    # nothing registered -- bug audit 2026-09-23, #12: this used to
+    # `break` at the first such step, which for a version-0 file (no
+    # stamp at all -- every settings.json written before versioning
+    # existed) meant *immediately*, since nothing is registered at key
+    # 0 (there was nothing to migrate between v0 and v1, only starting
+    # at v1->v2). That skipped every real migration after it too,
+    # including v1's window.zoom removal -- so an old, unstamped file
+    # with a leftover window.zoom crashed at _merge with "unknown
+    # WindowConfig setting(s)" instead of ever reaching the fix for it.
     version = raw.get(_CONFIG_VERSION_KEY, 0)
     while version < CURRENT_CONFIG_VERSION:
         migrate = _CONFIG_MIGRATIONS.get(version)
-        if migrate is None:
-            break  # nothing registered for this step -- leave the rest to _merge's own per-field defaults
-        raw = migrate(raw)
+        if migrate is not None:
+            raw = migrate(raw)
         version += 1
     return raw
 
@@ -361,12 +370,10 @@ def _merge(cls, current, overrides: dict):
     return cls(**{**vars(current), **overrides})
 
 
-def load_state(path: str | Path = DEFAULT_STATE_PATH) -> Config:
-    path = Path(path)
+def _read_config_from_file(path: Path) -> Config:
+    """Raises on any parse/migrate/merge failure -- load_state below is
+    the only caller, and it alone decides what to fall back to."""
     config = Config()
-    if not path.exists():
-        return config
-
     with path.open() as f:
         raw = json.load(f)
     raw = _migrate_raw_config(raw)
@@ -394,6 +401,43 @@ def load_state(path: str | Path = DEFAULT_STATE_PATH) -> Config:
         if config.control_panel.splitter_sizes is not None:
             config.control_panel.splitter_sizes = tuple(config.control_panel.splitter_sizes)
     return config
+
+
+# What _read_config_from_file can actually raise: malformed JSON,
+# _merge's own ValueError on an unrecognized key, or a raw dict shaped
+# unexpectedly (a hand-edited or corrupted file -- TypeError/KeyError
+# from indexing into something that isn't the dict/list shape expected).
+_CONFIG_LOAD_ERRORS = (OSError, ValueError, TypeError, KeyError)
+
+
+def load_state(path: str | Path = DEFAULT_STATE_PATH) -> Config:
+    """Falls back to `path`'s own `.bak` (save_state's own backup,
+    rewritten on every save -- see its docstring) if the primary file
+    fails to parse or load, and to a fresh default Config() if even
+    that fails -- bug audit 2026-09-23, #12: this used to have no
+    fallback at all, so a genuinely malformed or unrecognized
+    settings.json crashed the whole app at startup, even with a valid
+    backup sitting right next to it."""
+    path = Path(path)
+    if not path.exists():
+        return Config()
+
+    try:
+        return _read_config_from_file(path)
+    except _CONFIG_LOAD_ERRORS as exc:
+        print(f"[config] failed to load {str(path)!r}: {exc}", flush=True)
+
+    backup_path = path.with_suffix(path.suffix + ".bak")
+    if backup_path.exists():
+        try:
+            config = _read_config_from_file(backup_path)
+            print(f"[config] recovered settings from {str(backup_path)!r}", flush=True)
+            return config
+        except _CONFIG_LOAD_ERRORS as exc:
+            print(f"[config] backup {str(backup_path)!r} also failed to load: {exc}", flush=True)
+
+    print("[config] starting with default settings", flush=True)
+    return Config()
 
 
 def save_state(config: Config, path: str | Path = DEFAULT_STATE_PATH) -> None:
