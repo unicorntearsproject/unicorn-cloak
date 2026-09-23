@@ -355,14 +355,16 @@ just below the canvas, in either mode.</li>
 Behavior, Audio, and Application. Each tab is made of a few sections you
 can collapse (click the header) or resize (drag the divider between
 them) independently.</li>
-<li><b>Bottom bar</b> (always visible, never scrolled away) — audio
-source controls on their own row (Source/Play/Browse…/Record, with the
-chosen file's path shown just below, shortened from the middle if it's
-long), then Undo/Redo/Help/Save/Save As…/Load…/Export Snapshot…/Check
-for Issues…/Guide/Ghost/<b>Mute mouth</b>/Quit. <b>Mute mouth</b> forces
-the mouth closed manually — independent of OBS mute, for a cough or an
-aside without touching OBS at all. Click it again to let the mouth
-follow the mic/audio source again.</li>
+<li><b>Bottom bar</b> (always visible, never scrolled away) — a
+clickable file-playback timeline (File source only, once something's
+actually been played), then audio source controls on their own row
+(Source/Play/Browse…/Record, with the chosen file's path shown just
+below, shortened from the middle if it's long), then Undo/Redo/Help/
+Save/Save As…/Load…/Export Snapshot…/Check for Issues…/Guide/Ghost/
+<b>Mute mouth</b>/Quit. <b>Mute mouth</b> forces the mouth closed
+manually — independent of OBS mute, for a cough or an aside without
+touching OBS at all. Click it again to let the mouth follow the
+mic/audio source again.</li>
 </ul>
 
 <h3>Hotkeys</h3>
@@ -626,6 +628,20 @@ the input name being wrong, are both handled gracefully -- the former
 just keeps quietly retrying; the latter shows a clear one-time message
 saying so.</li>
 </ul>
+
+<h3>File-playback timeline (bottom bar)</h3>
+<p>A clickable/draggable bar directly above the Source row, with a
+"m:ss / m:ss" clock beside it -- only visible while <b>File</b> is the
+active source and a file has actually been played at least once (its
+total length isn't known before then; see below). Click anywhere on it,
+or drag and release, to jump playback to that point -- like scrubbing in
+an ordinary media player. Under the hood this restarts decoding from the
+new position (the same mechanism <b>Rewind</b> uses to jump back to
+0:00), since this app's playback has no true pause/resume mid-file. The
+total shown is probed fresh each time you press Play -- if it ever reads
+"--:--" instead of a real number, ffprobe (bundled with ffmpeg on most
+systems) isn't installed; playback and the elapsed-time half of the
+clock still work fine either way.</p>
 
 <h3>Audio source (bottom bar)</h3>
 <p>What actually drives the mouth, always visible at the bottom of the

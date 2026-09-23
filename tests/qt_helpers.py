@@ -8,11 +8,16 @@ import pytest
 from PySide6.QtCore import QBuffer, QIODevice
 from PySide6.QtGui import QColor, QImage, QPainter
 
+import shutil
+
 from unicorn_cloak.audio import ffmpeg_available
 from unicorn_cloak.rig import AvatarRig, Sprite
 
 needs_ffmpeg = pytest.mark.skipif(
     not ffmpeg_available(), reason="ffmpeg not installed on this machine"
+)
+needs_ffprobe = pytest.mark.skipif(
+    shutil.which("ffprobe") is None, reason="ffprobe not installed on this machine"
 )
 
 

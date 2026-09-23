@@ -21,7 +21,7 @@ from unicorn_cloak.audio import (
     usable_input_devices,
 )
 
-from qt_helpers import make_test_wav, needs_ffmpeg
+from qt_helpers import make_test_wav, needs_ffmpeg, needs_ffprobe
 
 # Shared thresholds for the tests below: gate 0.005, mild 0.01-0.02,
 # wide 0.04-0.08, snappy attack, a real hold, and a moderate release.
@@ -656,6 +656,87 @@ def test_file_playback_reports_nonzero_volume_for_a_tone(tmp_path):
     assert len(volumes) >= 1
     assert max(volumes) > 0.05  # a real tone, not silence throughout
     assert volumes[-1] == 0.0  # closes the mouth at the end
+
+
+@needs_ffprobe
+def test_probe_duration_returns_the_real_duration_of_a_wav_file(tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=1.0, samplerate=8000)
+    duration = audio_module.probe_duration(str(path))
+    assert duration is not None
+    assert duration == pytest.approx(1.0, abs=0.05)
+
+
+@needs_ffprobe
+def test_probe_duration_returns_none_for_a_nonexistent_file(tmp_path):
+    assert audio_module.probe_duration(str(tmp_path / "does-not-exist.wav")) is None
+
+
+def test_probe_duration_returns_none_without_ffprobe_installed(monkeypatch):
+    monkeypatch.setattr(audio_module.shutil, "which", lambda name: None)
+    assert audio_module.probe_duration("/whatever/path.wav") is None
+
+
+@needs_ffmpeg
+@needs_ffprobe
+def test_file_playback_reports_duration_once_via_on_duration(tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=1.0, samplerate=8000)
+
+    durations = []
+    finished = threading.Event()
+    playback = FilePlayback(
+        str(path), on_volume=lambda v: None, on_duration=durations.append,
+        on_finished=lambda _f: finished.set(), blocksize=512, samplerate=8000,
+    )
+    playback.start()
+    assert finished.wait(timeout=10.0)
+
+    assert len(durations) == 1
+    assert durations[0] == pytest.approx(1.0, abs=0.05)
+
+
+@needs_ffmpeg
+def test_file_playback_reports_increasing_position_as_it_decodes(tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=1.0, samplerate=8000)
+
+    positions = []
+    finished = threading.Event()
+    playback = FilePlayback(
+        str(path), on_volume=lambda v: None, on_position=positions.append,
+        on_finished=lambda _f: finished.set(), blocksize=512, samplerate=8000,
+    )
+    playback.start()
+    assert finished.wait(timeout=10.0)
+
+    assert len(positions) >= 2
+    assert positions == sorted(positions)  # monotonically increasing
+    assert positions[-1] == pytest.approx(1.0, abs=0.1)  # ends near the real duration
+
+
+@needs_ffmpeg
+def test_file_playback_start_offset_seeks_so_position_starts_there(tmp_path):
+    # Timeline/scrubber feature (owner's request, 2026-09-23): "seeking"
+    # is a fresh FilePlayback with start_offset_s set, decoding from that
+    # point on -- on_position must reflect the offset from its very first
+    # call, not count up from 0 as if playback started at the beginning.
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=2.0, samplerate=8000)
+
+    positions = []
+    finished = threading.Event()
+    playback = FilePlayback(
+        str(path), on_volume=lambda v: None, on_position=positions.append,
+        on_finished=lambda _f: finished.set(), blocksize=512, samplerate=8000,
+        start_offset_s=1.5,
+    )
+    playback.start()
+    assert finished.wait(timeout=10.0)
+
+    assert len(positions) >= 1
+    assert positions[0] >= 1.5
+    assert positions == sorted(positions)
 
 
 @needs_ffmpeg

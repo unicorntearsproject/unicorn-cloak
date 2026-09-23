@@ -90,6 +90,7 @@ from .snapshot import export_costume_snapshot
 from .spritesheet import slice_frame
 from .widgets import (
     CollapsibleSection,
+    FileTimelineWidget,
     LevelMeter,
     PreviewView,
     ScrollSafeDoubleSpinBox,
@@ -2216,6 +2217,28 @@ class ControlPanelWindow(QWidget):
     # =====================================================================
 
     def _build_bottom_bar(self, root: QVBoxLayout) -> None:
+        # Clickable file-playback timeline, with a "m:ss / m:ss" clock --
+        # owner's request, 2026-09-23, placed right above the Play/Stop
+        # row on purpose ("near to the play/stop button of course, right
+        # above that row"). Position/duration come from AudioManager's
+        # position_measured/duration_measured signals (FilePlayback's own
+        # on_position/on_duration -- see audio.py); dragging it calls
+        # AudioManager.seek_file via seek_requested. Meaningful only for
+        # the file source -- see _update_source_controls_enabled.
+        self._file_timeline = FileTimelineWidget()
+        self._file_timeline.seek_requested.connect(self._on_timeline_seek_requested)
+        root.addWidget(self._file_timeline)
+        if self.audio_manager is not None:
+            # QueuedConnection: fires from FilePlayback's own background
+            # thread -- same reasoning as every other audio_manager
+            # connection here (see AudioManager's own docstring).
+            self.audio_manager.position_measured.connect(
+                self._file_timeline.set_position, Qt.ConnectionType.QueuedConnection
+            )
+            self.audio_manager.duration_measured.connect(
+                self._file_timeline.set_duration, Qt.ConnectionType.QueuedConnection
+            )
+
         # Owner's request, 2026-09-17: audio source controls live in the
         # always-visible global area too, on their own bar, with the
         # chosen file's path shown (middle-elided) just below it.
@@ -2241,11 +2264,15 @@ class ControlPanelWindow(QWidget):
 
         # Left of Play, not right -- owner's request, 2026-09-20 (it
         # first landed to Play's right the day before). FilePlayback
-        # (audio.py) is a one-shot ffmpeg pipe decode with no seek
-        # support -- there's no such thing as "resume from where it
-        # was," only "start over from 0:00" -- so this restarts playback
-        # via the exact same AudioManager.play_file() a Play click uses,
-        # which already stops whatever's currently playing first.
+        # (audio.py) has no true pause/resume or seek *within* a running
+        # decode -- there's no such thing as "resume from where it was,"
+        # only "start a fresh decode from some offset" -- so this
+        # restarts playback via the exact same AudioManager.play_file()
+        # a Play click uses (offset 0), which already stops whatever's
+        # currently playing first. The timeline below (owner's request,
+        # 2026-09-23) uses that same restart-from-an-offset mechanism to
+        # seek anywhere in the file, not just 0:00 -- Rewind is really
+        # just "seek to 0:00," kept as its own one-click shortcut.
         #
         # Same-day reversal, still 2026-09-20: only does that while a
         # file is actually mid-playback. It used to also fire while
@@ -2256,11 +2283,11 @@ class ControlPanelWindow(QWidget):
         # the correct rewind, not an unexpected auto-play.
         self._rewind_file_btn = QPushButton("Rewind")
         self._rewind_file_btn.setToolTip(
-            "While playing, restarts the chosen file from the beginning --\n"
-            "playback can't seek mid-file, so this is the only way back to\n"
-            "0:00 short of Stop then Play again. Does nothing while\n"
-            "stopped, since a stopped file already starts over from 0:00\n"
-            "on the next Play."
+            "While playing, restarts the chosen file from the beginning.\n"
+            "Does nothing while stopped, since a stopped file already\n"
+            "starts over from 0:00 on the next Play. Drag or click the\n"
+            "timeline above the buttons to jump to a specific point\n"
+            "instead of all the way back to 0:00."
         )
         self._rewind_file_btn.clicked.connect(self._on_rewind_file_clicked)
         self.source_row.addWidget(self._rewind_file_btn)
@@ -3868,6 +3895,8 @@ class ControlPanelWindow(QWidget):
         has_file = is_file and bool(self.config.audio.file_path)
         self.play_file_btn.setEnabled(has_file)
         self._rewind_file_btn.setEnabled(has_file)
+        self._file_timeline.setEnabled(has_file)
+        self._file_timeline.setVisible(is_file)
         is_device_source = not is_file
         self.audio_device.setEnabled(is_device_source)
         self._audio_device_refresh_btn.setEnabled(is_device_source)
@@ -4007,6 +4036,13 @@ class ControlPanelWindow(QWidget):
         self.audio_file_label.setText(self._elided_file_label())
         self.audio_file_label.setToolTip(path)
         self.audio_file_label.setVisible(True)
+        # A newly-chosen file's own duration is unknown until it's
+        # actually played (probed fresh each play_file() call -- see
+        # audio.probe_duration) -- the *previous* file's duration/
+        # position, still showing here otherwise, would be actively
+        # wrong for this one.
+        self._file_timeline.set_position(0.0)
+        self._file_timeline.set_duration(0.0)
         if self.audio_manager is not None and self.config.audio.source == "file":
             self.audio_manager.switch_to_file(path)
         self._update_source_controls_enabled()
@@ -4034,6 +4070,12 @@ class ControlPanelWindow(QWidget):
         self._update_play_button_text()
 
     def _on_file_playback_stopped(self) -> None:
+        self._update_play_button_text()
+        self._file_timeline.set_position(0.0)
+
+    def _on_timeline_seek_requested(self, position_s: float) -> None:
+        if self.audio_manager is not None:
+            self.audio_manager.seek_file(position_s)
         self._update_play_button_text()
 
     def _on_mute_mouth_toggled(self, checked: bool) -> None:

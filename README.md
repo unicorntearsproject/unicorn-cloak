@@ -38,7 +38,7 @@ environment noise (see `docs/PLAN.md`'s "Startup noise hidden" entry).
 ```
 
 Qt runs headless via `QT_QPA_PLATFORM=offscreen` (set automatically by
-`tests/conftest.py`). 646 tests as of 2026-09-23.
+`tests/conftest.py`). 675 tests as of 2026-09-23.
 
 ## Layout
 

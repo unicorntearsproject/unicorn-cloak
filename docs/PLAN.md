@@ -1298,6 +1298,64 @@ bare tuple has none of) by *identity*, not by value. Switched to
 
 646 tests (640 -> 646).
 
+**2026-09-23, still later again: file-playback timeline/scrubber**
+(new feature, owner's request -- not one of E1-E12, asked for alongside
+approving that whole list: "let's also add a clickable timeline bar for
+when playing from a file with a time/total clock by it... right above
+that row" (the Play/Stop row)).
+
+`audio.FilePlayback` had no seek or duration/position reporting at all
+before this. It gained `on_position`/`on_duration` callbacks (fired
+from its own background thread, same contract as `on_volume`/
+`on_error`) and a `start_offset_s` constructor arg -- this class has no
+true pause/resume or seek *within* a running decode, so "seeking" is
+"stop, start a fresh `FilePlayback` with a nonzero offset," exactly the
+restart-based mechanism Rewind already used with offset 0 (Rewind is
+now just a named shortcut for "seek to 0:00," not its own separate
+code path). `on_position` reports elapsed seconds computed from samples
+actually decoded (`start_offset_s + blocks_read * blocksize /
+samplerate`), not a wall-clock timer, so it can't drift from `-re`
+pacing under load. A new `audio.probe_duration()` shells out to
+ffprobe; best-effort only -- returns `None` (never raises, never
+reports through `on_error`) if ffprobe isn't installed or the file
+can't be probed, since it's a nice-to-have for the total-time half of
+the clock, not a hard requirement the way ffmpeg itself is.
+
+`AudioManager` gained `position_measured`/`duration_measured` signals
+(forwarded straight through, same as `device_resolved`) and
+`seek_file(position_s)`. Deliberately *not* gated on "is something
+currently playing" the way Rewind is: seeking to an arbitrary position
+while stopped still has something meaningful to do (start playing from
+wherever was clicked, like scrubbing in an ordinary media player) --
+unlike Rewind-while-stopped, which really is a no-op, since 0:00 is
+already where the next Play would start anyway.
+
+New `widgets.FileTimelineWidget` (paints its own bar + "m:ss / m:ss"
+clock, same custom-QWidget style as `LevelMeter` in the same file, not
+a stock `QSlider` -- `QSlider`'s default click behavior steps by one
+page increment per click, not "jump straight to where you clicked,"
+which is what a scrubber needs). Click-and-drag scrubbing previews
+locally (the bar/clock move immediately) and only emits
+`seek_requested` on release, so a drag doesn't spam ffmpeg restarts one
+per pixel; symmetrically, it ignores incoming `set_position` calls
+while a drag is in progress, so the real (still playing, from the *old*
+position) `position_measured` feed can't fight the gesture the owner is
+mid-drag on. Duration of 0 means "nothing to seek yet" (never played,
+or ffprobe couldn't determine it) -- both the widget's own guard and
+`setEnabled()` from `_update_source_controls_enabled` block interaction
+then.
+
+Sits directly above the Play/Stop row in the Control Panel's bottom
+bar (per the owner's own placement request) and is visible only for
+the File source, hidden otherwise -- same dynamic show/hide pattern
+`_update_background_controls_visible` already uses for the
+Image/Video background controls. Resets to 0:00/unknown-duration when
+a *new* file is chosen (the old file's duration would be actively
+wrong for a different one) and resets position (not duration) to 0:00
+when playback stops for any reason.
+
+675 tests (646 -> 675).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

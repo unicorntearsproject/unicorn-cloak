@@ -104,3 +104,13 @@ def test_reference_tab_documents_render_window_size_presets(qapp):
     reference_text = tabs.widget(4).toPlainText()
     assert "Render Window size" in reference_text
     assert "1920×1080" in reference_text
+
+
+def test_reference_tab_documents_the_file_playback_timeline(qapp):
+    # New feature, owner's request 2026-09-23: "a clickable timeline bar
+    # for when playing from a file with a time/total clock by it."
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    reference_text = tabs.widget(4).toPlainText()
+    assert "timeline" in reference_text.lower()
+    assert "Rewind" in reference_text

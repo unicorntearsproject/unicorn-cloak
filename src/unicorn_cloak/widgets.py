@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QDoubleSpinBox,
@@ -301,4 +301,117 @@ class LevelMeter(QWidget):
             QRectF(4, bar_rect.bottom() + 2, rect.width() - 8, 18),
             Qt.AlignmentFlag.AlignLeft,
             text,
+        )
+
+
+def format_playback_time(seconds: float) -> str:
+    """"m:ss", for the file-playback timeline's clock -- no hours field:
+    this app's own use case (a participant's isolated audio track for a
+    recording session) is never going to run anywhere near an hour, and
+    minutes simply run past 59 for the rare file that does, same as most
+    simple players do rather than growing a conditional h:mm:ss format
+    for a case that doesn't come up here."""
+    total = max(0, int(seconds))
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}:{secs:02d}"
+
+
+class FileTimelineWidget(QWidget):
+    """A clickable/draggable file-playback timeline with a "m:ss / m:ss"
+    clock -- owner's request, 2026-09-23: "a clickable timeline bar for
+    when playing from a file with a time/total clock by it." Reads
+    nothing live on its own (unlike LevelMeter's QTimer poll of
+    render_window) -- position/duration only change when AudioManager
+    says so (audio.FilePlayback's on_position/on_duration), so
+    control_panel_window.py just calls set_position/set_duration
+    whenever AudioManager.position_measured/duration_measured fire,
+    rather than polling.
+
+    Duration of 0 (nothing has ever played, or the file's total couldn't
+    be probed -- see audio.probe_duration) means "nothing to seek yet":
+    mouse interaction is a no-op and the clock reads "m:ss / --:--".
+
+    Click-and-drag scrubbing previews locally (the bar/clock move
+    immediately, so dragging feels responsive) without spamming
+    seek_requested -- and, symmetrically, ignores incoming set_position
+    calls while a drag is in progress, so the actually-still-playing old
+    position doesn't fight the drag the owner is mid-gesture on. The
+    real seek (which restarts ffmpeg decoding -- not something to fire on
+    every mouse-move pixel) only fires once, on release.
+    """
+
+    seek_requested = Signal(float)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.position_s = 0.0
+        self.duration_s = 0.0
+        self._dragging = False
+        self.setMinimumHeight(28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def set_position(self, seconds: float) -> None:
+        if self._dragging:
+            return  # the user's own drag is the source of truth right now
+        self.position_s = max(0.0, seconds)
+        self.update()
+
+    def set_duration(self, seconds: float) -> None:
+        self.duration_s = max(0.0, seconds)
+        self.update()
+
+    def _bar_rect(self) -> QRectF:
+        rect = self.rect()
+        clock_width = 96  # room for "m:ss / m:ss" at this widget's font size
+        return QRectF(4, 4, max(0, rect.width() - 8 - clock_width), rect.height() - 8)
+
+    def _seek_from_x(self, x: float) -> None:
+        bar_rect = self._bar_rect()
+        if self.duration_s <= 0 or bar_rect.width() <= 0:
+            return
+        fraction = min(max((x - bar_rect.left()) / bar_rect.width(), 0.0), 1.0)
+        self.position_s = fraction * self.duration_s
+        self.update()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 (Qt override)
+        if event.button() != Qt.MouseButton.LeftButton or self.duration_s <= 0:
+            return
+        self._dragging = True
+        self._seek_from_x(event.position().x())
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 (Qt override)
+        if not self._dragging:
+            return
+        self._seek_from_x(event.position().x())
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 (Qt override)
+        if not self._dragging:
+            return
+        self._dragging = False
+        self.seek_requested.emit(self.position_s)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        bar_rect = self._bar_rect()
+        painter.fillRect(bar_rect, QColor(theme.INK_800))
+        painter.setPen(QPen(QColor(theme.INK_500)))
+        painter.drawRect(bar_rect)
+
+        if self.duration_s > 0 and bar_rect.width() > 0:
+            fraction = min(max(self.position_s / self.duration_s, 0.0), 1.0)
+            filled_width = fraction * bar_rect.width()
+            painter.fillRect(
+                QRectF(bar_rect.left(), bar_rect.top(), filled_width, bar_rect.height()),
+                QColor(theme.CYAN_500),
+            )
+
+        painter.setPen(QPen(QColor(theme.PINK_WHITE)))
+        total_text = format_playback_time(self.duration_s) if self.duration_s > 0 else "--:--"
+        clock_text = f"{format_playback_time(self.position_s)} / {total_text}"
+        painter.drawText(
+            QRectF(bar_rect.right() + 8, 0, self.width() - bar_rect.right() - 12, self.height()),
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            clock_text,
         )

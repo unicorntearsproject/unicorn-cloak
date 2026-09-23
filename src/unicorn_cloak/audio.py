@@ -482,6 +482,32 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def probe_duration(path: str) -> float | None:
+    """Total duration of `path`, in seconds, via ffprobe -- for the
+    Control Panel's file-playback timeline/scrubber (owner's request,
+    2026-09-23: "a clickable timeline bar... with a time/total clock").
+    Returns None if ffprobe isn't installed, the file can't be probed, or
+    the output isn't parseable -- deliberately never raises and never
+    reports through on_error: ffprobe is a nice-to-have for the total-time
+    half of the scrubber display, not a hard requirement the way ffmpeg
+    itself is (see ffmpeg_available/FilePlayback) -- a file that plays
+    fine but can't be probed should still play, just without a known
+    total until FilePlayback's own on_position eventually catches up."""
+    if shutil.which("ffprobe") is None:
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "csv=p=0", path,
+            ],
+            capture_output=True, text=True, timeout=5.0,
+        )
+        return float(result.stdout.strip())
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return None
+
+
 class FilePlayback:
     """Feeds the same on_volume/on_error contract as Microphone (see its
     docstring for the full threading contract -- identical here: both
@@ -512,6 +538,15 @@ class FilePlayback:
     stop() -- unlike Microphone, a failure here is not retried, since a
     bad file isn't a transient condition like a disconnected mic.
 
+    No true pause/resume or seek *within* one running decode -- "seeking"
+    (the Control Panel's timeline/scrubber, owner's request, 2026-09-23)
+    means stopping this instance and starting a fresh one with
+    start_offset_s set, via ffmpeg's own input-side -ss. on_position
+    (elapsed seconds, tied to samples actually decoded so far -- not a
+    wall-clock timer that could drift from '-re' pacing) and on_duration
+    (probed once via probe_duration, if it can be determined at all)
+    drive that same UI.
+
     on_finished is handed *this instance*, not called bare -- so a
     caller that's since moved on to a newer FilePlayback (Rewind, or a
     quick Stop-then-Play) can tell a stale, late-arriving callback from
@@ -527,6 +562,9 @@ class FilePlayback:
         on_finished: Callable[["FilePlayback"], None] | None = None,
         blocksize: int = DEFAULT_FILE_BLOCKSIZE,
         samplerate: int = DEFAULT_FILE_SAMPLERATE,
+        on_position: Callable[[float], None] | None = None,
+        on_duration: Callable[[float], None] | None = None,
+        start_offset_s: float = 0.0,
     ) -> None:
         self.path = path
         self.blocksize = blocksize
@@ -534,6 +572,20 @@ class FilePlayback:
         self._on_volume = on_volume
         self._on_error = on_error
         self._on_finished = on_finished
+        # Timeline/scrubber feature (owner's request, 2026-09-23):
+        # on_position fires roughly once per decoded block with elapsed
+        # playback seconds (start_offset_s plus samples decoded so far,
+        # not a wall-clock timer -- ties it to actual audio progress, not
+        # to '-re' pacing possibly drifting under load). on_duration
+        # fires once per start(), from probe_duration, if it can be
+        # determined at all. start_offset_s > 0 is how "seeking" works --
+        # see AudioManager.seek_file's own docstring: this class has no
+        # true pause/resume/seek within a running decode, so a seek is
+        # "stop, then start a new FilePlayback with a nonzero offset,"
+        # exactly like Rewind already does with offset 0.
+        self._on_position = on_position
+        self._on_duration = on_duration
+        self.start_offset_s = max(0.0, start_offset_s)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._process: subprocess.Popen | None = None
@@ -583,9 +635,23 @@ class FilePlayback:
                 pass
 
     def _run(self) -> None:
+        if self._on_duration is not None:
+            duration = probe_duration(self.path)
+            if duration is not None:
+                self._on_duration(duration)
+
         bytes_per_block = self.blocksize * 4  # float32 mono
-        cmd = [
-            "ffmpeg", "-v", "error", "-re", "-i", self.path,
+        cmd = ["ffmpeg", "-v", "error"]
+        if self.start_offset_s > 0:
+            # Before -i, not after: an *input* seek, which ffmpeg can do
+            # by jumping straight to the nearest point in the source
+            # rather than decoding and discarding everything before it --
+            # far faster, and accurate enough for a scrub-and-listen
+            # timeline (this is audio-only decoding, not video, so there's
+            # no keyframe-snapping imprecision to worry about either).
+            cmd += ["-ss", str(self.start_offset_s)]
+        cmd += [
+            "-re", "-i", self.path,
             "-f", "f32le", "-ar", str(self.samplerate), "-ac", "1", "pipe:1",
         ]
         try:
@@ -608,6 +674,7 @@ class FilePlayback:
             return
 
         self._process = process
+        elapsed_blocks = 0
         try:
             while not self._stop_event.is_set():
                 raw = process.stdout.read(bytes_per_block)
@@ -620,6 +687,14 @@ class FilePlayback:
                     raw = raw + b"\x00" * (bytes_per_block - len(raw))
                 block = np.frombuffer(raw, dtype=np.float32)
                 self._on_volume(rms_volume(block))
+                elapsed_blocks += 1
+                if self._on_position is not None:
+                    # Tied to samples actually decoded, not a wall-clock
+                    # timer -- stays correct even if '-re' pacing drifts
+                    # slightly under system load.
+                    self._on_position(
+                        self.start_offset_s + elapsed_blocks * self.blocksize / self.samplerate
+                    )
         finally:
             stopped_manually = self._stop_event.is_set()
             try:

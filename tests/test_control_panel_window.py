@@ -1192,6 +1192,106 @@ def test_rewind_button_enabled_state_matches_play(qapp, tmp_path):
     assert panel._rewind_file_btn.isEnabled() == panel.play_file_btn.isEnabled()
 
 
+# --- File-playback timeline/scrubber (owner's request, 2026-09-23) --------
+
+
+def test_file_timeline_visible_and_enabled_state_matches_play(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    assert panel._file_timeline.isVisible() is False  # source defaults to microphone
+
+    config.audio.source = "file"
+    config.audio.file_path = "/tmp/whatever.wav"
+    panel._update_source_controls_enabled()
+    assert panel._file_timeline.isVisible() is True
+    assert panel._file_timeline.isEnabled() is True
+    assert panel._file_timeline.isEnabled() == panel.play_file_btn.isEnabled()
+
+
+def test_choosing_a_new_file_resets_the_timeline(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._file_timeline.set_duration(45.0)
+    panel._file_timeline.set_position(20.0)
+
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(tmp_path / "new.wav"), "")
+    )
+    panel._on_browse_audio_file()
+
+    assert panel._file_timeline.duration_s == 0.0
+    assert panel._file_timeline.position_s == 0.0
+
+
+def test_file_playback_stopping_resets_the_timeline_position(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._file_timeline.set_duration(45.0)
+    panel._file_timeline.set_position(20.0)
+
+    panel._on_file_playback_stopped()
+
+    assert panel._file_timeline.position_s == 0.0
+    assert panel._file_timeline.duration_s == 45.0  # duration is not lost on stop
+
+
+def test_timeline_seek_requested_calls_audio_manager_seek_file(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    config.audio.source = "file"
+    config.audio.file_path = "/tmp/whatever.wav"
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    calls = []
+    manager.seek_file = lambda position_s: calls.append(position_s)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    panel._file_timeline.seek_requested.emit(12.5)
+
+    assert calls == [12.5]
+
+
+def test_timeline_seek_requested_refreshes_the_play_button_text(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    config.audio.source = "file"
+    config.audio.file_path = "/tmp/whatever.wav"
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    manager.seek_file = lambda position_s: None
+    monkeypatch.setattr(AudioManager, "is_file_playing", property(lambda self: True))
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    panel._file_timeline.seek_requested.emit(3.0)
+
+    assert panel.play_file_btn.text() == "Stop"
+
+
+def test_position_measured_signal_updates_the_timeline(qapp, tmp_path):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    manager.duration_measured.emit(90.0)
+    manager.position_measured.emit(30.0)
+    qapp.processEvents()
+
+    assert panel._file_timeline.duration_s == 90.0
+    assert panel._file_timeline.position_s == 30.0
+
+
 # --- "Now capturing" label (quick-win enhancement E2, 2026-09-23) -------
 
 

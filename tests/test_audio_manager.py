@@ -71,6 +71,112 @@ def test_play_file_drives_volume_measured_signal(qapp, tmp_path):
     assert max(volumes) > 0.05
 
 
+def test_seek_file_starts_a_new_file_playback_with_the_given_offset(qapp, monkeypatch):
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+    manager.seek_file(12.5)
+
+    assert len(instances) == 1
+    assert instances[0].start_offset_s == 12.5
+
+
+def test_seek_file_clamps_a_negative_position_to_zero(qapp, monkeypatch):
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")
+    manager.seek_file(-3.0)
+
+    assert instances[0].start_offset_s == 0.0
+
+
+def test_seek_file_restarts_playback_even_while_already_stopped(qapp, monkeypatch):
+    # Unlike Rewind (a no-op while stopped -- 0:00 is already where the
+    # next Play would start), seeking to an arbitrary position while
+    # stopped must still act: there's something meaningful to do (start
+    # playing from wherever was clicked), same as scrubbing in an
+    # ordinary media player.
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file("/tmp/whatever.wav")  # source is "file", nothing playing yet
+
+    manager.seek_file(5.0)
+
+    assert len(instances) == 1
+    assert instances[0].start_offset_s == 5.0
+
+
+def test_seek_file_is_a_noop_when_the_source_is_not_file(qapp, monkeypatch):
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.config.audio.file_path = "/tmp/whatever.wav"
+    assert manager.config.audio.source == "microphone"
+
+    manager.seek_file(5.0)
+
+    assert instances == []
+
+
+def test_seek_file_is_a_noop_with_no_file_chosen(qapp, monkeypatch):
+    FakeFilePlayback, instances = _fake_file_playback_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.FilePlayback", FakeFilePlayback)
+
+    manager = AudioManager(Config())
+    manager.switch_to_file(None)
+    assert manager.config.audio.file_path is None
+
+    manager.seek_file(5.0)
+
+    assert instances == []
+
+
+@needs_ffmpeg
+def test_play_file_forwards_position_and_duration_signals(qapp, tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=0.3, amplitude=0.5)
+
+    manager = AudioManager(Config())
+    positions = []
+    durations = []
+    manager.position_measured.connect(positions.append)
+    manager.duration_measured.connect(durations.append)
+
+    manager.switch_to_file(str(path))
+    manager.play_file()
+
+    assert _wait_until(qapp, lambda: not manager.is_file_playing)
+    assert len(positions) >= 1
+    assert positions == sorted(positions)
+
+
+@needs_ffmpeg
+def test_seek_file_while_playing_restarts_from_the_new_offset(qapp, tmp_path):
+    path = tmp_path / "tone.wav"
+    make_test_wav(path, duration_s=2.0, amplitude=0.5)
+
+    manager = AudioManager(Config())
+    positions = []
+    manager.position_measured.connect(positions.append)
+
+    manager.switch_to_file(str(path))
+    manager.play_file()
+    assert _wait_until(qapp, lambda: manager.is_file_playing)
+
+    positions.clear()
+    manager.seek_file(1.5)
+
+    assert _wait_until(qapp, lambda: len(positions) >= 1)
+    assert positions[0] >= 1.5
+
+
 @needs_ffmpeg
 def test_last_capture_monotonic_is_recorded_for_latency_measurement(qapp, tmp_path):
     path = tmp_path / "tone.wav"
@@ -134,7 +240,10 @@ def test_late_finish_from_a_replaced_file_does_not_stop_the_new_one(qapp, monkey
     instances = []
 
     class _FakeFilePlayback:
-        def __init__(self, path, on_volume, on_error=None, on_finished=None):
+        def __init__(
+            self, path, on_volume, on_error=None, on_finished=None,
+            on_position=None, on_duration=None, start_offset_s=0.0,
+        ):
             self.path = path
             self.on_finished = on_finished
             self.is_playing = True
@@ -742,9 +851,15 @@ def _fake_file_playback_class(instances=None):
     instances = instances if instances is not None else []
 
     class _FakeFilePlayback:
-        def __init__(self, path, on_volume, on_error=None, on_finished=None):
+        def __init__(
+            self, path, on_volume, on_error=None, on_finished=None,
+            on_position=None, on_duration=None, start_offset_s=0.0,
+        ):
             self.path = path
             self.on_finished = on_finished
+            self.on_position = on_position
+            self.on_duration = on_duration
+            self.start_offset_s = start_offset_s
             self.is_playing = True
             self.blocksize = 1024
             self.samplerate = 44100

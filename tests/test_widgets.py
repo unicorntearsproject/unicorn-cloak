@@ -1,8 +1,16 @@
-from PySide6.QtGui import QFontMetrics
+import pytest
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QFontMetrics, QMouseEvent
 from PySide6.QtWidgets import QGraphicsScene
 
 from unicorn_cloak import theme
-from unicorn_cloak.widgets import CollapsibleSection, PreviewView, elide_path_middle
+from unicorn_cloak.widgets import (
+    CollapsibleSection,
+    FileTimelineWidget,
+    PreviewView,
+    elide_path_middle,
+    format_playback_time,
+)
 
 
 def test_elide_path_middle_leaves_a_short_path_untouched(qapp):
@@ -99,3 +107,119 @@ def test_collapsible_section_escapes_ampersand_in_the_header_text(qapp):
     section = CollapsibleSection("Position & Hierarchy")
     assert "&&" in section._header.text()
     assert section._header.text().count("&") == 2
+
+
+# --- FileTimelineWidget (timeline/scrubber feature, owner's request 2026-09-23) --
+
+
+def test_format_playback_time_formats_minutes_and_seconds():
+    assert format_playback_time(0) == "0:00"
+    assert format_playback_time(5) == "0:05"
+    assert format_playback_time(65) == "1:05"
+    assert format_playback_time(3725) == "62:05"  # no hours field, minutes run past 59
+
+
+def test_format_playback_time_clamps_negative_to_zero():
+    assert format_playback_time(-5) == "0:00"
+
+
+def test_file_timeline_starts_at_zero_position_and_duration(qapp):
+    timeline = FileTimelineWidget()
+    assert timeline.position_s == 0.0
+    assert timeline.duration_s == 0.0
+
+
+def test_file_timeline_set_position_and_duration_update_state(qapp):
+    timeline = FileTimelineWidget()
+    timeline.set_duration(90.0)
+    timeline.set_position(30.0)
+    assert timeline.duration_s == 90.0
+    assert timeline.position_s == 30.0
+
+
+def test_file_timeline_set_position_clamps_negative_to_zero(qapp):
+    timeline = FileTimelineWidget()
+    timeline.set_position(-5.0)
+    assert timeline.position_s == 0.0
+
+
+def _mouse_event(event_type, x, button=Qt.MouseButton.LeftButton):
+    buttons = button if event_type != QEvent.Type.MouseButtonRelease else Qt.MouseButton.NoButton
+    return QMouseEvent(event_type, QPointF(x, 10), button, buttons, Qt.KeyboardModifier.NoModifier)
+
+
+def test_file_timeline_click_does_nothing_with_no_known_duration(qapp):
+    # duration_s == 0 means "nothing to seek yet" (never played, or the
+    # total couldn't be probed) -- a click must not divide by zero or
+    # seek to a meaningless position.
+    timeline = FileTimelineWidget()
+    timeline.resize(300, 28)
+    seeks = []
+    timeline.seek_requested.connect(seeks.append)
+
+    timeline.mousePressEvent(_mouse_event(QEvent.Type.MouseButtonPress, 100))
+    timeline.mouseReleaseEvent(_mouse_event(QEvent.Type.MouseButtonRelease, 100))
+
+    assert seeks == []
+    assert timeline.position_s == 0.0
+
+
+def test_file_timeline_click_updates_position_immediately_but_only_seeks_on_release(qapp):
+    timeline = FileTimelineWidget()
+    timeline.resize(300, 28)
+    timeline.set_duration(100.0)
+    seeks = []
+    timeline.seek_requested.connect(seeks.append)
+
+    bar_rect = timeline._bar_rect()
+    click_x = bar_rect.left() + bar_rect.width() / 2  # roughly the midpoint -> ~50s
+
+    timeline.mousePressEvent(_mouse_event(QEvent.Type.MouseButtonPress, click_x))
+    assert seeks == []  # not yet -- only on release
+    assert timeline.position_s == pytest.approx(50.0, abs=1.0)
+
+    timeline.mouseReleaseEvent(_mouse_event(QEvent.Type.MouseButtonRelease, click_x))
+    assert len(seeks) == 1
+    assert seeks[0] == pytest.approx(50.0, abs=1.0)
+
+
+def test_file_timeline_dragging_ignores_incoming_set_position_until_release(qapp):
+    # A live position_measured update arriving mid-drag (the file is
+    # still actually playing while the owner scrubs) must not fight the
+    # drag the owner is mid-gesture on.
+    timeline = FileTimelineWidget()
+    timeline.resize(300, 28)
+    timeline.set_duration(100.0)
+
+    bar_rect = timeline._bar_rect()
+    timeline.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, bar_rect.left() + bar_rect.width() * 0.8)
+    )
+    dragged_position = timeline.position_s
+    assert dragged_position > 50.0
+
+    timeline.set_position(3.0)  # a "live" update arriving mid-drag
+    assert timeline.position_s == dragged_position  # unchanged -- drag still wins
+
+    timeline.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, bar_rect.left() + bar_rect.width() * 0.8)
+    )
+    timeline.set_position(3.0)  # now that dragging is over, live updates apply again
+    assert timeline.position_s == 3.0
+
+
+def test_file_timeline_right_click_does_not_seek(qapp):
+    timeline = FileTimelineWidget()
+    timeline.resize(300, 28)
+    timeline.set_duration(100.0)
+    seeks = []
+    timeline.seek_requested.connect(seeks.append)
+
+    timeline.mousePressEvent(
+        _mouse_event(QEvent.Type.MouseButtonPress, 150, button=Qt.MouseButton.RightButton)
+    )
+    timeline.mouseReleaseEvent(
+        _mouse_event(QEvent.Type.MouseButtonRelease, 150, button=Qt.MouseButton.RightButton)
+    )
+
+    assert seeks == []

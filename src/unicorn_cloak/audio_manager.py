@@ -94,6 +94,17 @@ class AudioManager(QObject):
     # why that's safe -- Signal.emit() itself is thread-safe, only the
     # receiving slot needs a QueuedConnection).
     device_resolved = Signal(str)
+    # Timeline/scrubber feature (owner's request, 2026-09-23): fire from
+    # FilePlayback's own background thread, same threading contract as
+    # volume_measured/error_occurred/device_resolved above (Signal.emit()
+    # itself is thread-safe; only the receiving slot needs a
+    # QueuedConnection). position_measured fires roughly once per decoded
+    # block with elapsed seconds; duration_measured fires once per
+    # play_file() call, only if the total duration could be determined
+    # (see audio.probe_duration -- ffprobe is a nice-to-have, not a hard
+    # requirement, so this may simply never fire for a given file).
+    position_measured = Signal(float)
+    duration_measured = Signal(float)
     # Private/internal: see the module and class docstrings for why
     # FilePlayback's on_finished (a background-thread callback) routes
     # through this instead of touching self._file directly. Carries the
@@ -254,7 +265,12 @@ class AudioManager(QObject):
         self._stop_microphone()
         self._stop_loop()
 
-    def play_file(self) -> None:
+    def play_file(self, start_offset_s: float = 0.0) -> None:
+        """start_offset_s: where in the file to start decoding from --
+        0.0 (the default) for a normal Play/Rewind click. Every other
+        caller (Play, Rewind, stop_loop's restore-was-playing-file path)
+        omits it and gets the existing from-the-beginning behavior
+        unchanged; only seek_file passes a nonzero value."""
         if not self.config.audio.file_path:
             return
         self._stop_microphone()
@@ -271,8 +287,25 @@ class AudioManager(QObject):
             on_volume=self._handle_volume_from_source,
             on_error=self.error_occurred.emit,
             on_finished=self._file_finished_from_bg_thread.emit,
+            on_position=self.position_measured.emit,
+            on_duration=self.duration_measured.emit,
+            start_offset_s=start_offset_s,
         )
         self._file.start()
+
+    def seek_file(self, position_s: float) -> None:
+        """Jumps file playback to `position_s` seconds in -- the Control
+        Panel's timeline/scrubber (owner's request, 2026-09-23). Always
+        (re)starts playback there, even if the file was stopped: unlike
+        Rewind (a no-op while stopped, since 0:00 is already where the
+        next Play would start anyway), seeking to an arbitrary position
+        while stopped *does* have something meaningful to do -- start
+        playing from wherever was clicked, same as scrubbing in an
+        ordinary media player. A no-op if the file source isn't active or
+        no file is chosen -- nothing to seek."""
+        if self.config.audio.source != "file" or not self.config.audio.file_path:
+            return
+        self.play_file(start_offset_s=max(0.0, position_s))
 
     def stop_file(self) -> None:
         self._stop_file()
