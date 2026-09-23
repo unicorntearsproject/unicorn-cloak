@@ -3815,6 +3815,19 @@ class ControlPanelWindow(QWidget):
                 self.audio_manager.switch_to_microphone()
             elif source == "desktop":
                 self.audio_manager.switch_to_desktop()
+        if self.render_window is not None:
+            # Re-syncs the mouth-mute gate for the *new* source -- bug
+            # audit addendum 2026-09-23, D4. __main__.py's own OBS
+            # mute_changed handler only re-applies this gate on the
+            # next actual mute *event*; switching source itself doesn't
+            # fire one, so without this, muting on Microphone and then
+            # switching to Desktop Audio would leave the mouth stuck
+            # forced shut (or the reverse: switching back to Microphone
+            # while OBS is already muted wouldn't re-close it until OBS
+            # toggled mute again). self._obs_muted is this panel's own
+            # live-tracked OBS mute state (see _on_obs_mute_changed),
+            # the same value its status label already reflects.
+            self.render_window.set_muted(self._obs_muted and source == "microphone")
         self._sync_audio_device_selection()
         self._update_source_controls_enabled()
         self._update_play_button_text()

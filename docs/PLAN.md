@@ -1187,6 +1187,45 @@ _save_config`'s actual disk write (currently synchronous on every
 call -- see above). Needs a real write-count measurement, before and
 after, to land per this repo's own performance-claim rule.
 
+**2026-09-23, same-day follow-up: a second, independent audit pass
+(a separate session, Opus 5.5) covers Desktop Audio (`c327c4c`, out of
+scope for the original pass since it was still uncommitted) and
+re-verifies the original 21 fixes -- addendum appended to
+`docs/audit/2026-09-23-bug-audit.md`. All held, no regressions. Found
+one real High (D1) plus three more real gaps (D2-D4), now fixed:**
+
+**D1 (High):** switching Microphone <-> Desktop Audio in the *running*
+app didn't actually switch capture. Both `switch_to_microphone`/
+`switch_to_desktop` end in `_start_microphone()`, which no-ops if a
+capture is already running (`self._mic is not None`) -- since both
+sources share that same `self._mic`, the dropdown showed the new
+source while the mouth kept following whichever device was already
+open. Only worked correctly starting fresh. Fixed: both switch methods
+now stop any running capture first, unconditionally.
+
+**D2/D3 (Medium-High/Medium):** `resolve_input_device(None)`'s
+fallback -- "whatever's first usable" -- is the *microphone* on this
+machine (no device here is actually named "default," confirmed live),
+so Desktop Audio with no device ever chosen, or one that's vanished
+mid-stream, silently opened the mic while "Desktop Audio" stayed
+selected. Fixed with a new `strict` mode (`resolve_input_device`,
+`Microphone`) that never falls back for desktop audio -- an unresolved
+device reports a real, retrying error instead (routed through
+`AudioManager.error_occurred`, the same signal `#20`'s other audio
+errors already use).
+
+**D4 (Medium):** OBS mic-mute forced the mouth shut regardless of
+audio source -- muting your own mic in OBS has nothing to do with
+whether the stream can still hear Desktop Audio or a File. Gated to
+`source == "microphone"` in both directions: `__main__.py`'s mute
+handler applies the gate on every OBS mute event, and
+`_on_audio_source_changed` re-syncs `render_window.muted` against the
+panel's own tracked `_obs_muted` when the source itself changes (the
+mute handler alone can't catch that half -- it only fires on an actual
+OBS event).
+
+618 tests (607 -> 618).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

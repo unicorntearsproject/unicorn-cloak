@@ -173,6 +173,14 @@ class AudioManager(QObject):
 
     def switch_to_microphone(self) -> None:
         self.config.audio.source = "microphone"
+        # Stops any running capture first, unconditionally -- bug audit
+        # addendum 2026-09-23, D1: microphone and desktop audio are both
+        # backed by self._mic, so switching between them used to hit
+        # _start_microphone()'s own "already running, no-op" guard and
+        # silently keep capturing the *old* device -- the dropdown
+        # showed the new source, but the mouth kept following whichever
+        # one was already open.
+        self._stop_microphone()
         self._stop_file()
         self._stop_loop()
         self._start_microphone()
@@ -187,6 +195,7 @@ class AudioManager(QObject):
         control_panel_window.py -- see that field's own comment in
         config.py for why there's no automatic detection here)."""
         self.config.audio.source = "desktop"
+        self._stop_microphone()  # see switch_to_microphone's own comment, bug audit addendum D1
         self._stop_file()
         self._stop_loop()
         self._start_microphone()
@@ -367,15 +376,33 @@ class AudioManager(QObject):
         # supplies the hint differs (see switch_to_desktop/set_device).
         if self._mic is not None:
             return
-        device = (
-            self.config.audio.desktop_device
-            if self.config.audio.source == "desktop"
-            else self.config.audio.device
-        )
+        is_desktop = self.config.audio.source == "desktop"
+        device = self.config.audio.desktop_device if is_desktop else self.config.audio.device
+        if is_desktop and not device:
+            # Never silently falls back to "whatever's first usable
+            # device" for desktop audio -- bug audit addendum
+            # 2026-09-23, D2: resolve_input_device(None)'s own fallback
+            # is the *microphone* on this owner's machine (no device
+            # here is actually named "default"), so leaving Desktop
+            # Audio selected with no device ever chosen would silently
+            # start lip-syncing to the owner's voice instead. Reported
+            # the same way an OBS-not-configured-yet state already is
+            # elsewhere in this app -- declines to even attempt a
+            # connection, rather than attempting (and silently
+            # succeeding at) the wrong one.
+            self.error_occurred.emit(
+                "Desktop Audio: no device chosen yet -- pick one from the Device dropdown."
+            )
+            return
         self._mic = Microphone(
             on_volume=self._handle_volume_from_source,
             device=device,
             on_error=self.error_occurred.emit,
+            # strict_device: see audio.resolve_input_device's own
+            # docstring (bug audit addendum D2/D3) -- an unmatched or
+            # vanished desktop device must report and keep retrying,
+            # never silently fall back to an unrelated device either.
+            strict_device=is_desktop,
         )
         self._mic.start()
 

@@ -231,7 +231,15 @@ def main() -> int:
         print(f"[obs] {message}", flush=True)
 
     def on_mute_changed_on_qt_thread(muted: bool) -> None:
-        window.set_muted(muted)
+        # Only actually applied while source == "microphone" -- bug
+        # audit addendum 2026-09-23, D4: with Desktop Audio or File
+        # driving the avatar, muting your own mic in OBS has nothing to
+        # do with whether the stream can still hear the game/video
+        # audio the avatar is actually following. control_panel.
+        # _on_audio_source_changed re-syncs this same way when the
+        # source itself changes (this callback alone can't catch that,
+        # since it only fires on an actual OBS mute *event*).
+        window.set_muted(muted and config.audio.source == "microphone")
 
     def on_file_playback_stopped_on_qt_thread() -> None:
         nonlocal speaking_state

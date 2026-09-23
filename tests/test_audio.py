@@ -203,6 +203,27 @@ def test_resolve_input_device_falls_back_when_hint_matches_nothing(monkeypatch):
     assert _DEVICES[index]["name"] == "Blue Microphones Analog Stereo"  # first usable
 
 
+def test_resolve_input_device_strict_does_not_fall_back_on_an_unmatched_hint(monkeypatch):
+    # Regression, bug audit addendum 2026-09-23, D2/D3: strict=True
+    # (Desktop Audio) must report "not found," not silently open
+    # whatever's first usable -- the mic, on this owner's own machine.
+    _patch_devices(monkeypatch)
+    index = resolve_input_device("some device that does not exist", strict=True)
+    assert index is None
+
+
+def test_resolve_input_device_strict_does_not_fall_back_with_no_hint(monkeypatch):
+    _patch_devices(monkeypatch)
+    index = resolve_input_device(None, strict=True)
+    assert index is None
+
+
+def test_resolve_input_device_strict_still_matches_a_real_hint(monkeypatch):
+    _patch_devices(monkeypatch)
+    index = resolve_input_device("Blue Microphones", strict=True)
+    assert _DEVICES[index]["name"] == "Blue Microphones Analog Stereo"
+
+
 def test_resolve_input_device_with_no_hint_picks_first_usable(monkeypatch):
     _patch_devices(monkeypatch)
     index = resolve_input_device(None)
@@ -264,7 +285,7 @@ def test_microphone_reports_error_and_reconnects_after_failed_open(monkeypatch):
         return _FakeStream(behavior_queue, on_read=volumes_received.set, **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
 
     mic = Microphone(
         on_volume=lambda v: None,
@@ -279,6 +300,45 @@ def test_microphone_reports_error_and_reconnects_after_failed_open(monkeypatch):
 
     assert len(errors) >= 1
     assert "device not found" in errors[0]
+
+
+def test_microphone_strict_device_reports_and_retries_without_opening_a_stream(monkeypatch):
+    # Regression, bug audit addendum 2026-09-23, D2/D3: strict_device=True
+    # (Desktop Audio) must report "not found" and keep retrying the
+    # *chosen* device -- never fall through to sd.InputStream(device=None,
+    # ...), which would just open PortAudio's own default (the mic, on
+    # this owner's own machine) instead.
+    opened = []
+    errors = []
+    got_error = threading.Event()
+
+    def fake_input_stream(**kwargs):
+        opened.append(kwargs)
+        return _FakeStream(["ok"], **kwargs)
+
+    def on_error(message):
+        errors.append(message)
+        got_error.set()
+
+    monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
+
+    mic = Microphone(
+        on_volume=lambda v: None,
+        device="Some Unplugged Sink",
+        reconnect_delay_s=0.01,
+        on_error=on_error,
+        strict_device=True,
+    )
+    mic.start()
+    try:
+        assert got_error.wait(timeout=2.0)
+    finally:
+        mic.stop()
+
+    assert opened == []  # never actually opened a stream against the wrong device
+    assert "Some Unplugged Sink" in errors[0]
+    assert "not found" in errors[0]
 
 
 def test_microphone_reconnects_after_read_failure_mid_stream(monkeypatch):
@@ -296,7 +356,7 @@ def test_microphone_reconnects_after_read_failure_mid_stream(monkeypatch):
         return _FakeStream(behavior_queue, on_read=on_read, **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
 
     mic = Microphone(
         on_volume=lambda v: None,
@@ -333,7 +393,7 @@ def test_microphone_stop_abandon_skips_stream_teardown(monkeypatch):
         return _CountingStream(["ok"], **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
 
     mic = Microphone(on_volume=lambda v: None)
     mic.start()
@@ -357,7 +417,7 @@ def test_microphone_stop_without_abandon_still_tears_down_the_stream(monkeypatch
         return _CountingStream(["ok"], **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
 
     mic = Microphone(on_volume=lambda v: None)
     mic.start()
@@ -374,7 +434,7 @@ def test_microphone_stop_is_prompt_even_mid_poll(monkeypatch):
         return _FakeStream(["ok"], **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
 
     mic = Microphone(on_volume=lambda v: None)
     mic.start()
@@ -402,7 +462,7 @@ def test_microphone_start_gives_each_worker_its_own_stop_event(monkeypatch):
         return _FakeStream(["ok"], **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
 
     mic = Microphone(on_volume=lambda v: None)
     mic.start()
@@ -435,7 +495,7 @@ def test_microphone_never_requests_mono_directly_from_the_device(monkeypatch):
         return _FakeStream(["ok"], **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
     monkeypatch.setattr(
         audio_module.sd,
         "query_devices",
@@ -471,7 +531,7 @@ def test_microphone_downmixes_multichannel_blocks_to_mono(monkeypatch):
         return StereoFakeStream(["ok"], **kwargs)
 
     monkeypatch.setattr(audio_module.sd, "InputStream", fake_input_stream)
-    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint: None)
+    monkeypatch.setattr(audio_module, "resolve_input_device", lambda hint, strict=False: None)
     monkeypatch.setattr(
         audio_module.sd,
         "query_devices",

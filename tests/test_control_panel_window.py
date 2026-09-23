@@ -2215,6 +2215,44 @@ def test_threshold_warning_lists_every_crossed_pair_at_once(qapp, tmp_path):
     assert '"Mild: open above" is above "Wide: open above"' in text
 
 
+# --- OBS mute gated by audio source (bug audit addendum 2026-09-23, D4) ----
+
+
+def test_switching_away_from_microphone_clears_obs_mute_on_the_render_window(qapp, tmp_path):
+    # OBS mic-mute has nothing to do with whether the avatar should
+    # keep following Desktop Audio or a File -- switching away from
+    # Microphone must re-sync the render window's mute state, not just
+    # leave it stuck at whatever it was.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._obs_muted = True
+    window.set_muted(True)
+    assert window.muted is True
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+
+    assert window.muted is False
+
+
+def test_switching_back_to_microphone_reapplies_obs_mute(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._obs_muted = True
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    assert window.muted is False  # gated off while on desktop
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("microphone"))
+
+    assert window.muted is True  # re-applied now that we're back on mic
+
+
+def test_switching_source_while_obs_not_muted_leaves_render_window_unmuted(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._obs_muted is False
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("file"))
+
+    assert window.muted is False
+
+
 # --- OBS mute awareness status label -----------------------------------------
 
 

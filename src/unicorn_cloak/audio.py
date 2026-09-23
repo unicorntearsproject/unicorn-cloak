@@ -194,7 +194,7 @@ def usable_input_devices() -> list[dict]:
     return devices
 
 
-def resolve_input_device(hint: str | None) -> int | None:
+def resolve_input_device(hint: str | None, *, strict: bool = False) -> int | None:
     """Picks a real input device index, never a raw-ALSA or pseudo one.
 
     `hint` is a case-insensitive name substring (see AudioConfig.device);
@@ -203,6 +203,17 @@ def resolve_input_device(hint: str | None) -> int | None:
     Returns None (PortAudio's own default) only if nothing usable was
     found at all, so a stream open attempt still surfaces a real error
     instead of this function silently doing nothing.
+
+    strict=True (Desktop Audio -- bug audit addendum 2026-09-23, D2/D3):
+    an unmatched or missing hint does NOT fall back to "whatever's
+    first usable device" -- it returns None instead. For a live mic,
+    "just pick something" is a reasonable default; for desktop audio,
+    "whatever's first" on this owner's own machine is the mic itself
+    (confirmed live: no device here is actually named "default"), so
+    the old fallback meant an unset or vanished desktop device silently
+    started lip-syncing to the owner's voice while "Desktop Audio"
+    stayed selected in the UI. Microphone (below) turns a strict,
+    unresolved None into a real, reported error instead.
     """
     usable = usable_input_devices()
     if not usable:
@@ -213,7 +224,12 @@ def resolve_input_device(hint: str | None) -> int | None:
             if hint_lower in str(info["name"]).lower():
                 return info["index"]
         # An unmatched hint falls through to the default below rather than
-        # silently opening an unrelated device.
+        # silently opening an unrelated device -- unless strict, which
+        # stops right here instead (see the docstring above).
+        if strict:
+            return None
+    elif strict:
+        return None
     for info in usable:
         if str(info["name"]).strip().lower() == "default":
             return info["index"]
@@ -275,6 +291,7 @@ class Microphone:
         blocksize: int = 1024,
         reconnect_delay_s: float = _DEFAULT_RECONNECT_DELAY_S,
         on_error: Callable[[str], None] | None = None,
+        strict_device: bool = False,
     ) -> None:
         self._on_volume = on_volume
         self.device = device
@@ -282,6 +299,12 @@ class Microphone:
         self.blocksize = blocksize
         self._reconnect_delay_s = reconnect_delay_s
         self._on_error = on_error
+        # See resolve_input_device's own docstring -- Desktop Audio
+        # (bug audit addendum 2026-09-23, D2/D3) passes True so an
+        # unset or vanished device reports a real, retrying error
+        # instead of silently opening whatever device happens to be
+        # first (the mic, on this owner's own machine).
+        self._strict_device = strict_device
         self._stop_event = threading.Event()
         self._worker_thread: threading.Thread | None = None
         self._stream: sd.InputStream | None = None
@@ -352,7 +375,16 @@ class Microphone:
             self._on_error(message)
 
     def _run_one_connection(self, stop_event: threading.Event) -> None:
-        device_index = resolve_input_device(self.device)
+        device_index = resolve_input_device(self.device, strict=self._strict_device)
+        if self._strict_device and device_index is None:
+            # Raising here (rather than falling through to sd.InputStream
+            # with device=None, which would just open PortAudio's own
+            # ALSA-level default -- not necessarily related to what was
+            # actually asked for) lands in _worker_loop's own except
+            # clause below, which reports it and retries after
+            # _reconnect_delay_s -- exactly "report an error and keep
+            # retrying the chosen device," bug audit addendum D3.
+            raise RuntimeError(f"device {self.device!r} not found")
         # The JACK/PipeWire hostapi runs at a fixed server-wide rate
         # (commonly 48000, not the 44100 this class used to hardcode) and
         # raises "Invalid sample rate" rather than resampling -- confirmed
