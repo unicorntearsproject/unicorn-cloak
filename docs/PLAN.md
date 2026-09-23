@@ -1163,6 +1163,30 @@ fallback should be here is a separate design question.
 
 601 tests (585 -> 601).
 
+**2026-09-23, same-day follow-up: the audit's last deferred item
+resolved, one queued.** Owner's call on the two items stage 7 left
+open: **threshold ordering** gets a warning, not a live clamp --
+`_refresh_threshold_warning` (wired to all four Envelope spinboxes)
+shows a red, word-wrapped label under the Envelope section whenever
+`mild_close <= mild_open <= wide_open` or `wide_close <= wide_open`
+doesn't hold, naming exactly which pair crossed; hidden whenever the
+ordering is clean. Confirmed live via screenshots, both states.
+**Settings write churn** stays open -- debouncing `_save_config`'s
+actual disk write is worth doing, but properly (with the real
+before/after write-count measurement this repo's Testing rule
+requires or a claim doesn't count) touches a code path a wide swath of
+existing tests assert against synchronously. Queued as a near-term
+follow-up, not urgent: every spinbox step still writes `settings.json`
+(`fsync` + a fresh `.bak`) synchronously today, which is wasteful but
+not lossy or broken -- the `.bak` just stays only ever one step old.
+
+607 tests (601 -> 607).
+
+**TODO, queued (not urgent):** debounce `ControlPanelWindow.
+_save_config`'s actual disk write (currently synchronous on every
+call -- see above). Needs a real write-count measurement, before and
+after, to land per this repo's own performance-claim rule.
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

@@ -2136,6 +2136,85 @@ def test_loading_a_different_avatar_syncs_zoom(qapp, tmp_path, monkeypatch):
     assert window.zoom == 3.0
 
 
+# --- Envelope threshold ordering warning (owner's request, 2026-09-23) -----
+
+
+def test_threshold_warning_hidden_with_default_values(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _switch_to_tab(panel, "Audio")
+    panel._sections["Envelope"].set_collapsed(False)
+    assert panel._threshold_warning_label.isVisible() is False
+
+
+def test_threshold_warning_shown_when_mild_close_exceeds_mild_open(qapp, tmp_path):
+    # Bug audit 2026-09-23, #20 ("no threshold ordering checks"):
+    # nothing enforces mild_close <= mild_open -- a crossed pair
+    # doesn't crash, it just makes the "mild" band unreachable or makes
+    # it flap. Owner's follow-up request: warn instead of live-clamping.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _switch_to_tab(panel, "Audio")
+    panel._sections["Envelope"].set_collapsed(False)
+    panel.mild_open.setValue(0.01)
+    panel.mild_close.setValue(0.05)  # now above mild_open
+
+    assert panel._threshold_warning_label.isVisible() is True
+    assert '"Mild: close below" is above "Mild: open above"' in panel._threshold_warning_label.text()
+
+
+def test_threshold_warning_shown_when_mild_open_exceeds_wide_open(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _switch_to_tab(panel, "Audio")
+    panel._sections["Envelope"].set_collapsed(False)
+    panel.wide_open.setValue(0.02)
+    panel.mild_open.setValue(0.05)  # now above wide_open
+
+    assert panel._threshold_warning_label.isVisible() is True
+    assert '"Mild: open above" is above "Wide: open above"' in panel._threshold_warning_label.text()
+
+
+def test_threshold_warning_shown_when_wide_close_exceeds_wide_open(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _switch_to_tab(panel, "Audio")
+    panel._sections["Envelope"].set_collapsed(False)
+    panel.wide_open.setValue(0.05)
+    panel.wide_close.setValue(0.1)  # now above wide_open
+
+    assert panel._threshold_warning_label.isVisible() is True
+    assert '"Wide: close below" is above "Wide: open above"' in panel._threshold_warning_label.text()
+
+
+def test_threshold_warning_clears_once_the_values_are_fixed(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _switch_to_tab(panel, "Audio")
+    panel._sections["Envelope"].set_collapsed(False)
+    panel.mild_open.setValue(0.01)
+    panel.mild_close.setValue(0.05)
+    assert panel._threshold_warning_label.isVisible() is True
+
+    panel.mild_close.setValue(0.005)  # back below mild_open
+
+    assert panel._threshold_warning_label.isVisible() is False
+
+
+def test_threshold_warning_lists_every_crossed_pair_at_once(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    _switch_to_tab(panel, "Audio")
+    panel._sections["Envelope"].set_collapsed(False)
+    panel.wide_open.setValue(0.02)
+    panel.mild_open.setValue(0.05)  # above wide_open
+    panel.mild_close.setValue(0.08)  # above mild_open too
+
+    text = panel._threshold_warning_label.text()
+    assert '"Mild: close below" is above "Mild: open above"' in text
+    assert '"Mild: open above" is above "Wide: open above"' in text
+
+
 # --- OBS mute awareness status label -----------------------------------------
 
 

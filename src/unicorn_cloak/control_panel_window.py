@@ -1828,24 +1828,24 @@ class ControlPanelWindow(QWidget):
             "RMS volume below this is treated as silence -- filters out\n"
             "mic hiss and room noise so it never registers as speech.",
         )
-        self._add_double(
+        self.mild_open = self._add_double(
             envelope_form, "Mild: open above", 0.0, 1.0, 0.001, 4,
             self.config.audio, "mild_open",
             "Volume must rise above this to open the mouth to \"mild\".",
         )
-        self._add_double(
+        self.mild_close = self._add_double(
             envelope_form, "Mild: close below", 0.0, 1.0, 0.001, 4,
             self.config.audio, "mild_close",
             "Volume must fall below this to close the mouth again.\n"
             "Kept lower than \"open above\" on purpose (hysteresis) so it\n"
             "doesn't flicker open/closed right at one boundary value.",
         )
-        self._add_double(
+        self.wide_open = self._add_double(
             envelope_form, "Wide: open above", 0.0, 1.0, 0.001, 4,
             self.config.audio, "wide_open",
             "Volume must rise above this for the \"wide\" (loud) mouth shape.",
         )
-        self._add_double(
+        self.wide_close = self._add_double(
             envelope_form, "Wide: close below", 0.0, 1.0, 0.001, 4,
             self.config.audio, "wide_close",
             "Volume must fall below this to drop back from \"wide\" to \"mild\".\n"
@@ -1869,7 +1869,26 @@ class ControlPanelWindow(QWidget):
             "How fast the mouth closes once the hold period ends.",
         )
         envelope_section.body_layout.addLayout(envelope_form)
+
+        # Warning, not a live clamp -- owner's request, 2026-09-23 (bug
+        # audit finding #20, "no threshold ordering checks"): nothing
+        # enforces mild_close <= mild_open <= wide_open or
+        # wide_close <= wide_open. A crossed pair doesn't crash -- it
+        # just makes a band unreachable or makes it flap -- so this
+        # surfaces the problem instead of silently fighting the values
+        # the owner just typed. Hidden whenever the ordering holds.
+        self._threshold_warning_label = QLabel()
+        self._threshold_warning_label.setWordWrap(True)
+        self._threshold_warning_label.setStyleSheet(
+            f"color: {theme.DANGER}; font-weight: 600; background: transparent;"
+        )
+        self._threshold_warning_label.setVisible(False)
+        envelope_section.body_layout.addWidget(self._threshold_warning_label)
         envelope_section.body_layout.addStretch(1)
+
+        for box in (self.mild_open, self.mild_close, self.wide_open, self.wide_close):
+            box.valueChanged.connect(self._refresh_threshold_warning)
+        self._refresh_threshold_warning()
 
         obs_section = CollapsibleSection("OBS mute awareness")
         obs_form = QFormLayout()
@@ -2407,7 +2426,7 @@ class ControlPanelWindow(QWidget):
 
     def _add_double(
         self, form, label, lo, hi, step, decimals, target, field_name, tooltip: str
-    ) -> None:
+    ) -> QDoubleSpinBox:
         box = ScrollSafeDoubleSpinBox()
         box.setRange(lo, hi)
         box.setSingleStep(step)
@@ -2418,6 +2437,7 @@ class ControlPanelWindow(QWidget):
         self._add_row_with_reset_and_lock(
             form, label, box, self._default_for(target, field_name), tooltip
         )
+        return box
 
     def _add_int(self, form, label, lo, hi, target, field_name, tooltip: str) -> None:
         box = ScrollSafeSpinBox()
@@ -3870,6 +3890,37 @@ class ControlPanelWindow(QWidget):
 
     def _on_file_playback_stopped(self) -> None:
         self._update_play_button_text()
+
+    # =====================================================================
+    # Envelope threshold ordering warning
+    # =====================================================================
+
+    def _refresh_threshold_warning(self) -> None:
+        """Warns, live, when the Envelope thresholds cross the ordering
+        `update_speaking` (audio.py) assumes -- mild_close <= mild_open
+        <= wide_open, and wide_close <= wide_open. Owner's request,
+        2026-09-23 (bug audit finding #20, "no threshold ordering
+        checks"): a crossed pair doesn't crash, it just makes a band
+        unreachable or makes it flap, so this surfaces the problem
+        instead of live-clamping values the owner just typed."""
+        mild_open = self.mild_open.value()
+        mild_close = self.mild_close.value()
+        wide_open = self.wide_open.value()
+        wide_close = self.wide_close.value()
+
+        problems = []
+        if mild_close > mild_open:
+            problems.append('"Mild: close below" is above "Mild: open above"')
+        if mild_open > wide_open:
+            problems.append('"Mild: open above" is above "Wide: open above"')
+        if wide_close > wide_open:
+            problems.append('"Wide: close below" is above "Wide: open above"')
+
+        if problems:
+            self._threshold_warning_label.setText(
+                "Warning: " + "; ".join(problems) + " -- that band may be unreachable or flap."
+            )
+        self._threshold_warning_label.setVisible(bool(problems))
 
     # =====================================================================
     # OBS mute awareness
