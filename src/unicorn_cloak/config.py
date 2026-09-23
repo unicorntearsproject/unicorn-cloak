@@ -28,6 +28,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from .rig import NUM_COSTUMES
+
 DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "settings.json"
 
 # Format versioning (added 2026-09-17, mirroring persistence.py's own
@@ -391,7 +393,22 @@ def _read_config_from_file(path: Path) -> Config:
         # JSON has no tuple type -- _merge hands back whatever list came
         # out of the file verbatim; normalize back to a tuple so this
         # field's type stays consistent regardless of load vs. default.
-        config.hotkeys.costume_keys = tuple(config.hotkeys.costume_keys)
+        #
+        # Also padded/truncated to exactly NUM_COSTUMES entries here --
+        # bug audit 2026-09-23, #20 ("short hotkey list crash"): nothing
+        # enforced this length before, so a hand-edited settings.json
+        # with fewer than 10 costume_keys left control_panel_window.py's
+        # _costume_add_button_items missing the remaining slots entirely
+        # -- loading an avatar with a costume_assignments entry in one
+        # of those slots then raised a bare KeyError. Short lists are
+        # padded from the dataclass default's own keys for the missing
+        # slots (the same keys a fresh config would already have there);
+        # long ones are truncated, since only NUM_COSTUMES slots exist
+        # anywhere else in the app.
+        keys = list(config.hotkeys.costume_keys)[:NUM_COSTUMES]
+        if len(keys) < NUM_COSTUMES:
+            keys += list(HotkeysConfig().costume_keys[len(keys):NUM_COSTUMES])
+        config.hotkeys.costume_keys = tuple(keys)
     if "obs" in raw:
         config.obs = _merge(ObsConfig, config.obs, raw["obs"])
     if "control_panel" in raw:

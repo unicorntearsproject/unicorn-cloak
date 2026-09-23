@@ -47,6 +47,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from .motion import TALK_QUIET_ONLY
 from .rig import NUM_COSTUMES, AvatarRig, Sprite
 
 DEFAULT_EXTENSION = ".uc"
@@ -84,6 +85,21 @@ def format_vector2(value: tuple[float, float]) -> str:
 
 def _format_number(n: float) -> str:
     return str(int(n)) if float(n).is_integer() else str(n)
+
+
+_VALID_AXIS_STATES = (0, 1, 2, TALK_QUIET_ONLY)
+
+
+def _normalize_axis_state(value: int) -> int:
+    """showTalk/showBlink accept any int on disk, but motion.axis_visible
+    only understands 0, 1, 2, or TALK_QUIET_ONLY (3) -- anything else
+    raises ValueError, and it's called on *every paint frame*, so an
+    out-of-range value (a hand-edited file, or a future format this
+    version doesn't know yet) froze the Render Window instead of
+    loading with a sane fallback. Bug audit 2026-09-23, #20
+    ("unvalidated state values"). 0 ("always visible") is the same safe
+    default this loader already uses for a missing key entirely."""
+    return value if value in _VALID_AXIS_STATES else 0
 
 
 def _normalize_costume_layers(raw_json: str | None) -> tuple[bool, ...]:
@@ -157,8 +173,8 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
                 ignore_bounce=bool(entry.get("ignoreBounce", False)),
                 frames=entry.get("frames", 1),
                 anim_speed=entry.get("animSpeed", 0.0),
-                talk_state=entry.get("showTalk", 0),
-                blink_state=entry.get("showBlink", 0),
+                talk_state=_normalize_axis_state(entry.get("showTalk", 0)),
+                blink_state=_normalize_axis_state(entry.get("showBlink", 0)),
                 # "talkVariant" was this key's name for about one turn
                 # before blink-axis sprites needed the same field --
                 # falling back to it means the handful of sprites already

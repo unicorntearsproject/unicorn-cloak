@@ -116,6 +116,37 @@ def test_load_state_reads_scale_lock_proportions_when_present(tmp_path):
     assert config.control_panel.scale_lock_proportions is False
 
 
+def test_load_state_pads_a_short_costume_keys_list(tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "short hotkey list crash"):
+    # nothing enforced costume_keys having exactly NUM_COSTUMES entries
+    # -- a hand-edited settings.json with fewer left
+    # control_panel_window.py's _costume_add_button_items missing the
+    # remaining slots entirely, so loading an avatar with a
+    # costume_assignments entry in one of those slots raised a bare
+    # KeyError. Short lists are padded from the dataclass default's own
+    # keys for the missing slots.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({
+        "__config_version__": config_module.CURRENT_CONFIG_VERSION,
+        "hotkeys": {"costume_keys": ["a", "b", "c"]},
+    }))
+    config = load_state(path)
+    assert len(config.hotkeys.costume_keys) == 10
+    assert config.hotkeys.costume_keys[:3] == ("a", "b", "c")
+    assert config.hotkeys.costume_keys[3:] == ("4", "5", "6", "7", "8", "9", "0")
+
+
+def test_load_state_truncates_a_long_costume_keys_list(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({
+        "__config_version__": config_module.CURRENT_CONFIG_VERSION,
+        "hotkeys": {"costume_keys": list("abcdefghijklmno")},  # 15 entries
+    }))
+    config = load_state(path)
+    assert len(config.hotkeys.costume_keys) == 10
+    assert config.hotkeys.costume_keys == tuple("abcdefghij")
+
+
 # --- load_state falls back to .bak, then defaults (bug audit 2026-09-23, #12) --
 
 

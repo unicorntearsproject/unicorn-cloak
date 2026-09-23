@@ -187,6 +187,35 @@ def test_load_missing_costume_layers_defaults_to_all_visible(tmp_path):
     assert rig.sprites[0].costume_layers == tuple([True] * 10)
 
 
+def test_load_normalizes_an_out_of_range_show_talk_instead_of_freezing_later(tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "unvalidated state
+    # values"): nothing validated showTalk/showBlink at load time, so a
+    # hand-edited (or future-format) file with an out-of-range value
+    # loaded fine here but raised ValueError from motion.axis_visible on
+    # every single paint frame afterward -- effectively freezing the
+    # Render Window the moment that sprite became eligible to draw.
+    path = tmp_path / "bad-talk.save"
+    path.write_text(json.dumps({"0": _sprite_entry(showTalk=99)}))
+    rig = load_avatar(path)  # must not raise
+    assert rig.sprites[0].talk_state == 0  # normalized to "always visible"
+
+
+def test_load_normalizes_an_out_of_range_show_blink(tmp_path):
+    path = tmp_path / "bad-blink.save"
+    path.write_text(json.dumps({"0": _sprite_entry(showBlink=-5)}))
+    rig = load_avatar(path)  # must not raise
+    assert rig.sprites[0].blink_state == 0
+
+
+def test_load_keeps_a_valid_talk_quiet_only_show_talk(tmp_path):
+    from unicorn_cloak.motion import TALK_QUIET_ONLY
+
+    path = tmp_path / "quiet-only.save"
+    path.write_text(json.dumps({"0": _sprite_entry(showTalk=TALK_QUIET_ONLY)}))
+    rig = load_avatar(path)
+    assert rig.sprites[0].talk_state == TALK_QUIET_ONLY
+
+
 def test_load_preserves_toggle_field(tmp_path):
     path = tmp_path / "toggle.save"
     path.write_text(json.dumps({"0": _sprite_entry(toggle="F1")}))

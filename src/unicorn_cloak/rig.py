@@ -409,9 +409,26 @@ class AvatarRig:
 
     def remove_sprite(self, sprite_id: int) -> None:
         """Removes a sprite; any children are orphaned (reparented to
-        root) rather than deleted with it."""
+        root) rather than deleted with it.
+
+        Also drops any costume-hotkey pair (a Costume Hotkeys editor
+        row) that references this sprite on either side -- bug audit
+        2026-09-23, #20 ("dangling references on delete"). Left in
+        place, the editor kept showing that slot's row with a "—"
+        placeholder for the now-missing sprite, and the *other* sprite
+        in the pair silently stayed hidden/scoped-to-that-slot (see
+        assign_costume_pair's own docstring) with no control left able
+        to undo it short of re-editing the row by hand. Routed through
+        remove_costume_pair (called while the sprite being deleted
+        still exists in self.sprites, so its by_id lookups still
+        resolve) rather than duplicating its revert-to-visible logic."""
         for child in self.children_of(sprite_id):
             child.parent_id = None
+        for slot in range(NUM_COSTUMES):
+            for index in reversed(range(len(self.costume_assignments[slot]))):
+                hide_id, show_id = self.costume_assignments[slot][index]
+                if sprite_id in (hide_id, show_id):
+                    self.remove_costume_pair(slot, index)
         self.sprites = [s for s in self.sprites if s.id != sprite_id]
 
     def new_sprite_id(self) -> int:

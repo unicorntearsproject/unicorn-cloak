@@ -1050,6 +1050,49 @@ the UI four times over.
 
 574 tests (567 -> 574).
 
+**2026-09-23, same-day follow-up: bug audit stage 6 -- finding #20,
+first four sub-items.** #20 is a grab-bag of smaller, individually
+code-verified edge cases; working through them one at a time rather
+than as a single sweep, starting with the ones a real, plausible
+workflow can actually hit.
+
+**Short hotkey list crash:** nothing enforced `costume_keys` having
+exactly `NUM_COSTUMES` entries -- a hand-edited `settings.json` with
+fewer left `_costume_add_button_items` missing the remaining slots
+entirely, so loading an avatar with a `costume_assignments` entry in
+one of those slots raised a bare `KeyError`. `load_state` now
+pads/truncates it to exactly 10 on load.
+
+**Unvalidated state values:** `load_avatar` accepted any
+`showTalk`/`showBlink` int with no validation; `motion.axis_visible`
+only understands `0, 1, 2,` or `TALK_QUIET_ONLY` and raises on
+anything else -- called on *every paint frame*, so a hand-edited (or
+future-format) file with an out-of-range value loaded fine but then
+froze the Render Window the instant that sprite became paint-eligible.
+Normalized to `0` ("always visible," the same default a missing key
+already got) at load time.
+
+**Dangling references on delete:** `AvatarRig.remove_sprite` never
+touched `costume_assignments` -- deleting a sprite that was part of a
+Hide/Show costume-hotkey pair left that pair referencing a
+now-nonexistent id (the editor row showed a "—" placeholder for it),
+while the *surviving* sprite in the pair silently stayed hidden/
+scoped-to-that-slot with no control left able to undo it. `remove_sprite`
+now routes any pair referencing the deleted sprite (either side)
+through the existing `remove_costume_pair`, reusing its revert-to-
+visible logic rather than duplicating it.
+
+**No-op undo entries:** `EditableSpriteItem.mousePressEvent` pushed an
+undo snapshot unconditionally on every press, including a plain
+click-to-select with no drag at all -- Undo often appeared to do
+nothing, since it was undoing a click, not an edit. The push is now
+deferred to the gesture's first actual `mouseMoveEvent` (still
+captures the correct pre-edit state, since nothing has moved yet at
+that point) and never happens at all for a press-then-release with no
+movement in between.
+
+585 tests (574 -> 585).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

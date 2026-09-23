@@ -81,6 +81,49 @@ def test_costume_pair_can_be_added_multiple_times_to_the_same_slot():
     assert rig.by_id(3).costume_layers[2] is True
 
 
+def test_remove_sprite_drops_its_costume_pair_and_reverts_the_partner():
+    # Regression, bug audit 2026-09-23 (#20, "dangling references on
+    # delete"): deleting a sprite used to leave its costume-hotkey pairs
+    # sitting in costume_assignments, referencing a now-missing sprite
+    # id -- the editor row showed a "—" placeholder for it, and the
+    # surviving partner sprite silently stayed hidden/scoped to that
+    # slot with no control left able to fix it.
+    rig = AvatarRig(name="t", sprites=[make_sprite(1), make_sprite(2)])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    assert rig.costume_assignments[2] == [(1, 2)]
+    assert rig.by_id(2).costume_layers[2] is False
+
+    rig.remove_sprite(1)  # the "hide" side of the pair
+
+    assert rig.costume_assignments[2] == []  # dangling reference gone
+    assert rig.by_id(2).costume_layers[2] is True  # reverted, not left hidden forever
+
+
+def test_remove_sprite_drops_a_pair_where_it_is_the_show_side():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1), make_sprite(2)])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+
+    rig.remove_sprite(2)  # the "show" side of the pair
+
+    assert rig.costume_assignments[2] == []
+    # The surviving hide_id sprite is gone from self.sprites at this
+    # point too (it wasn't deleted, just no longer referenced by the
+    # pair) -- still in the rig, reverted to visible everywhere.
+    assert rig.by_id(1) is not None
+    assert all(rig.by_id(1).costume_layers)
+
+
+def test_remove_sprite_only_drops_pairs_that_reference_it():
+    rig = AvatarRig(name="t", sprites=[make_sprite(1), make_sprite(2), make_sprite(3), make_sprite(4)])
+    rig.assign_costume_pair(2, hide_id=1, show_id=2)
+    rig.assign_costume_pair(3, hide_id=3, show_id=4)
+
+    rig.remove_sprite(1)
+
+    assert rig.costume_assignments[2] == []  # this one's gone
+    assert rig.costume_assignments[3] == [(3, 4)]  # unrelated pair, untouched
+
+
 def test_assign_and_remove_expression_hotkey():
     rig = AvatarRig(name="t", sprites=[make_sprite(1)])
     rig.assign_expression_hotkey(4, "Mouth", "Laughing")

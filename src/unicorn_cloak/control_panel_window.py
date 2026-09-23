@@ -206,6 +206,9 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         self.sprite = sprite
         self._panel = panel
         self._active_handle: str | None = None
+        # See mousePressEvent/mouseMoveEvent below -- bug audit
+        # 2026-09-23, #20 ("no-op undo entries").
+        self._undo_pending_for_press = False
         self.setOffset(-pixmap.width() / 2 + sprite.offset[0], -pixmap.height() / 2 + sprite.offset[1])
         self.setZValue(sprite.z_index)
         self.setFlag(QGraphicsItem.ItemStacksBehindParent, sprite.z_index < 0)
@@ -366,7 +369,15 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         super().hoverMoveEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        self._panel.push_undo_snapshot()
+        # Deferred, not pushed here -- bug audit 2026-09-23, #20 ("no-op
+        # undo entries"): every press used to push a snapshot
+        # unconditionally, including a plain click-to-select with no
+        # drag at all, so Undo often appeared to do nothing (it was
+        # undoing a click, not an edit). Pushed instead on the first
+        # actual mouseMoveEvent of this gesture, if one ever comes --
+        # still captures the correct pre-edit state, since nothing has
+        # moved/rotated/scaled yet at that point.
+        self._undo_pending_for_press = True
         handle = self._handle_at(event.pos())
         if handle is not None:
             self._active_handle = handle
@@ -375,6 +386,9 @@ class EditableSpriteItem(QGraphicsPixmapItem):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._undo_pending_for_press:
+            self._panel.push_undo_snapshot()
+            self._undo_pending_for_press = False
         if self._active_handle is not None:
             self._drag_handle(event.scenePos())
             event.accept()
@@ -383,6 +397,9 @@ class EditableSpriteItem(QGraphicsPixmapItem):
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._active_handle = None
+        # A plain click never reached mouseMoveEvent at all -- nothing
+        # to push for it now either.
+        self._undo_pending_for_press = False
         super().mouseReleaseEvent(event)
 
     def _drag_handle(self, scene_pos: QPointF) -> None:

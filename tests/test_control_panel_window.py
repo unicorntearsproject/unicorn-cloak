@@ -1890,6 +1890,50 @@ def test_shape_when_selected_covers_every_handle_even_on_a_fully_transparent_spr
         assert shape.contains(hrect.topLeft()), f"{name} handle's outer corner isn't in shape()"
 
 
+def _send_mouse_press(item, scene_pos: QPointF) -> None:
+    event = QGraphicsSceneMouseEvent(QEvent.Type.GraphicsSceneMousePress)
+    event.setScenePos(scene_pos)
+    event.setPos(item.mapFromScene(scene_pos))
+    item.mousePressEvent(event)
+
+
+def _send_mouse_release(item, scene_pos: QPointF) -> None:
+    event = QGraphicsSceneMouseEvent(QEvent.Type.GraphicsSceneMouseRelease)
+    event.setScenePos(scene_pos)
+    event.setPos(item.mapFromScene(scene_pos))
+    item.mouseReleaseEvent(event)
+
+
+def test_a_plain_click_with_no_drag_does_not_push_an_undo_entry(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "no-op undo entries"):
+    # mousePressEvent used to push a snapshot unconditionally, including
+    # a plain click-to-select with no drag at all -- Undo then often
+    # appeared to do nothing, since it was undoing a click, not an edit.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    assert panel._undo_stack == []
+
+    _send_mouse_press(item, item.scenePos())
+    _send_mouse_release(item, item.scenePos())
+
+    assert panel._undo_stack == []
+
+
+def test_an_actual_drag_still_pushes_exactly_one_undo_entry(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    item = panel._items[1]
+    start = item.scenePos()
+
+    _send_mouse_press(item, start)
+    _send_mouse_move(item, start + QPointF(20.0, 0.0))
+    _send_mouse_move(item, start + QPointF(35.0, 0.0))  # a second move must not push again
+    _send_mouse_release(item, start + QPointF(35.0, 0.0))
+
+    assert len(panel._undo_stack) == 1
+
+
 def _send_mouse_move(item, scene_pos: QPointF) -> None:
     """A real QGraphicsSceneMouseEvent, with .pos() set the same way
     QGraphicsScene's own dispatch would (item.mapFromScene(scenePos), so
@@ -2220,6 +2264,28 @@ def test_filling_both_boxes_commits_the_costume_pair(qapp, tmp_path):
     assert panel.rig.costume_assignments[2] == [(1, 2)]
     assert panel.rig.by_id(1).costume_layers[2] is True
     assert panel.rig.by_id(2).costume_layers[2] is False
+
+
+def test_deleting_a_sprite_removes_its_costume_row_from_the_editor(qapp, tmp_path):
+    # Regression, bug audit 2026-09-23 (#20, "dangling references on
+    # delete"): deleting a sprite used to leave its costume-hotkey row
+    # in the editor showing a "—" placeholder for the deleted sprite,
+    # not actually reflecting that its pair was gone until the slot was
+    # next edited by hand. AvatarRig.remove_sprite now drops the pair
+    # itself, and _on_delete already rebuilds this editor via
+    # _rebuild_scene -- this just confirms the two connect end to end.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._add_costume_row(2)
+    row = panel._costume_rows[2][0]
+    row.hide_combo.setCurrentIndex(row.hide_combo.findData(1))
+    row.show_combo.setCurrentIndex(row.show_combo.findData(2))
+    assert panel.rig.costume_assignments[2] == [(1, 2)]
+
+    panel._select(1)
+    panel._on_delete()
+
+    assert panel.rig.costume_assignments[2] == []
+    assert panel._costume_rows[2] == []
 
 
 def test_clearing_hide_box_on_a_committed_row_leaves_it_incomplete_and_reverts(qapp, tmp_path):
