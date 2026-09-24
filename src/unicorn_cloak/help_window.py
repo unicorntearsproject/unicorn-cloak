@@ -495,7 +495,9 @@ true 0% (fully invisible) in the Render Window and in OBS. See the
 <h3>Sprites tab</h3>
 <ul>
 <li><b>Layer List</b> section — <b>Add…</b> brings in a new sprite layer
-from a PNG file; <b>Replace…</b> swaps the selected sprite's image for a
+from a PNG file (or drag one or more PNGs from your file manager straight
+onto the canvas or the Layer List -- a multi-file drop undoes in one
+step); <b>Replace…</b> swaps the selected sprite's image for a
 different file, keeping every other setting as-is; <b>Duplicate</b>
 copies the selected sprite, nudged slightly; <b>Delete</b> removes it
 (children are kept, reparented to the root level); <b>Move Up / Move

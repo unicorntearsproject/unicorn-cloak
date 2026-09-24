@@ -140,3 +140,10 @@ def test_reference_tab_documents_clickable_issue_results(qapp):
     dlg = HelpWindow()
     tabs = dlg.findChild(QTabWidget)
     assert "click an issue to select" in tabs.widget(4).toPlainText()
+
+
+def test_reference_tab_documents_drag_and_drop_sprites(qapp):
+    # E9 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    assert "drag one or more PNGs" in tabs.widget(4).toPlainText()

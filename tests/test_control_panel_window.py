@@ -3592,3 +3592,127 @@ def test_no_issues_still_shows_the_plain_all_clear_box(qapp, tmp_path, monkeypat
 
     assert len(infos) == 1
     assert panel._issues_dialog is None
+
+
+# --- Drag-and-drop PNGs to add sprites (E9, 2026-09-23) ---------------------
+
+
+def _png_mime(*paths):
+    from PySide6.QtCore import QMimeData, QUrl
+
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(p)) for p in paths])
+    return mime
+
+
+def _drop(panel, target, mime):
+    from PySide6.QtGui import QDropEvent
+
+    event = QDropEvent(
+        QPointF(5, 5), Qt.DropAction.CopyAction, mime,
+        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+    )
+    return panel.eventFilter(target, event)
+
+
+def _drag_enter(panel, target, mime):
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QDragEnterEvent
+
+    event = QDragEnterEvent(
+        QPoint(5, 5), Qt.DropAction.CopyAction, mime,
+        Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+    )
+    return panel.eventFilter(target, event), event
+
+
+def _write_png(tmp_path, name):
+    path = tmp_path / name
+    path.write_bytes(make_test_png_bytes())
+    return path
+
+
+def test_canvas_and_layer_list_accept_png_drops(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    for target in (panel.edit_view.viewport(), panel.live_view.viewport(), panel.sprite_list.viewport()):
+        assert target.acceptDrops() is True
+
+
+def test_drag_enter_accepts_png_files(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    png = _write_png(tmp_path, "new.png")
+
+    handled, event = _drag_enter(panel, panel.edit_view.viewport(), _png_mime(png))
+
+    assert handled is True
+    assert event.isAccepted() is True
+
+
+def test_drag_enter_leaves_non_png_drops_to_the_widget(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    txt = tmp_path / "notes.txt"
+    txt.write_text("hi")
+
+    handled, _event = _drag_enter(panel, panel.edit_view.viewport(), _png_mime(txt))
+
+    assert handled is False
+
+
+def test_dropping_a_png_on_the_canvas_adds_and_selects_a_sprite(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    png = _write_png(tmp_path, "new.png")
+    before = len(panel.rig.sprites)
+
+    assert _drop(panel, panel.edit_view.viewport(), _png_mime(png)) is True
+
+    assert len(panel.rig.sprites) == before + 1
+    added = panel.rig.by_id(panel._selected_id)
+    assert added.path == str(png)
+    assert added.image_data == png.read_bytes()
+    assert panel._dirty is True
+
+
+def test_dropping_several_pngs_on_the_layer_list_is_one_undo_step(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    pngs = [_write_png(tmp_path, f"n{i}.png") for i in range(3)]
+    before = len(panel.rig.sprites)
+
+    _drop(panel, panel.sprite_list.viewport(), _png_mime(*pngs))
+    assert len(panel.rig.sprites) == before + 3
+
+    panel.undo()
+    assert len(panel.rig.sprites) == before
+
+
+def test_a_drop_mixing_png_and_other_files_only_adds_the_pngs(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    png = _write_png(tmp_path, "keep.png")
+    txt = tmp_path / "skip.txt"
+    txt.write_text("hi")
+    before = len(panel.rig.sprites)
+
+    _drop(panel, panel.edit_view.viewport(), _png_mime(png, txt))
+
+    assert len(panel.rig.sprites) == before + 1
+
+
+def test_an_unreadable_dropped_png_warns_without_an_undo_entry(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    warnings = []
+    monkeypatch.setattr(cpw_module.QMessageBox, "warning", lambda *a, **k: warnings.append(a))
+    before = len(panel.rig.sprites)
+
+    _drop(panel, panel.edit_view.viewport(), _png_mime(tmp_path / "missing.png"))
+
+    assert len(warnings) == 1
+    assert len(panel.rig.sprites) == before
+    assert panel._undo_stack == []
+
+
+def test_drops_on_unrelated_widgets_are_not_intercepted(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    png = _write_png(tmp_path, "new.png")
+    before = len(panel.rig.sprites)
+
+    assert _drop(panel, panel.audio_source, _png_mime(png)) is False
+    assert len(panel.rig.sprites) == before

@@ -32,7 +32,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QColor,
     QIcon,
@@ -812,6 +812,20 @@ class ControlPanelWindow(QWidget):
         root.addWidget(self.splitter)
 
         self.scene.selectionChanged.connect(self._on_scene_selection_changed)
+
+        # Drag-and-drop PNGs to add sprites -- quick-win enhancement E9
+        # (bug audit addendum 2026-09-23). An event filter on each
+        # target's *viewport*, not dropEvent overrides: QGraphicsView and
+        # QListWidget both handle drag events on their viewport (the view
+        # forwards them into its scene), so the filter sees them first
+        # and only claims drops that actually carry PNG files, leaving
+        # everything else to the widget's own handling.
+        self._png_drop_targets = [
+            self.edit_view.viewport(), self.live_view.viewport(), self.sprite_list.viewport(),
+        ]
+        for target in self._png_drop_targets:
+            target.setAcceptDrops(True)
+            target.installEventFilter(self)
 
         self._apply_persisted_ui_state()
         self._apply_persisted_geometry()
@@ -3647,18 +3661,57 @@ class ControlPanelWindow(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, "Add sprite", "", "Images (*.png)")
         if not path:
             return
-        try:
-            with open(path, "rb") as f:
-                image_data = f.read()
-        except OSError as exc:
+        self._add_sprites_from_paths([path])
+
+    @staticmethod
+    def _png_paths_from_mime(mime) -> list[str]:
+        if mime is None or not mime.hasUrls():
+            return []
+        return [
+            url.toLocalFile() for url in mime.urls()
+            if url.isLocalFile() and url.toLocalFile().lower().endswith(".png")
+        ]
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt override)
+        if watched in getattr(self, "_png_drop_targets", ()):
+            etype = event.type()
+            if etype in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+                if self._png_paths_from_mime(event.mimeData()):
+                    event.acceptProposedAction()
+                    return True
+            elif etype == QEvent.Type.Drop:
+                paths = self._png_paths_from_mime(event.mimeData())
+                if paths:
+                    event.acceptProposedAction()
+                    self._add_sprites_from_paths(paths)
+                    return True
+        return super().eventFilter(watched, event)
+
+    def _add_sprites_from_paths(self, paths: list[str]) -> None:
+        """Add…'s body, shared with drag-and-drop (E9). Several files at
+        once (a multi-file drop) become one undo step, not one each."""
+        loaded: list[tuple[str, bytes]] = []
+        failures: list[str] = []
+        for path in paths:
+            try:
+                with open(path, "rb") as f:
+                    loaded.append((path, f.read()))
+            except OSError as exc:
+                failures.append(f"{path!r}: {exc}")
+        if failures:
             # Bug audit 2026-09-23, #16. Read before push_undo_snapshot()
             # (not after), so a failed read never leaves a no-op undo
             # entry behind for a change that didn't actually happen.
-            QMessageBox.warning(self, "Add sprite failed", f"Could not read {path!r}:\n{exc}")
+            QMessageBox.warning(
+                self, "Add sprite failed", "Could not read:\n" + "\n".join(failures)
+            )
+        if not loaded:
             return
         self.push_undo_snapshot()
-        sprite = Sprite(id=self.rig.new_sprite_id(), path=path, image_data=image_data)
-        self.rig.add_sprite(sprite)
+        sprite = None
+        for path, image_data in loaded:
+            sprite = Sprite(id=self.rig.new_sprite_id(), path=path, image_data=image_data)
+            self.rig.add_sprite(sprite)
         self._mark_dirty()
         if self.asset_watcher is not None:
             # Bug audit 2026-09-23, #14: sprite PNG watches were only

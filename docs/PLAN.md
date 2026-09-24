@@ -1418,6 +1418,20 @@ issues found" is still the plain message box.
 
 724 tests (699 -> 724).
 
+**2026-09-23, continued: E9, drag-and-drop PNGs.** Dropping PNG files
+from a file manager onto the Edit canvas, the Live Preview canvas or the
+Layer List adds them as sprites. `_on_add`'s body became
+`_add_sprites_from_paths(paths)`, shared by Add… and drops; a
+multi-file drop reads every file first and is a single undo step, and an
+unreadable file warns without leaving an undo entry (the same ordering
+#16 established for Add). An event filter on each target's *viewport*
+(where both `QGraphicsView` and `QListWidget` actually receive drag
+events) accepts only drops carrying local `.png` files; anything else is
+left to the widget's own handling. New sprites land at (0, 0), same as
+Add…, rather than at the drop point.
+
+733 tests (724 -> 733).
+
 
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
