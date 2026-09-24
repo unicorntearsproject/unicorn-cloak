@@ -46,9 +46,13 @@ def test_reset_speaking_state_and_close_mouth_is_harmless_while_muted(qapp):
 class _FakeControlPanel:
     def __init__(self) -> None:
         self.refresh_calls = 0
+        self.status_messages: list[tuple[str, str]] = []
 
     def refresh_after_external_avatar_reload(self) -> None:
         self.refresh_calls += 1
+
+    def show_status_message(self, source: str, message: str) -> None:
+        self.status_messages.append((source, message))
 
 
 class _FakeAssetWatcher:
@@ -116,7 +120,11 @@ def test_handle_avatar_file_changed_returns_false_and_does_not_touch_the_rig_on_
     config = Config()
     config.avatar_path = str(tmp_path / "does-not-exist.uc")
 
-    result = handle_avatar_file_changed(rig, config, _FakeControlPanel(), _FakeAssetWatcher())
+    panel = _FakeControlPanel()
+    result = handle_avatar_file_changed(rig, config, panel, _FakeAssetWatcher())
 
     assert result is False
     assert rig.name == original_name
+    # E3 (bug audit addendum 2026-09-23): surfaced in the UI, not just printed.
+    assert len(panel.status_messages) == 1
+    assert panel.status_messages[0][0] == "Hot reload"

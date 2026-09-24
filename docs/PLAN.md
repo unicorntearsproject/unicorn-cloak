@@ -1432,6 +1432,25 @@ Add…, rather than at the drop point.
 
 733 tests (724 -> 733).
 
+**2026-09-23, continued: E3, errors in the UI.** Audio, OBS, hot-reload
+(avatar file and sprite PNG) and background-video errors all used to be
+console-only `print()`s, invisible when the app is launched from a
+desktop launcher. They now also reach `ControlPanelWindow.
+show_status_message(source, message)`: a red, word-wrapped line just
+above the action buttons, hidden until something reports, auto-hiding
+after 20 s of quiet (`STATUS_AUTO_HIDE_MS`; a retrying error -- e.g.
+Desktop Audio's missing-device retry every second -- keeps re-reporting
+and so keeps it visible), with a Dismiss button and a tooltip of the
+last 5 distinct messages (a repeating message refreshes its timestamp
+instead of filling the history). Wired in `__main__.py`'s existing
+Qt-thread error callbacks and `handle_avatar_file_changed`; the Render
+Window reports background-video failures through a new
+`on_background_error` hook (same plain-callback pattern as
+`on_quit_requested`), declared before `set_background()` runs in its
+constructor. The console prints are kept.
+
+741 tests (733 -> 741).
+
 
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.

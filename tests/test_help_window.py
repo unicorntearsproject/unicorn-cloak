@@ -147,3 +147,12 @@ def test_reference_tab_documents_drag_and_drop_sprites(qapp):
     dlg = HelpWindow()
     tabs = dlg.findChild(QTabWidget)
     assert "drag one or more PNGs" in tabs.widget(4).toPlainText()
+
+
+def test_reference_tab_documents_the_error_status_line(qapp):
+    # E3 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    text = tabs.widget(4).toPlainText()
+    assert "red status message" in text
+    assert "Dismiss" in text

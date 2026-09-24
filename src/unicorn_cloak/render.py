@@ -193,6 +193,9 @@ class RenderWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.view)
 
+        # Declared before set_background() below, which can start a
+        # background video whose own error callback reads this.
+        self.on_background_error: Callable[[str], None] | None = None
         self.set_background(background)
 
         self.root_item: QGraphicsItemGroup | None = None
@@ -355,6 +358,12 @@ class RenderWindow(QWidget):
         # since Qt Multimedia's FFmpeg backend still depends on what's
         # actually built into it) and shouldn't crash the render window.
         print(f"[background] video playback failed: {error_string}", flush=True)
+        # E3: also surfaced in the Control Panel's status line, via this
+        # optional hook (same plain-callback pattern as on_quit_requested/
+        # on_avatar_double_clicked -- this window never holds a
+        # reference to the Control Panel itself).
+        if self.on_background_error is not None:
+            self.on_background_error(f"video playback failed: {error_string}")
         self._clear_background_media()
         self.scene.setBackgroundBrush(Qt.BrushStyle.NoBrush)
 

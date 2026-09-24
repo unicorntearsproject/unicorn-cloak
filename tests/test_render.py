@@ -1232,3 +1232,21 @@ def test_talk_level_change_without_a_simulate_step_does_not_blank_the_mouth(qapp
     assert any(item.opacity() == 1.0 for item in wide_items)  # not all hidden
     mild_items = [window._runtimes[1].item, window._runtimes[2].item, window._runtimes[3].item]
     assert all(item.opacity() == 0.0 for item in mild_items)  # wrong band, correctly hidden
+
+
+def test_background_video_error_reports_through_on_background_error(qapp):
+    # E3 (bug audit addendum 2026-09-23): surfaced in the Control Panel's
+    # status line via this hook, not just printed.
+    window = RenderWindow(make_test_rig(), MotionConfig())
+    messages = []
+    window.on_background_error = messages.append
+
+    window._on_background_video_error(None, "codec missing")
+
+    assert messages == ["video playback failed: codec missing"]
+
+
+def test_background_video_error_without_a_hook_is_harmless(qapp):
+    window = RenderWindow(make_test_rig(), MotionConfig())
+    assert window.on_background_error is None
+    window._on_background_video_error(None, "codec missing")  # must not raise

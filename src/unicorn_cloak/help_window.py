@@ -375,7 +375,12 @@ Save/Save As…/Load…/Export Snapshot…/Check for Issues…/Guide/Ghost/
 <b>Mute mouth</b>/Quit. <b>Mute mouth</b> forces the mouth closed
 manually — independent of OBS mute, for a cough or an aside without
 touching OBS at all. Click it again to let the mouth follow the
-mic/audio source again.</li>
+mic/audio source again. When something goes wrong in the background
+(an audio device that can't be opened, an OBS input that doesn't exist,
+a hot reload that couldn't read a file, a background video that won't
+play), a red status message appears just above these buttons -- hover
+it for the last few messages, click <b>Dismiss</b> to hide it (it also
+clears itself after about 20 seconds of quiet).</li>
 </ul>
 
 <h3>Hotkeys</h3>

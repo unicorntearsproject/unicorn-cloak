@@ -2416,6 +2416,34 @@ class ControlPanelWindow(QWidget):
         self.audio_file_label.setVisible(bool(self.config.audio.file_path))
         root.addWidget(self.audio_file_label)
 
+        # Error/status line -- quick-win enhancement E3 (bug audit
+        # addendum 2026-09-23). Audio, OBS, hot-reload and background-
+        # video errors used to go to the console only (print()), which
+        # nobody running the app from a desktop launcher ever sees.
+        # Hidden until something reports; auto-hides after a quiet
+        # stretch (a retrying error, e.g. a missing Desktop Audio device,
+        # keeps re-reporting and so keeps it up), or on Dismiss. The
+        # tooltip keeps the last few messages for context.
+        self._status_row = QWidget()
+        status_layout = QHBoxLayout(self._status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        self._status_label = QLabel()
+        self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet(
+            f"color: {theme.DANGER}; font-weight: 600; background: transparent;"
+        )
+        status_layout.addWidget(self._status_label, stretch=1)
+        dismiss_btn = QPushButton("Dismiss")
+        dismiss_btn.setToolTip("Hide this message (it comes back if the problem reports again).")
+        dismiss_btn.clicked.connect(self._dismiss_status)
+        status_layout.addWidget(dismiss_btn)
+        self._status_row.setVisible(False)
+        root.addWidget(self._status_row)
+        self._status_history: list[str] = []
+        self._status_hide_timer = QTimer(self)
+        self._status_hide_timer.setSingleShot(True)
+        self._status_hide_timer.timeout.connect(self._dismiss_status)
+
         self._recording_countdown_timer = QTimer(self)
         self._recording_countdown_timer.timeout.connect(self._on_recording_tick)
         self._recording_deadline: float = 0.0
@@ -4318,6 +4346,31 @@ class ControlPanelWindow(QWidget):
         if self.audio_manager is not None:
             self.audio_manager.seek_file(position_s)
         self._update_play_button_text()
+
+    STATUS_AUTO_HIDE_MS = 20_000
+    STATUS_HISTORY_LENGTH = 5
+
+    def show_status_message(self, source: str, message: str) -> None:
+        """E3's single entry point -- __main__.py routes every
+        background error callback (audio, OBS, hot reload, background
+        video) here, on the Qt thread. `source` is a short label shown
+        in front of the message ("Audio", "OBS", ...)."""
+        text = f"{source}: {message}"
+        stamped = f"{time.strftime('%H:%M:%S')}  {text}"
+        # A retrying error repeats the same text every second or so --
+        # refresh its timestamp rather than filling the history with
+        # copies of one message.
+        self._status_history = [h for h in self._status_history if h.split("  ", 1)[1] != text]
+        self._status_history.append(stamped)
+        self._status_history = self._status_history[-self.STATUS_HISTORY_LENGTH:]
+        self._status_label.setText(f"⚠ {text}")
+        self._status_row.setToolTip("Recent messages:\n" + "\n".join(reversed(self._status_history)))
+        self._status_row.setVisible(True)
+        self._status_hide_timer.start(self.STATUS_AUTO_HIDE_MS)
+
+    def _dismiss_status(self) -> None:
+        self._status_hide_timer.stop()
+        self._status_row.setVisible(False)
 
     def _on_mute_mouth_toggled(self, checked: bool) -> None:
         if self.render_window is not None:

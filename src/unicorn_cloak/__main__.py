@@ -86,8 +86,8 @@ def handle_avatar_file_changed(rig, config, control_panel, asset_watcher) -> boo
     inside main()) so it's actually testable -- see test___main__.py,
     same reasoning as reset_speaking_state_and_close_mouth above.
     Returns True on a successful reload, False if the file failed to
-    load (already printed to the console -- there's no dialog for this
-    today, see the bug audit's finding #16).
+    load (printed to the console and shown in the Control Panel's
+    status line -- quick-win enhancement E3).
 
     keep_active_costume=True on the replace_contents_from call below --
     see that method's own docstring: active_costume is never actually
@@ -100,6 +100,7 @@ def handle_avatar_file_changed(rig, config, control_panel, asset_watcher) -> boo
         reloaded = load_avatar_with_upgrade(config.avatar_path, parent=control_panel)
     except Exception as exc:
         print(f"[hot-reload] failed to reload {config.avatar_path!r}: {exc}", flush=True)
+        control_panel.show_status_message("Hot reload", f"couldn't reload the avatar file: {exc}")
         return False
     rig.replace_contents_from(reloaded, keep_active_costume=True)
     # Not the bare refresh_after_external_change -- this wraps it with
@@ -194,6 +195,11 @@ def main() -> int:
         control_panel.activateWindow()
 
     window.on_avatar_double_clicked = on_avatar_double_clicked
+    # E3 (bug audit addendum 2026-09-23): errors surface in the Control
+    # Panel's status line, not just the console.
+    window.on_background_error = lambda message: control_panel.show_status_message(
+        "Background", message
+    )
 
     asset_watcher.watch_avatar_file(config.avatar_path)
     asset_watcher.watch_sprite_files([s.path for s in rig.sprites])
@@ -210,6 +216,7 @@ def main() -> int:
                 sprite.image_data = f.read()
         except OSError as exc:
             print(f"[hot-reload] failed to reload {path!r}: {exc}", flush=True)
+            control_panel.show_status_message("Hot reload", f"couldn't reload {path}: {exc}")
             return
         control_panel.refresh_after_external_change()
         print(f"[hot-reload] sprite image changed: {path}", flush=True)
@@ -228,9 +235,11 @@ def main() -> int:
 
     def on_error_on_qt_thread(message: str) -> None:
         print(f"[audio] {message}", flush=True)
+        control_panel.show_status_message("Audio", message)
 
     def on_obs_error_on_qt_thread(message: str) -> None:
         print(f"[obs] {message}", flush=True)
+        control_panel.show_status_message("OBS", message)
 
     def on_mute_changed_on_qt_thread(muted: bool) -> None:
         # Only actually applied while source == "microphone" -- bug

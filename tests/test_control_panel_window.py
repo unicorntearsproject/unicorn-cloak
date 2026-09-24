@@ -3716,3 +3716,60 @@ def test_drops_on_unrelated_widgets_are_not_intercepted(qapp, tmp_path):
 
     assert _drop(panel, panel.audio_source, _png_mime(png)) is False
     assert len(panel.rig.sprites) == before
+
+
+# --- Errors in the UI (E3, 2026-09-23) --------------------------------------
+
+
+def test_status_line_starts_hidden(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    assert panel._status_row.isVisible() is False
+
+
+def test_show_status_message_reveals_the_status_line(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+
+    panel.show_status_message("Audio", "microphone stream failed: boom")
+
+    assert panel._status_row.isVisible() is True
+    assert "Audio: microphone stream failed: boom" in panel._status_label.text()
+
+
+def test_dismiss_hides_the_status_line(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.show_status_message("OBS", "input not found")
+
+    panel._dismiss_status()
+
+    assert panel._status_row.isVisible() is False
+
+
+def test_status_line_auto_hides_after_a_quiet_stretch(qapp, tmp_path, monkeypatch):
+    import time as time_module
+
+    monkeypatch.setattr(ControlPanelWindow, "STATUS_AUTO_HIDE_MS", 20)
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.show()
+    panel.show_status_message("Audio", "boom")
+
+    deadline = time_module.monotonic() + 2.0
+    while panel._status_row.isVisible() and time_module.monotonic() < deadline:
+        qapp.processEvents()
+        time_module.sleep(0.01)
+
+    assert panel._status_row.isVisible() is False
+
+
+def test_status_history_dedupes_a_repeating_error_and_caps_its_length(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    for _ in range(4):
+        panel.show_status_message("Audio", "device 'X' not found")  # a retrying error
+    assert len(panel._status_history) == 1
+
+    for i in range(10):
+        panel.show_status_message("OBS", f"error {i}")
+    assert len(panel._status_history) == ControlPanelWindow.STATUS_HISTORY_LENGTH
+    assert "error 9" in panel._status_row.toolTip()
