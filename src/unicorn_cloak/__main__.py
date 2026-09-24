@@ -20,7 +20,7 @@ from . import theme
 from .audio import SpeakingState, update_speaking
 from .audio_manager import AudioManager
 from .avatar_io import load_avatar_with_upgrade
-from .config import load_state, save_state
+from .config import load_state, remembered_active_costume, save_state
 from .control_panel_window import ControlPanelWindow
 from .hot_reload import AssetWatcher
 from .obs_link_manager import ObsLinkManager
@@ -155,6 +155,8 @@ def main() -> int:
     config = load_state()
 
     rig = load_avatar_with_upgrade(config.avatar_path)
+    # E7: reopen in whichever costume this avatar was last showing.
+    rig.active_costume = remembered_active_costume(config.control_panel, config.avatar_path)
     window = RenderWindow(
         rig,
         config.motion,
@@ -333,6 +335,9 @@ def main() -> int:
         audio_manager.shutdown()
         obs_link_manager.shutdown()
         asset_watcher.stop()
+        # A costume switched from the Render Window's own hotkeys since
+        # the last autosave tick would otherwise be lost (E7).
+        control_panel.remember_active_costume()
         save_state(config)  # belt-and-suspenders: the Control Panel already
         # saves on every change and periodically; this covers the case of
         # quitting before the first autosave tick.

@@ -352,6 +352,40 @@ class ControlPanelConfig:
     # both were wanted side by side, not one replacing the other.
     scale_lock_proportions: bool = True
 
+    # Most-recently-opened avatar files, newest first, capped at
+    # MAX_RECENT_AVATARS -- quick-win enhancement E10 (bug audit addendum
+    # 2026-09-23), backing the Control Panel's "Recent" menu next to Load.
+    recent_avatars: tuple[str, ...] = ()
+
+    # Avatar file path -> the costume slot it was last showing -- E7.
+    # Kept here, per machine, rather than as a key inside the avatar file
+    # (the addendum's first suggestion): a costume switch is a live
+    # performance action, not an edit, so storing it in the avatar would
+    # either mark the avatar unsaved on every hotkey press (an
+    # unsaved-changes prompt at every quit) or silently forget any switch
+    # made since the last explicit Save. Here it's captured by the same
+    # autosave/close/quit path as every other bit of UI state.
+    active_costumes: dict[str, int] = field(default_factory=dict)
+
+
+MAX_RECENT_AVATARS = 5
+
+
+def remember_recent_avatar(cp: ControlPanelConfig, path: str) -> None:
+    """Moves `path` to the front of cp.recent_avatars (deduplicated,
+    capped at MAX_RECENT_AVATARS)."""
+    if not path:
+        return
+    rest = [p for p in cp.recent_avatars if p != path]
+    cp.recent_avatars = tuple([path, *rest][:MAX_RECENT_AVATARS])
+
+
+def remembered_active_costume(cp: ControlPanelConfig, path: str | None) -> int:
+    """The costume slot `path` was last showing, or 0 -- clamped to a real
+    slot, so a hand-edited settings.json can't index past costume_layers."""
+    slot = cp.active_costumes.get(path or "", 0)
+    return slot if isinstance(slot, int) and 0 <= slot < NUM_COSTUMES else 0
+
 
 @dataclass
 class Config:
@@ -415,6 +449,11 @@ def _read_config_from_file(path: Path) -> Config:
         config.control_panel = _merge(ControlPanelConfig, config.control_panel, raw["control_panel"])
         # Same tuple-normalization as hotkeys.costume_keys above.
         config.control_panel.collapsed_sections = tuple(config.control_panel.collapsed_sections)
+        config.control_panel.recent_avatars = tuple(
+            p for p in config.control_panel.recent_avatars if isinstance(p, str)
+        )[:MAX_RECENT_AVATARS]
+        if not isinstance(config.control_panel.active_costumes, dict):
+            config.control_panel.active_costumes = {}
         if config.control_panel.splitter_sizes is not None:
             config.control_panel.splitter_sizes = tuple(config.control_panel.splitter_sizes)
     return config

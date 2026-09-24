@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -80,7 +81,12 @@ from PySide6.QtWidgets import (
 
 from . import motion, theme
 from .avatar_io import load_avatar_with_upgrade
-from .config import Config, save_state
+from .config import (
+    Config,
+    remember_recent_avatar,
+    remembered_active_costume,
+    save_state,
+)
 from .help_window import HelpWindow
 from .persistence import DEFAULT_EXTENSION, save_avatar
 from .render import BACKGROUND_COLORS
@@ -722,6 +728,7 @@ class ControlPanelWindow(QWidget):
         # --- unsaved-avatar-changes tracking (new 2026-09-17) ---
         self._dirty = False
         self._current_avatar_path: str = config.avatar_path
+        remember_recent_avatar(config.control_panel, config.avatar_path)
 
         # --- field-widget bookkeeping (was SettingsWindow) ---
         self._reset_buttons: dict = {}
@@ -2499,6 +2506,17 @@ class ControlPanelWindow(QWidget):
         )
         load_btn.clicked.connect(self._on_load)
         actions_row_1.addWidget(load_btn)
+
+        # E10: its own small button beside Load, not a menu on Load
+        # itself -- QPushButton.setMenu() would make every Load click
+        # open the menu instead of the file dialog. Rebuilt each time it
+        # opens, so it always reflects config.control_panel.recent_avatars.
+        self._recent_menu = QMenu(self)
+        self._recent_menu.aboutToShow.connect(self._rebuild_recent_menu)
+        self._recent_btn = QPushButton("Recent")
+        self._recent_btn.setToolTip("Re-open one of the last few avatars you had open.")
+        self._recent_btn.setMenu(self._recent_menu)
+        actions_row_1.addWidget(self._recent_btn)
         actions_row_1.addStretch(1)
 
         export_snapshot_btn = QPushButton("Export Snapshot…")
@@ -2793,6 +2811,7 @@ class ControlPanelWindow(QWidget):
             self.asset_watcher.watch_avatar_file(path)
         self._current_avatar_path = path
         self.config.avatar_path = path
+        remember_recent_avatar(self.config.control_panel, path)
         self._dirty = False
         self._update_dirty_indicator()
         self._save_config()
@@ -2991,6 +3010,17 @@ class ControlPanelWindow(QWidget):
         sizes = self.splitter.sizes()
         if len(sizes) == 2:
             cp.splitter_sizes = (sizes[0], sizes[1])
+        self.remember_active_costume()
+
+    def remember_active_costume(self) -> None:
+        # E7 -- see ControlPanelConfig.active_costumes for why this lives
+        # in settings.json. Rides along with every _save_config (autosave
+        # timer, close, quit), so a switch made from either window's
+        # hotkeys is captured even though neither one saves directly.
+        if self._current_avatar_path:
+            self.config.control_panel.active_costumes[self._current_avatar_path] = (
+                self.rig.active_costume
+            )
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         # Closing the Control Panel does NOT quit the app or ask for
@@ -3748,30 +3778,77 @@ class ControlPanelWindow(QWidget):
         # to swap avatars unconditionally, silently discarding unsaved
         # changes with no prompt at all. Same Save/Discard/Cancel dialog
         # confirm_and_quit already uses for the same situation on Quit.
-        if self._dirty:
-            result = QMessageBox.warning(
-                self,
-                "Load avatar?",
-                "The current avatar has unsaved changes that will be lost.\n\n"
-                "Load a different avatar anyway?",
-                QMessageBox.StandardButton.Save
-                | QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel,
-            )
-            if result == QMessageBox.StandardButton.Cancel:
-                return
-            if result == QMessageBox.StandardButton.Save:
-                self._on_save()
-                if self._dirty:
-                    # Save As was cancelled (no current path yet) -- don't
-                    # load out from under an avatar that still isn't saved.
-                    return
+        if not self._confirm_discard_unsaved_before_load():
+            return
 
         path, _ = QFileDialog.getOpenFileName(
             self, "Load avatar", "", f"Unicorn Cloak avatar (*{DEFAULT_EXTENSION} *.save)"
         )
         if not path:
             return
+        self._load_avatar_path(path)
+
+    def _rebuild_recent_menu(self) -> None:
+        self._recent_menu.clear()
+        recent = [
+            p for p in self.config.control_panel.recent_avatars if p != self._current_avatar_path
+        ]
+        if not recent:
+            placeholder = self._recent_menu.addAction("No other recent avatars")
+            placeholder.setEnabled(False)
+            return
+        for path in recent:
+            action = self._recent_menu.addAction(Path(path).name)
+            action.setToolTip(path)
+            action.triggered.connect(lambda _checked=False, p=path: self._on_recent_avatar_chosen(p))
+        self._recent_menu.addSeparator()
+        self._recent_menu.addAction("Clear recent list").triggered.connect(self._on_clear_recent_avatars)
+
+    def _on_recent_avatar_chosen(self, path: str) -> None:
+        if not Path(path).exists():
+            QMessageBox.warning(self, "Avatar not found", f"{path!r} no longer exists.")
+            self.config.control_panel.recent_avatars = tuple(
+                p for p in self.config.control_panel.recent_avatars if p != path
+            )
+            self._save_config()
+            return
+        if not self._confirm_discard_unsaved_before_load():
+            return
+        self._load_avatar_path(path)
+
+    def _on_clear_recent_avatars(self) -> None:
+        current = self._current_avatar_path
+        self.config.control_panel.recent_avatars = (current,) if current else ()
+        self._save_config()
+
+    def _confirm_discard_unsaved_before_load(self) -> bool:
+        """Same Save/Discard/Cancel prompt _on_load has always shown (bug
+        audit 2026-09-23, #16) -- True means go ahead and load."""
+        if not self._dirty:
+            return True
+        result = QMessageBox.warning(
+            self,
+            "Load avatar?",
+            "The current avatar has unsaved changes that will be lost.\n\n"
+            "Load a different avatar anyway?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if result == QMessageBox.StandardButton.Cancel:
+            return False
+        if result == QMessageBox.StandardButton.Save:
+            self._on_save()
+            if self._dirty:
+                return False
+        return True
+
+    def _load_avatar_path(self, path: str) -> None:
+        """Load's body, minus the unsaved-changes prompt and file dialog --
+        shared by Load… and the Recent menu (E10)."""
+        # Capture the outgoing avatar's costume before its path stops
+        # being current (E7).
+        self.remember_active_costume()
         try:
             loaded = load_avatar_with_upgrade(path, parent=self)
         except (OSError, json.JSONDecodeError, KeyError) as exc:
@@ -3794,8 +3871,10 @@ class ControlPanelWindow(QWidget):
         self._redo_stack.clear()
         self._update_undo_redo_buttons()
         self.rig.replace_contents_from(loaded)
+        self.rig.active_costume = remembered_active_costume(self.config.control_panel, path)
         self._current_avatar_path = path
         self.config.avatar_path = path
+        remember_recent_avatar(self.config.control_panel, path)
         if self.asset_watcher is not None:
             # Re-point both watches at the newly loaded avatar -- bug
             # audit 2026-09-23, #14: watch_avatar_file/watch_sprite_files

@@ -394,3 +394,48 @@ def test_save_state_preserves_the_existing_files_permissions(tmp_path):
     save_state(Config(), path)
 
     assert stat.S_IMODE(path.stat().st_mode) == 0o664
+
+
+# --- Recent avatars (E10) / remembered active costume (E7), 2026-09-23 ----
+
+
+def test_remember_recent_avatar_moves_to_front_dedupes_and_caps():
+    cp = config_module.ControlPanelConfig()
+    for name in ["a", "b", "c", "d", "e", "f"]:
+        config_module.remember_recent_avatar(cp, name)
+    assert cp.recent_avatars == ("f", "e", "d", "c", "b")
+
+    config_module.remember_recent_avatar(cp, "c")
+    assert cp.recent_avatars == ("c", "f", "e", "d", "b")
+
+
+def test_remember_recent_avatar_ignores_an_empty_path():
+    cp = config_module.ControlPanelConfig()
+    config_module.remember_recent_avatar(cp, "")
+    assert cp.recent_avatars == ()
+
+
+def test_remembered_active_costume_defaults_to_zero():
+    cp = config_module.ControlPanelConfig()
+    assert config_module.remembered_active_costume(cp, "/x.uc") == 0
+    assert config_module.remembered_active_costume(cp, None) == 0
+
+
+@pytest.mark.parametrize("bad", [-1, 99, "3", None])
+def test_remembered_active_costume_rejects_out_of_range_values(bad):
+    # A hand-edited settings.json must never index past costume_layers.
+    cp = config_module.ControlPanelConfig(active_costumes={"/x.uc": bad})
+    assert config_module.remembered_active_costume(cp, "/x.uc") == 0
+
+
+def test_recent_avatars_and_active_costumes_round_trip(tmp_path):
+    path = tmp_path / "settings.json"
+    config = Config()
+    config.control_panel.recent_avatars = ("/a.uc", "/b.uc")
+    config.control_panel.active_costumes = {"/a.uc": 3}
+    save_state(config, path)
+
+    loaded = load_state(path)
+
+    assert loaded.control_panel.recent_avatars == ("/a.uc", "/b.uc")
+    assert loaded.control_panel.active_costumes == {"/a.uc": 3}

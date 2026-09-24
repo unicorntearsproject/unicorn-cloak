@@ -567,3 +567,64 @@ def test_load_avatar_ignores_the_format_version_key(tmp_path):
     )
     rig = load_avatar(path)
     assert len(rig.sprites) == 1
+
+
+# --- Timestamped backups (E11, bug audit addendum 2026-09-23) -------------
+
+
+def test_first_save_creates_no_timestamped_backup(tmp_path):
+    from unicorn_cloak.persistence import timestamped_backups
+
+    path = tmp_path / "out.uc"
+    save_avatar(AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png")]), path)
+    assert timestamped_backups(path) == []
+
+
+def test_each_later_save_keeps_a_timestamped_copy_of_the_previous_version(tmp_path):
+    from unicorn_cloak.persistence import timestamped_backups
+
+    path = tmp_path / "out.uc"
+    for version in ("v1.png", "v2.png", "v3.png"):
+        save_avatar(AvatarRig(name="t", sprites=[Sprite(id=1, path=version)]), path)
+
+    backups = timestamped_backups(path)
+    assert len(backups) == 2
+    assert [json.loads(b.read_text())["0"]["path"] for b in backups] == ["v1.png", "v2.png"]
+    # The rolling .bak is still there too, holding the newest previous version.
+    rolling = path.with_suffix(path.suffix + ".bak")
+    assert json.loads(rolling.read_text())["0"]["path"] == "v2.png"
+
+
+def test_timestamped_backups_are_pruned_to_the_newest_max(tmp_path):
+    from unicorn_cloak.persistence import MAX_TIMESTAMPED_BACKUPS, timestamped_backups
+
+    path = tmp_path / "out.uc"
+    total_saves = MAX_TIMESTAMPED_BACKUPS + 4
+    for i in range(total_saves):
+        save_avatar(AvatarRig(name="t", sprites=[Sprite(id=1, path=f"v{i}.png")]), path)
+
+    backups = timestamped_backups(path)
+    assert len(backups) == MAX_TIMESTAMPED_BACKUPS
+    # Oldest ones went; the newest backup is the version before the last save.
+    assert json.loads(backups[-1].read_text())["0"]["path"] == f"v{total_saves - 2}.png"
+
+
+def test_timestamped_backups_only_match_this_avatars_own_files(tmp_path):
+    from unicorn_cloak.persistence import timestamped_backups
+
+    path = tmp_path / "out.uc"
+    (tmp_path / "out.uc.bak").write_text("{}")
+    (tmp_path / "other.uc.20260101-000000-000000.bak").write_text("{}")
+    (tmp_path / "out.uc.notatimestamp.bak").write_text("{}")
+    assert timestamped_backups(path) == []
+
+
+def test_timestamped_backup_names_are_covered_by_gitignore(tmp_path):
+    # The bundled demo avatar lives inside this repo -- its backups must
+    # not show up as untracked files.
+    from unicorn_cloak.persistence import timestamped_backups
+
+    path = tmp_path / "out.uc"
+    save_avatar(AvatarRig(name="t", sprites=[]), path)
+    save_avatar(AvatarRig(name="t", sprites=[]), path)
+    assert timestamped_backups(path)[0].name.endswith(".bak")

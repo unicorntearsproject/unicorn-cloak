@@ -114,3 +114,13 @@ def test_reference_tab_documents_the_file_playback_timeline(qapp):
     reference_text = tabs.widget(4).toPlainText()
     assert "timeline" in reference_text.lower()
     assert "Rewind" in reference_text
+
+
+def test_reference_tab_documents_recent_avatars_costume_memory_and_backups(qapp):
+    # E7, E10, E11 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    reference_text = tabs.widget(4).toPlainText()
+    assert "Recent" in reference_text
+    assert "last showing" in reference_text
+    assert "timestamped copy" in reference_text

@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
@@ -848,6 +849,140 @@ def test_load_clears_undo_history_instead_of_pushing_a_snapshot(qapp, tmp_path, 
 
     assert [s.id for s in panel.rig.sprites] == loaded_sprite_ids
     assert panel._current_avatar_path == str(save_path)
+
+
+# --- Remember active costume (E7) / Recent avatars (E10), 2026-09-23 -------
+
+
+def _save_other_avatar(tmp_path, name="other.uc"):
+    from unicorn_cloak.persistence import save_avatar
+
+    path = tmp_path / name
+    save_avatar(make_test_rig(), path)
+    return path
+
+
+def test_save_config_remembers_the_active_costume_for_the_current_avatar(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.rig.active_costume = 3
+
+    panel._save_config()
+
+    assert config.control_panel.active_costumes[config.avatar_path] == 3
+
+
+def test_load_restores_the_remembered_costume_for_that_avatar(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    other = _save_other_avatar(tmp_path)
+    config.control_panel.active_costumes[str(other)] = 4
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(other), "")
+    )
+
+    panel._on_load()
+
+    assert panel.rig.active_costume == 4
+
+
+def test_load_remembers_the_outgoing_avatars_costume_first(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    original_path = config.avatar_path
+    panel.rig.active_costume = 2
+    other = _save_other_avatar(tmp_path)
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(other), "")
+    )
+
+    panel._on_load()
+
+    assert config.control_panel.active_costumes[original_path] == 2
+    assert panel.rig.active_costume == 0  # nothing remembered yet for the new one
+
+
+def test_load_adds_the_avatar_to_the_front_of_recent_avatars(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    original_path = config.avatar_path
+    other = _save_other_avatar(tmp_path)
+    monkeypatch.setattr(
+        cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(other), "")
+    )
+
+    panel._on_load()
+
+    assert config.control_panel.recent_avatars[:2] == (str(other), original_path)
+
+
+def test_recent_menu_lists_other_recent_avatars_but_not_the_current_one(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    other = _save_other_avatar(tmp_path)
+    config.control_panel.recent_avatars = (config.avatar_path, str(other))
+
+    panel._rebuild_recent_menu()
+
+    texts = [a.text() for a in panel._recent_menu.actions() if not a.isSeparator()]
+    assert "other.uc" in texts
+    assert Path(config.avatar_path).name not in texts
+
+
+def test_recent_menu_shows_a_placeholder_when_empty(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    config.control_panel.recent_avatars = (config.avatar_path,)
+
+    panel._rebuild_recent_menu()
+
+    actions = panel._recent_menu.actions()
+    assert len(actions) == 1
+    assert actions[0].isEnabled() is False
+
+
+def test_choosing_a_recent_avatar_loads_it(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    other = _save_other_avatar(tmp_path)
+
+    panel._on_recent_avatar_chosen(str(other))
+
+    assert panel._current_avatar_path == str(other)
+
+
+def test_choosing_a_missing_recent_avatar_warns_and_drops_it(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    missing = str(tmp_path / "gone.uc")
+    config.control_panel.recent_avatars = (config.avatar_path, missing)
+    warnings = []
+    monkeypatch.setattr(cpw_module.QMessageBox, "warning", lambda *a, **k: warnings.append(a))
+    original_path = panel._current_avatar_path
+
+    panel._on_recent_avatar_chosen(missing)
+
+    assert len(warnings) == 1
+    assert missing not in config.control_panel.recent_avatars
+    assert panel._current_avatar_path == original_path
+
+
+def test_choosing_a_recent_avatar_still_confirms_unsaved_changes(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    other = _save_other_avatar(tmp_path)
+    panel._select(1)
+    panel.pos_x.setValue(10.0)
+    assert panel._dirty is True
+    monkeypatch.setattr(
+        cpw_module.QMessageBox, "warning",
+        lambda *a, **k: cpw_module.QMessageBox.StandardButton.Cancel,
+    )
+    original_path = panel._current_avatar_path
+
+    panel._on_recent_avatar_chosen(str(other))
+
+    assert panel._current_avatar_path == original_path
+
+
+def test_clear_recent_keeps_only_the_current_avatar(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    config.control_panel.recent_avatars = (config.avatar_path, "/a.uc", "/b.uc")
+
+    panel._on_clear_recent_avatars()
+
+    assert config.control_panel.recent_avatars == (config.avatar_path,)
 
 
 def test_save_does_not_trigger_its_own_hot_reload(qapp, tmp_path):

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QMessageBox
 
-from .persistence import load_avatar, needs_migration, save_avatar
+from .persistence import MAX_TIMESTAMPED_BACKUPS, load_avatar, needs_migration, save_avatar
 from .rig import AvatarRig
 
 
@@ -35,9 +35,11 @@ def load_avatar_with_upgrade(path: str | Path, parent=None) -> AvatarRig:
             f'"{rig.name}" was saved by an older version of Unicorn Cloak '
             f"and has been automatically updated to the current format.\n\n"
             f"A backup of the original was saved to:\n{backup_path}\n\n"
-            f"That backup only lasts until the next time this avatar is "
-            f"saved again -- copy it elsewhere first if you want to keep "
-            f"it longer.",
+            f"That file is replaced the next time this avatar is saved, "
+            f"but a timestamped copy (same folder, "
+            f"{path.name}.<date-time>.bak) is also kept among the last "
+            f"{MAX_TIMESTAMPED_BACKUPS} saves -- copy it elsewhere if you "
+            f"want to keep it for good.",
         )
 
     return rig

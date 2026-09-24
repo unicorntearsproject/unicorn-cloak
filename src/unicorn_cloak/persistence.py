@@ -45,6 +45,7 @@ import os
 import re
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from .motion import TALK_QUIET_ONLY
@@ -222,6 +223,46 @@ def _normalize_slot_pairs(raw_slots: list | None) -> list[list[tuple]]:
     return result
 
 
+MAX_TIMESTAMPED_BACKUPS = 10
+_TIMESTAMP_FORMAT = "%Y%m%d-%H%M%S-%f"
+
+
+def _timestamped_backup_re(path: Path) -> re.Pattern:
+    return re.compile(rf"^{re.escape(path.name)}\.\d{{8}}-\d{{6}}-\d{{6}}\.bak$")
+
+
+def timestamped_backups(path: str | Path) -> list[Path]:
+    """This avatar's timestamped backups, oldest first (the timestamp
+    format sorts lexically in time order)."""
+    path = Path(path)
+    pattern = _timestamped_backup_re(path)
+    if not path.parent.is_dir():
+        return []
+    return sorted(p for p in path.parent.iterdir() if pattern.match(p.name))
+
+
+def _write_timestamped_backup(path: Path) -> None:
+    """Quick-win enhancement E11 (bug audit addendum 2026-09-23): a
+    history of the last MAX_TIMESTAMPED_BACKUPS versions, alongside --
+    not instead of -- the rolling `<file>.bak`. The rolling one stays
+    because it's the single predictable place avatar_io's upgrade
+    message and the Help text point to; this adds the history it lacked
+    (every save used to overwrite the only backup, so two bad saves in a
+    row lost the last good version for good). Named
+    `<file>.<YYYYMMDD-HHMMSS-micros>.bak` -- the trailing `.bak` keeps
+    them under .gitignore's existing `*.bak` rule (the bundled demo
+    avatar lives inside this repo), and microseconds keep two saves in
+    the same second from colliding."""
+    stamp = datetime.now().strftime(_TIMESTAMP_FORMAT)
+    shutil.copy2(path, path.with_name(f"{path.name}.{stamp}.bak"))
+    backups = timestamped_backups(path)
+    for old in backups[:-MAX_TIMESTAMPED_BACKUPS]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
 def save_avatar(rig: AvatarRig, path: str | Path) -> None:
     path = Path(path)
     out = {
@@ -279,6 +320,7 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
     # nothing to recover from.
     if path.exists():
         shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+        _write_timestamped_backup(path)
 
     # Existing permissions preserved explicitly -- bug audit 2026-09-23,
     # #20 ("permissions and symlinks"). mkstemp always creates its file

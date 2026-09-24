@@ -525,7 +525,12 @@ Window or OBS, which always show them at true 0%. Off by default.</li>
 <li><b>Save</b> — writes the avatar to whatever file it was last saved
 to or loaded from, no dialog. <b>Save As…</b> always asks where to save.
 <b>Load…</b> reads a <code>.uc</code> or <code>.save</code> file,
-replacing everything currently open (including undo history).</li>
+replacing everything currently open (including undo history).
+<b>Recent</b> (next to Load) re-opens one of the last five avatars you
+had open. Each avatar also reopens in whichever costume it was last
+showing — remembered per avatar in this app's own settings, not in the
+avatar file, so switching costumes live never marks the avatar as
+having unsaved changes.</li>
 <li><b>Export Snapshot…</b> — renders the currently active costume at
 rest (mouth closed, eyes open, no motion) to a PNG at whatever
 resolution you choose, for thumbnails or channel art. Pick a width and
@@ -553,11 +558,14 @@ own format, which this app reads directly) still load fine — the JSON
 shape is unchanged, only the conventional extension is new. Opening a
 file saved by an older version of this app upgrades it automatically:
 you'll see a one-time message telling you it happened, and a
-<code>.bak</code> copy of the pre-upgrade file is kept — but only through
-your <i>next</i> save of that same file, not as a permanent archive. Every
-save (of any file) also keeps one rolling <code>.bak</code> of whatever
-was there immediately before it, and writes atomically (a crash or power
-loss mid-save can't corrupt the file on disk).</p>
+<code>.bak</code> copy of the pre-upgrade file is kept. Every save (of any
+file) keeps one rolling <code>.bak</code> of whatever was there
+immediately before it (replaced by the next save), <i>plus</i> a
+timestamped copy in the same folder
+(<code>yourfile.uc.20260923-173012-123456.bak</code>) — the last 10 of
+those are kept, older ones pruned automatically, so a couple of bad saves
+in a row can still be undone by hand. Saves are atomic, too (a crash or
+power loss mid-save can't corrupt the file on disk).</p>
 
 <h3>Reset / Lock</h3>
 <p>Every numeric field across every tab has both. <b>Reset</b> restores

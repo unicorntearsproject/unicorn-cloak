@@ -1356,6 +1356,45 @@ when playback stops for any reason.
 
 675 tests (646 -> 675).
 
+**2026-09-23, continued: E7, E10, E11.**
+
+**E7, remember the active costume:** stored per avatar path in
+`settings.json` (`ControlPanelConfig.active_costumes`), *not* as an
+`__active_costume__` key in the avatar file as the addendum suggested --
+a judgment call: a costume switch is a live performance action, and
+putting it in the avatar would either mark the avatar unsaved on every
+hotkey press or silently lose any switch made since the last explicit
+Save. Captured by `ControlPanelWindow.remember_active_costume()`, which
+rides along with every `_save_config` (autosave timer, close) plus
+`__main__.py`'s quit hook (catches a switch made from the Render
+Window's own hotkeys since the last autosave tick). Restored at startup
+and on every Load; the outgoing avatar's costume is captured before a
+Load swaps it out. Clamped on read, so a hand-edited value can't index
+past `costume_layers`. Hot reload's `keep_active_costume=True` is
+unchanged -- still right for an external file edit mid-performance.
+
+**E10, recent avatars:** `ControlPanelConfig.recent_avatars` (newest
+first, capped at 5), updated at startup, Load and Save As. A "Recent"
+button beside Load opens a menu of the others (not a menu on Load
+itself, which would stop a Load click from opening the file dialog),
+plus "Clear recent list". Load's body was split out into
+`_load_avatar_path()`/`_confirm_discard_unsaved_before_load()` so Recent
+goes through the exact same unsaved-changes prompt and load path. A
+recent file that no longer exists warns and drops out of the list.
+
+**E11, timestamped backups:** every save after the first now also keeps
+`<file>.<YYYYMMDD-HHMMSS-micros>.bak` in the same folder, pruned to the
+newest 10 -- *alongside* the rolling `<file>.bak`, not replacing it,
+since that single predictable file is what the upgrade message and Help
+text point to. Two bad saves in a row previously lost the last good
+version for good. The `.bak` suffix keeps them under `.gitignore`'s
+existing `*.bak` rule (the demo avatar lives inside this repo).
+Microseconds in the name keep two saves in the same second apart. The
+avatar-upgrade message and Help text were updated, since "the backup
+only lasts until the next save" is no longer true.
+
+699 tests (675 -> 699).
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 
