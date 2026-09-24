@@ -46,10 +46,12 @@ from PySide6.QtGui import (
     QTransform,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -724,6 +726,7 @@ class ControlPanelWindow(QWidget):
         self._undo_stack: list[list[Sprite]] = []
         self._redo_stack: list[list[Sprite]] = []
         self._help_window: HelpWindow | None = None
+        self._issues_dialog: QDialog | None = None
 
         # --- unsaved-avatar-changes tracking (new 2026-09-17) ---
         self._dirty = False
@@ -2452,6 +2455,35 @@ class ControlPanelWindow(QWidget):
         QShortcut(QKeySequence.StandardKey.Undo, self, activated=self.undo)
         QShortcut(QKeySequence.StandardKey.Redo, self, activated=self.redo)
 
+        # Editing shortcuts -- quick-win enhancement E4 (bug audit
+        # addendum 2026-09-23). Same window-scoped QShortcut pattern as
+        # Undo/Redo above. Save/Save As/Load fire regardless of focus
+        # (no text field uses those chords); Delete, Duplicate and the
+        # arrow-key nudges go through _editing_shortcut_allowed instead,
+        # since a focused field or list has its own meaning for those
+        # keys (Delete erases a character, arrows move the cursor or the
+        # list selection).
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self._on_save)
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self, activated=self._on_save_as)
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self._on_load)
+        QShortcut(
+            QKeySequence(Qt.Key.Key_Delete), self,
+            activated=lambda: self._editing_shortcut_allowed(allow_list=True) and self._on_delete(),
+        )
+        QShortcut(
+            QKeySequence("Ctrl+D"), self,
+            activated=lambda: self._editing_shortcut_allowed(allow_list=True) and self._on_duplicate(),
+        )
+        for key, dx, dy in (
+            (Qt.Key.Key_Left, -1, 0), (Qt.Key.Key_Right, 1, 0),
+            (Qt.Key.Key_Up, 0, -1), (Qt.Key.Key_Down, 0, 1),
+        ):
+            QShortcut(QKeySequence(key), self, activated=lambda dx=dx, dy=dy: self._nudge_selected(dx, dy))
+            QShortcut(
+                QKeySequence(Qt.KeyboardModifier.ShiftModifier | key), self,
+                activated=lambda dx=dx, dy=dy: self._nudge_selected(dx * 10, dy * 10),
+            )
+
         # Expression hotkeys, owner's request, 2026-09-17: "shift+<number>"
         # -- fixed, not user-remappable (unlike costume_keys), scoped to
         # this window (fires while the Control Panel has focus, not the
@@ -3677,6 +3709,36 @@ class ControlPanelWindow(QWidget):
         self._select(copy_sprite.id)
         self.render_window.rebuild()
 
+    @staticmethod
+    def _editing_shortcut_allowed(*, allow_list: bool = False) -> bool:
+        """E4's guard for Delete/Ctrl+D/arrow nudges. allow_list: the
+        Layer List is where a sprite gets selected in the first place, so
+        Delete/Duplicate still work while it has focus -- but arrow keys
+        there must keep moving the list selection, not the sprite."""
+        if _is_input_widget_focused():
+            return False
+        if not allow_list and isinstance(QApplication.focusWidget(), QAbstractItemView):
+            return False
+        return True
+
+    def _nudge_selected(self, dx: float, dy: float) -> None:
+        """Arrow keys move the selected sprite 1px (Shift: 10px) -- E4.
+        Through the Position spinboxes rather than sprite.position
+        directly, so it shares _on_property_changed's undo coalescing
+        (one undo step per selection, same as typing or scrolling in
+        those fields), dirty tracking and live canvas/Render Window
+        update. A locked sprite (Lock Position) doesn't move, matching
+        canvas dragging."""
+        if not self._editing_shortcut_allowed() or self._selected_id is None:
+            return
+        sprite = self.rig.by_id(self._selected_id)
+        if sprite is None or sprite.locked:
+            return
+        if dx:
+            self.pos_x.setValue(self.pos_x.value() + dx)
+        if dy:
+            self.pos_y.setValue(self.pos_y.value() + dy)
+
     def _on_delete(self) -> None:
         if self._selected_id is None:
             return
@@ -3712,8 +3774,55 @@ class ControlPanelWindow(QWidget):
         if not issues:
             QMessageBox.information(self, "Check for Issues", "No issues found.")
             return
-        body = "\n\n".join(f"• {issue.message}" for issue in issues)
-        QMessageBox.warning(self, "Check for Issues", body)
+        self._show_issues_dialog(issues)
+
+    def _show_issues_dialog(self, issues) -> None:
+        """Clickable results -- quick-win enhancement E8 (bug audit
+        addendum 2026-09-23), replacing a plain message box. Non-modal,
+        so the canvas and property panel behind it stay usable while
+        working through the list. Clicking an issue selects the sprite it
+        names; clicking the same issue again steps through the rest when
+        it involves several (the Control Panel only has single
+        selection)."""
+        if self._issues_dialog is not None:
+            self._issues_dialog.close()
+        dialog = QDialog(self)
+        dialog.setObjectName("IssuesDialog")  # theme.py scopes its dialog rule by name
+        dialog.setWindowTitle("Check for Issues")
+        dialog.resize(560, 360)
+        layout = QVBoxLayout(dialog)
+        hint = QLabel(
+            f"{len(issues)} possible issue(s). Click one to select the sprite it's "
+            "about (click again to step through several)."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self._issues_list = QListWidget()
+        self._issues_list.setWordWrap(True)
+        for issue in issues:
+            item = QListWidgetItem(issue.message)
+            item.setData(Qt.ItemDataRole.UserRole, tuple(issue.sprite_ids))
+            names = [
+                Path(s.path).name for sid in issue.sprite_ids if (s := self.rig.by_id(sid)) is not None
+            ]
+            if names:
+                item.setToolTip("Involves: " + ", ".join(names))
+            self._issues_list.addItem(item)
+        self._issues_list.itemClicked.connect(self._on_issue_clicked)
+        layout.addWidget(self._issues_list)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        self._issues_dialog = dialog
+        dialog.show()
+
+    def _on_issue_clicked(self, item: QListWidgetItem) -> None:
+        live_ids = [sid for sid in item.data(Qt.ItemDataRole.UserRole) if self.rig.by_id(sid) is not None]
+        if not live_ids:
+            return
+        step = item.data(Qt.ItemDataRole.UserRole + 1) or 0
+        self._select(live_ids[step % len(live_ids)])
+        item.setData(Qt.ItemDataRole.UserRole + 1, step + 1)
 
     def _sync_zoom_controls(self) -> None:
         """Reflects self.rig.zoom (just changed by a load/hot-reload, not

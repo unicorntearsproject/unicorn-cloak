@@ -124,3 +124,19 @@ def test_reference_tab_documents_recent_avatars_costume_memory_and_backups(qapp)
     assert "Recent" in reference_text
     assert "last showing" in reference_text
     assert "timestamped copy" in reference_text
+
+
+def test_hotkeys_tab_documents_the_editing_shortcuts(qapp):
+    # E4 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    hotkeys_text = tabs.widget(3).toPlainText()
+    for chord in ("Ctrl+S", "Ctrl+Shift+S", "Ctrl+O", "Ctrl+D", "Arrow keys"):
+        assert chord in hotkeys_text
+
+
+def test_reference_tab_documents_clickable_issue_results(qapp):
+    # E8 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    assert "click an issue to select" in tabs.widget(4).toPlainText()

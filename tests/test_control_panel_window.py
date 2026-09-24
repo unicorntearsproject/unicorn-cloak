@@ -3400,3 +3400,195 @@ def test_adding_an_expression_button_while_expanded_resizes_the_section(qapp, tm
     # The cap must track whatever the section's content actually needs
     # *now* -- not be left over from before the button existed.
     assert section.maximumHeight() == section.sizeHint().height()
+
+
+# --- Editing shortcuts (quick-win enhancement E4, 2026-09-23) --------------
+
+
+def _shortcut_for(panel, sequence: str):
+    from PySide6.QtGui import QShortcut
+
+    wanted = QKeySequence(sequence)
+    matches = [s for s in panel.findChildren(QShortcut) if s.key() == wanted]
+    assert matches, f"no shortcut bound to {sequence}"
+    return matches[0]
+
+
+@pytest.mark.parametrize(
+    "sequence", ["Ctrl+S", "Ctrl+Shift+S", "Ctrl+O", "Del", "Ctrl+D", "Left", "Shift+Right", "Up", "Shift+Down"]
+)
+def test_editing_shortcuts_are_bound(qapp, tmp_path, sequence):
+    config, window, panel, _ = make_panel(tmp_path)
+    _shortcut_for(panel, sequence)
+
+
+def test_ctrl_s_saves_to_the_current_avatar_path(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    target = tmp_path / "saved.uc"
+    panel._current_avatar_path = str(target)  # never the real demo asset
+
+    _shortcut_for(panel, "Ctrl+S").activated.emit()
+
+    assert target.exists()
+
+
+def test_arrow_nudges_the_selected_sprite_one_pixel(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+
+    _shortcut_for(panel, "Right").activated.emit()
+    _shortcut_for(panel, "Up").activated.emit()
+
+    assert panel.rig.by_id(1).position == (1.0, -1.0)
+    assert panel._dirty is True
+
+
+def test_shift_arrow_nudges_ten_pixels(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+
+    _shortcut_for(panel, "Shift+Left").activated.emit()
+    _shortcut_for(panel, "Shift+Down").activated.emit()
+
+    assert panel.rig.by_id(1).position == (-10.0, 10.0)
+
+
+def test_a_run_of_nudges_is_a_single_undo_step(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    for _ in range(3):
+        panel._nudge_selected(1, 0)
+    assert panel.rig.by_id(1).position == (3.0, 0.0)
+
+    panel.undo()
+
+    assert panel.rig.by_id(1).position == (0.0, 0.0)
+
+
+def test_nudge_does_nothing_to_a_locked_sprite(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.rig.by_id(1).locked = True
+    panel._select(1)
+
+    panel._nudge_selected(5, 5)
+
+    assert panel.rig.by_id(1).position == (0.0, 0.0)
+
+
+def test_nudge_does_nothing_with_nothing_selected(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(None)
+    panel._nudge_selected(5, 5)
+    assert panel.rig.by_id(1).position == (0.0, 0.0)
+    assert panel._dirty is False
+
+
+def test_editing_shortcuts_stand_down_while_an_input_field_has_focus(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    monkeypatch.setattr(cpw_module, "_is_input_widget_focused", lambda: True)
+
+    _shortcut_for(panel, "Right").activated.emit()
+    _shortcut_for(panel, "Del").activated.emit()
+
+    assert panel.rig.by_id(1).position == (0.0, 0.0)
+    assert panel.rig.by_id(1) is not None  # not deleted
+
+
+def test_arrows_leave_a_focused_list_alone_but_delete_still_works(qapp, tmp_path, monkeypatch):
+    # Arrow keys in the Layer List must keep moving its selection; Delete
+    # there is the natural way to remove the selected sprite.
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(2)
+    monkeypatch.setattr(cpw_module.QApplication, "focusWidget", staticmethod(lambda: panel.sprite_list))
+
+    _shortcut_for(panel, "Right").activated.emit()
+    assert panel.rig.by_id(2).position == (5.0, 5.0)
+
+    _shortcut_for(panel, "Del").activated.emit()
+    assert panel.rig.by_id(2) is None
+
+
+def test_ctrl_d_duplicates_the_selected_sprite(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(2)
+    before = len(panel.rig.sprites)
+
+    _shortcut_for(panel, "Ctrl+D").activated.emit()
+
+    assert len(panel.rig.sprites) == before + 1
+
+
+# --- Clickable Check for Issues results (E8, 2026-09-23) --------------------
+
+
+def _panel_with_an_issue(tmp_path):
+    rig = make_test_rig()
+    rig.by_id(2).manual_driven = True  # no Group/State name -> "can never be triggered"
+    return make_panel(tmp_path, rig=rig)
+
+
+def test_check_for_issues_opens_a_clickable_list_instead_of_a_message_box(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = _panel_with_an_issue(tmp_path)
+    boxes = []
+    monkeypatch.setattr(cpw_module.QMessageBox, "warning", lambda *a, **k: boxes.append(a))
+
+    panel._on_check_for_issues()
+
+    assert boxes == []
+    assert panel._issues_dialog is not None
+    assert panel._issues_dialog.objectName() == "IssuesDialog"
+    assert panel._issues_list.count() >= 1
+
+
+def test_clicking_an_issue_selects_its_sprite(qapp, tmp_path):
+    config, window, panel, _ = _panel_with_an_issue(tmp_path)
+    panel._on_check_for_issues()
+    item = next(
+        panel._issues_list.item(i) for i in range(panel._issues_list.count())
+        if 2 in panel._issues_list.item(i).data(Qt.ItemDataRole.UserRole)
+    )
+
+    panel._on_issue_clicked(item)
+
+    assert panel._selected_id == 2
+
+
+def test_clicking_a_multi_sprite_issue_again_steps_through_its_sprites(qapp, tmp_path):
+    from PySide6.QtWidgets import QListWidgetItem
+
+    config, window, panel, _ = make_panel(tmp_path)
+    item = QListWidgetItem("two sprites")
+    item.setData(Qt.ItemDataRole.UserRole, (1, 2))
+
+    panel._on_issue_clicked(item)
+    assert panel._selected_id == 1
+    panel._on_issue_clicked(item)
+    assert panel._selected_id == 2
+    panel._on_issue_clicked(item)
+    assert panel._selected_id == 1
+
+
+def test_clicking_an_issue_for_a_since_deleted_sprite_is_harmless(qapp, tmp_path):
+    from PySide6.QtWidgets import QListWidgetItem
+
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._select(1)
+    item = QListWidgetItem("gone")
+    item.setData(Qt.ItemDataRole.UserRole, (999,))
+
+    panel._on_issue_clicked(item)
+
+    assert panel._selected_id == 1
+
+
+def test_no_issues_still_shows_the_plain_all_clear_box(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    infos = []
+    monkeypatch.setattr(cpw_module.QMessageBox, "information", lambda *a, **k: infos.append(a))
+    monkeypatch.setattr(cpw_module, "find_rig_issues", lambda rig: [])
+
+    panel._on_check_for_issues()
+
+    assert len(infos) == 1
+    assert panel._issues_dialog is None

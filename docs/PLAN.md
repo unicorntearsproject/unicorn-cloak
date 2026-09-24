@@ -1395,6 +1395,30 @@ only lasts until the next save" is no longer true.
 
 699 tests (675 -> 699).
 
+**2026-09-23, continued: E4, E8.**
+
+**E4, editing shortcuts:** Ctrl+S / Ctrl+Shift+S / Ctrl+O (Save, Save
+As, Load -- no focus guard, no field uses those chords), Delete, Ctrl+D
+(Duplicate), arrow keys to nudge the selected sprite 1px (Shift: 10px).
+Delete/Ctrl+D/arrows go through `_editing_shortcut_allowed`: off while a
+text/number/combo field has focus (so Delete still erases a character),
+and for arrows also off while the Layer List has focus (so they keep
+moving its selection). Nudges go through the Position spinboxes rather
+than `sprite.position`, so they share `_on_property_changed`'s undo
+coalescing (a run of nudges is one undo step), dirty tracking and live
+update; a locked sprite doesn't move.
+
+**E8, clickable Check for Issues results:** a non-modal `IssuesDialog`
+(its own scoped `QDialog#IssuesDialog` theme rule, same approach as
+`HelpWindow` -- still no blanket `QDialog` selector) listing each issue;
+clicking one selects the sprite it names, clicking again steps through
+the rest when it names several (single selection only in this panel).
+An issue whose sprite has since been deleted is a harmless no-op. "No
+issues found" is still the plain message box.
+
+724 tests (699 -> 724).
+
+
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.
 

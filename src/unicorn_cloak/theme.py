@@ -128,7 +128,7 @@ def stylesheet() -> str:
     # ordinary descendant selectors (`QFileDialog QListView`) reach them
     # directly, no ownership-tree caveat needed there.
     return f"""
-    QWidget#ControlPanelWindow, QDialog#HelpWindow {{
+    QWidget#ControlPanelWindow, QDialog#HelpWindow, QDialog#IssuesDialog {{
         background-color: {INK_900};
         color: {PINK_WHITE};
         font-family: {FONT_SANS};

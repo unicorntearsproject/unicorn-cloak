@@ -236,7 +236,18 @@ at two different times.</li>
 <li><b>Shift+1</b> through <b>Shift+9</b>, <b>Shift+0</b> — toggle an
 Expression on/off. Fixed, not remappable (unlike costume keys).</li>
 <li><b>Ctrl+Z</b> / <b>Ctrl+Shift+Z</b> — undo/redo.</li>
+<li><b>Ctrl+S</b> Save, <b>Ctrl+Shift+S</b> Save As…, <b>Ctrl+O</b>
+Load….</li>
+<li><b>Delete</b> — delete the selected sprite; <b>Ctrl+D</b> — duplicate
+it.</li>
+<li><b>Arrow keys</b> — nudge the selected sprite 1 px
+(<b>Shift</b>+arrow: 10 px). Does nothing to a locked sprite. A run of
+nudges undoes in one step, same as typing into the Position fields.</li>
 </ul>
+<p>Delete, Ctrl+D and the arrow keys stand down while a text field,
+combo box or number field has focus (so Delete still erases a
+character there); the arrow keys also stand down while the Layer List has
+focus, so they keep moving its selection instead.</p>
 <p>Both hotkey types are skipped here while a text field, combo box, or
 key-capture box has focus, so typing into one (including remapping a
 costume key itself) never gets hijacked by a matching digit press.
@@ -548,7 +559,9 @@ Manually driven sprite with no Group/State name set (can never be
 triggered), and inconsistent labeling (sprites sharing a Group/State name
 pair with different settings). It's a heuristic sanity check, not a hard
 validator — a clean result means nothing obvious looks wrong, not that
-the rig is guaranteed correct.</li>
+the rig is guaranteed correct. Results open in their own window that
+stays open alongside the Control Panel: click an issue to select the
+sprite it's about (click it again to step through several).</li>
 </ul>
 
 <h3>File format: .uc</h3>
