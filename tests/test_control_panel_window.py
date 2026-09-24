@@ -3773,3 +3773,48 @@ def test_status_history_dedupes_a_repeating_error_and_caps_its_length(qapp, tmp_
         panel.show_status_message("OBS", f"error {i}")
     assert len(panel._status_history) == ControlPanelWindow.STATUS_HISTORY_LENGTH
     assert "error 9" in panel._status_row.toolTip()
+
+
+# --- Per-source audio profiles (E1, 2026-09-23) -----------------------------
+
+
+def test_switching_source_swaps_the_envelope_fields_to_that_sources_profile(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.noise_gate_field.setValue(0.005)
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    panel.noise_gate_field.setValue(0.05)  # tuned for game audio
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("microphone"))
+    assert panel.noise_gate_field.value() == pytest.approx(0.005)
+    assert config.audio.noise_gate == pytest.approx(0.005)
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    assert panel.noise_gate_field.value() == pytest.approx(0.05)
+    assert config.audio.noise_gate == pytest.approx(0.05)
+
+
+def test_every_envelope_field_is_part_of_the_profile(qapp, tmp_path):
+    from unicorn_cloak.config import AUDIO_PROFILE_FIELDS
+
+    config, window, panel, _ = make_panel(tmp_path)
+    assert set(panel._audio_profile_fields) == set(AUDIO_PROFILE_FIELDS)
+
+
+def test_profile_label_names_the_active_source(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert "Microphone" in panel._audio_profile_label.text()
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("file"))
+
+    assert "File" in panel._audio_profile_label.text()
+
+
+def test_profile_switch_re_evaluates_the_threshold_warning(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    panel.mild_close.setValue(0.5)  # crossed on desktop only
+    assert panel._threshold_warning_label.text() != ""
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("microphone"))
+
+    assert panel._threshold_warning_label.isHidden() is True

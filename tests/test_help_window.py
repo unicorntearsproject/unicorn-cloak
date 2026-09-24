@@ -156,3 +156,10 @@ def test_reference_tab_documents_the_error_status_line(qapp):
     text = tabs.widget(4).toPlainText()
     assert "red status message" in text
     assert "Dismiss" in text
+
+
+def test_reference_tab_documents_per_source_audio_profiles(qapp):
+    # E1 (bug audit addendum 2026-09-23).
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    assert "per-source profile" in tabs.widget(4).toPlainText()

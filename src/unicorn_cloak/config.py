@@ -190,6 +190,43 @@ class AudioConfig:
     source: str = "microphone"
     file_path: str | None = None
 
+    # Per-source tuning profiles -- quick-win enhancement E1 (bug audit
+    # addendum 2026-09-23, closing D5's "shared thresholds" point: voice
+    # and game/music audio need very different values, and music at
+    # voice settings keeps the mouth open constantly). The fields above
+    # stay the *live* values everything reads (the envelope follower,
+    # the level meter, the Audio tab's spinboxes); this holds a saved
+    # snapshot of AUDIO_PROFILE_FIELDS for each *other* source, swapped
+    # in and out by switch_audio_profile() whenever the source changes.
+    # source name -> {field name: value}.
+    profiles: dict[str, dict[str, float]] = field(default_factory=dict)
+
+
+AUDIO_PROFILE_FIELDS = (
+    "gain", "noise_gate", "mild_open", "mild_close", "wide_open", "wide_close",
+    "attack_ms", "hold_ms", "release_ms",
+)
+
+
+def switch_audio_profile(audio: AudioConfig, new_source: str) -> None:
+    """Stashes the live tuning values as the outgoing source's profile,
+    loads the incoming source's saved profile (if it has one) into the
+    live fields, and sets audio.source. A source with no saved profile
+    yet keeps the current values as its starting point -- the least
+    surprising first switch, rather than jumping to built-in defaults.
+    Anything unrecognized or non-numeric in a stored profile (a
+    hand-edited settings.json) is ignored field by field."""
+    if new_source == audio.source:
+        return
+    audio.profiles[audio.source] = {name: getattr(audio, name) for name in AUDIO_PROFILE_FIELDS}
+    stored = audio.profiles.get(new_source)
+    if isinstance(stored, dict):
+        for name in AUDIO_PROFILE_FIELDS:
+            value = stored.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                setattr(audio, name, float(value))
+    audio.source = new_source
+
 
 @dataclass
 class MotionConfig:
@@ -418,6 +455,8 @@ def _read_config_from_file(path: Path) -> Config:
         config.avatar_path = raw["avatar_path"]
     if "audio" in raw:
         config.audio = _merge(AudioConfig, config.audio, raw["audio"])
+        if not isinstance(config.audio.profiles, dict):
+            config.audio.profiles = {}
     if "motion" in raw:
         config.motion = _merge(MotionConfig, config.motion, raw["motion"])
     if "window" in raw:

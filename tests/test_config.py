@@ -439,3 +439,50 @@ def test_recent_avatars_and_active_costumes_round_trip(tmp_path):
 
     assert loaded.control_panel.recent_avatars == ("/a.uc", "/b.uc")
     assert loaded.control_panel.active_costumes == {"/a.uc": 3}
+
+
+# --- Per-source audio profiles (E1, bug audit addendum 2026-09-23) --------
+
+
+def test_switch_audio_profile_keeps_current_values_for_a_source_with_no_profile():
+    audio = config_module.AudioConfig(noise_gate=0.02)
+    config_module.switch_audio_profile(audio, "desktop")
+    assert audio.source == "desktop"
+    assert audio.noise_gate == 0.02  # starting point = what was live
+    assert audio.profiles["microphone"]["noise_gate"] == 0.02
+
+
+def test_switch_audio_profile_swaps_values_back_and_forth():
+    audio = config_module.AudioConfig(noise_gate=0.005, wide_open=0.06)
+    config_module.switch_audio_profile(audio, "desktop")
+    audio.noise_gate = 0.05  # music needs a much higher gate
+    audio.wide_open = 0.3
+
+    config_module.switch_audio_profile(audio, "microphone")
+    assert (audio.noise_gate, audio.wide_open) == (0.005, 0.06)
+
+    config_module.switch_audio_profile(audio, "desktop")
+    assert (audio.noise_gate, audio.wide_open) == (0.05, 0.3)
+
+
+def test_switch_audio_profile_to_the_same_source_changes_nothing():
+    audio = config_module.AudioConfig()
+    config_module.switch_audio_profile(audio, "microphone")
+    assert audio.profiles == {}
+
+
+def test_switch_audio_profile_ignores_junk_in_a_hand_edited_profile():
+    audio = config_module.AudioConfig(gain=1.0, noise_gate=0.005)
+    audio.profiles["desktop"] = {"gain": "loud", "noise_gate": 0.04, "bogus": 9, "hold_ms": True}
+    config_module.switch_audio_profile(audio, "desktop")
+    assert audio.gain == 1.0  # non-numeric -- ignored
+    assert audio.noise_gate == 0.04
+    assert audio.hold_ms == config_module.AudioConfig().hold_ms  # bool -- ignored
+
+
+def test_audio_profiles_round_trip(tmp_path):
+    path = tmp_path / "settings.json"
+    config = Config()
+    config.audio.profiles = {"desktop": {"noise_gate": 0.05}}
+    save_state(config, path)
+    assert load_state(path).audio.profiles == {"desktop": {"noise_gate": 0.05}}

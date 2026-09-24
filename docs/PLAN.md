@@ -1451,6 +1451,34 @@ constructor. The console prints are kept.
 
 741 tests (733 -> 741).
 
+**2026-09-23, continued: E1, per-source audio profiles -- the last
+open item from the bug-audit addendum** (closes D5's "shared
+thresholds" point too). Every Envelope field (`AUDIO_PROFILE_FIELDS`:
+gain, noise gate, the four thresholds, attack/hold/release) is kept
+separately for Microphone, Desktop audio and File. The live
+`config.audio` fields remain the one thing everything reads (the
+envelope follower in `__main__.py`, the level meter, the spinboxes), so
+nothing downstream changed; `AudioConfig.profiles` holds a saved
+snapshot per source, and `config.switch_audio_profile()` (called first
+thing in `_on_audio_source_changed`) stashes the outgoing source's values
+and loads the incoming one's. A source with no saved profile yet starts
+from whatever was live -- a smaller surprise than jumping to built-in
+defaults. The spinboxes re-sync with signals blocked (one save, not
+nine) and the threshold-ordering warning is re-evaluated, since a
+crossed pair can now belong to just one source. A label at the top of
+the Envelope section names the profile being edited. Junk in a
+hand-edited profile is ignored field by field.
+
+Verified visually (headless render of the Audio tab, compared against
+the pre-E1 commit at the same size), not just by tests.
+
+With this, every finding and enhancement in
+`docs/audit/2026-09-23-bug-audit.md` is closed except the one item
+deliberately queued: #20's settings-write-churn debounce (see the TODO
+above).
+
+751 tests (741 -> 751).
+
 
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.

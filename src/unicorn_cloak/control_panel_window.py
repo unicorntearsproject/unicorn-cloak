@@ -88,6 +88,7 @@ from .config import (
     remember_recent_avatar,
     remembered_active_costume,
     save_state,
+    switch_audio_profile,
 )
 from .help_window import HelpWindow
 from .persistence import DEFAULT_EXTENSION, save_avatar
@@ -1852,8 +1853,16 @@ class ControlPanelWindow(QWidget):
 
     def _build_audio_tab(self) -> QWidget:
         envelope_section = CollapsibleSection("Envelope")
+        # Per-source profiles -- E1 (bug audit addendum 2026-09-23): every
+        # field in this section belongs to whichever audio source is
+        # active right now, and switching source swaps the whole set (see
+        # config.switch_audio_profile). Said up front so a value that
+        # "changed by itself" after switching source isn't a mystery.
+        self._audio_profile_label = QLabel()
+        self._audio_profile_label.setWordWrap(True)
+        envelope_section.body_layout.addWidget(self._audio_profile_label)
         envelope_form = QFormLayout()
-        self._add_double(
+        self._gain_field = self._add_double(
             envelope_form, "Sensitivity", 0.05, 20.0, 0.05, 2,
             self.config.audio, "gain",
             "Multiplies the raw mic/file volume before anything below\n"
@@ -1892,24 +1901,36 @@ class ControlPanelWindow(QWidget):
             "Volume must fall below this to drop back from \"wide\" to \"mild\".\n"
             "Same hysteresis idea as \"Mild: close below\".",
         )
-        self._add_double(
+        self._attack_field = self._add_double(
             envelope_form, "Attack (ms)", 0.0, 500.0, 1.0, 0,
             self.config.audio, "attack_ms",
             "How fast the mouth reacts when you start talking. Lower = snappier.",
         )
-        self._add_double(
+        self._hold_field = self._add_double(
             envelope_form, "Hold (ms)", 0.0, 1000.0, 5.0, 0,
             self.config.audio, "hold_ms",
             "How long the mouth stays open after volume drops, before it\n"
             "starts closing. This is what keeps continuous speech from\n"
             "flickering shut in the gaps between syllables.",
         )
-        self._add_double(
+        self._release_field = self._add_double(
             envelope_form, "Release (ms)", 0.0, 2000.0, 5.0, 0,
             self.config.audio, "release_ms",
             "How fast the mouth closes once the hold period ends.",
         )
         envelope_section.body_layout.addLayout(envelope_form)
+        self._audio_profile_fields = {
+            "gain": self._gain_field,
+            "noise_gate": self.noise_gate_field,
+            "mild_open": self.mild_open,
+            "mild_close": self.mild_close,
+            "wide_open": self.wide_open,
+            "wide_close": self.wide_close,
+            "attack_ms": self._attack_field,
+            "hold_ms": self._hold_field,
+            "release_ms": self._release_field,
+        }
+        self._update_audio_profile_label()
 
         # Quick-win enhancement E5 (bug audit addendum 2026-09-23):
         # samples 3s of ambient noise and sets Noise gate to 1.5x the
@@ -4219,7 +4240,10 @@ class ControlPanelWindow(QWidget):
 
     def _on_audio_source_changed(self, index: int) -> None:
         source = self.audio_source.itemData(index)
-        self.config.audio.source = source
+        # E1: swap in the new source's own tuning profile before anything
+        # starts driving the mouth from it.
+        switch_audio_profile(self.config.audio, source)
+        self._sync_audio_profile_fields()
         if self.audio_manager is not None:
             if source == "file":
                 self.audio_manager.switch_to_file()
@@ -4245,6 +4269,27 @@ class ControlPanelWindow(QWidget):
         self._update_play_button_text()
         self._update_record_loop_button_text()
         self._save_config()
+
+    _AUDIO_SOURCE_NAMES = {"microphone": "Microphone", "desktop": "Desktop audio", "file": "File"}
+
+    def _update_audio_profile_label(self) -> None:
+        name = self._AUDIO_SOURCE_NAMES.get(self.config.audio.source, self.config.audio.source)
+        self._audio_profile_label.setText(
+            f"Editing the <b>{name}</b> profile -- each audio source (bottom bar) "
+            "keeps its own copy of every value in this section."
+        )
+
+    def _sync_audio_profile_fields(self) -> None:
+        """Reflects the live config.audio values (just swapped by
+        switch_audio_profile) into the Envelope spinboxes. Signals
+        blocked so this doesn't write each value straight back through
+        _setter (one _save_config per field) -- the caller saves once."""
+        for name, box in self._audio_profile_fields.items():
+            box.blockSignals(True)
+            box.setValue(getattr(self.config.audio, name))
+            box.blockSignals(False)
+        self._refresh_threshold_warning()
+        self._update_audio_profile_label()
 
     def _on_record_loop_clicked(self) -> None:
         if self.audio_manager is None:

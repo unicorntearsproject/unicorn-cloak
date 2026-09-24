@@ -644,7 +644,13 @@ buffering before that or the Render Window's own render timer (up to
 seconds of whatever's currently active while you stay quiet, then sets
 Noise gate to about 1.5x the loudest ambient sample it measured -- a
 quick starting point, not a replacement for fine-tuning by ear
-afterward.</li>
+afterward. Every value in this section is a <b>per-source profile</b>:
+Microphone, Desktop audio and File each keep their own copy, swapped in
+automatically when you change the source in the bottom bar (the section
+names which one you're editing) -- voice and game/music audio need very
+different thresholds, so tuning one no longer undoes the other. A source
+you've never tuned starts from whatever values were active when you
+first switched to it.</li>
 <li><b>OBS mute awareness</b> section — reads a named OBS input's mute
 state live, over obs-websocket, and forces the mouth fully closed while
 it's muted -- so the avatar doesn't keep "talking" while the stream
