@@ -486,3 +486,63 @@ def test_audio_profiles_round_trip(tmp_path):
     config.audio.profiles = {"desktop": {"noise_gate": 0.05}}
     save_state(config, path)
     assert load_state(path).audio.profiles == {"desktop": {"noise_gate": 0.05}}
+
+
+# --- Per-avatar tuning helpers (2026-10-02) ----------------------------------
+
+
+def _rig():
+    from unicorn_cloak.rig import AvatarRig
+
+    return AvatarRig(name="t")
+
+
+def test_capture_then_apply_moves_tuning_between_avatars():
+    a = Config()
+    a.motion.bounce_strength = 111.0
+    a.audio.noise_gate = 0.02
+    rig = _rig()
+    config_module.capture_avatar_tuning(a, rig)
+
+    b = Config()
+    config_module.apply_avatar_tuning(b, rig)
+
+    assert b.motion.bounce_strength == 111.0
+    assert b.audio.noise_gate == 0.02
+
+
+def test_capture_records_the_active_sources_live_values_alongside_stashed_profiles():
+    c = Config()
+    c.audio.profiles = {"desktop": {"noise_gate": 0.05}}
+    c.audio.noise_gate = 0.003
+    rig = _rig()
+    config_module.capture_avatar_tuning(c, rig)
+    assert rig.audio_profiles["microphone"]["noise_gate"] == 0.003
+    assert rig.audio_profiles["desktop"]["noise_gate"] == 0.05
+
+
+def test_apply_with_nothing_saved_keeps_the_live_values():
+    c = Config()
+    c.motion.gravity = 555.0
+    config_module.apply_avatar_tuning(c, _rig())
+    assert c.motion.gravity == 555.0
+
+
+def test_apply_keeps_int_fields_int_and_ignores_junk():
+    c = Config()
+    rig = _rig()
+    rig.motion = {"blink_chance": 50.0, "gravity": "heavy", "bogus": 1, "bounce_strength": True}
+    config_module.apply_avatar_tuning(c, rig)
+    assert c.motion.blink_chance == 50 and isinstance(c.motion.blink_chance, int)
+    assert c.motion.gravity == Config().motion.gravity
+    assert c.motion.bounce_strength == Config().motion.bounce_strength
+
+
+def test_apply_loads_the_current_sources_profile_into_the_live_fields():
+    c = Config()
+    c.audio.source = "desktop"
+    rig = _rig()
+    rig.audio_profiles = {"desktop": {"noise_gate": 0.07, "bogus": 1}, "microphone": {"noise_gate": 0.002}}
+    config_module.apply_avatar_tuning(c, rig)
+    assert c.audio.noise_gate == 0.07
+    assert c.audio.profiles["microphone"] == {"noise_gate": 0.002}

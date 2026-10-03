@@ -85,6 +85,8 @@ from . import motion, theme
 from .avatar_io import load_avatar_with_upgrade
 from .config import (
     Config,
+    apply_avatar_tuning,
+    capture_avatar_tuning,
     remember_recent_avatar,
     remembered_active_costume,
     save_state,
@@ -736,6 +738,7 @@ class ControlPanelWindow(QWidget):
 
         # --- field-widget bookkeeping (was SettingsWindow) ---
         self._reset_buttons: dict = {}
+        self._motion_fields: dict = {}  # Behavior-tab spinboxes by MotionConfig field
         self._lock_buttons: dict = {}
         self._expression_buttons: dict[tuple[str, str], QPushButton] = {}
         # Costume/Expression hotkey editors, owner's request, 2026-09-17
@@ -2690,6 +2693,8 @@ class ControlPanelWindow(QWidget):
         self._add_row_with_reset_and_lock(
             form, label, box, self._default_for(target, field_name), tooltip
         )
+        if target is self.config.motion:
+            self._motion_fields[field_name] = box
         return box
 
     def _add_int(self, form, label, lo, hi, target, field_name, tooltip: str) -> ScrollSafeSpinBox:
@@ -2701,6 +2706,8 @@ class ControlPanelWindow(QWidget):
         self._add_row_with_reset_and_lock(
             form, label, box, self._default_for(target, field_name), tooltip
         )
+        if target is self.config.motion:
+            self._motion_fields[field_name] = box
         return box
 
     @staticmethod
@@ -2752,6 +2759,10 @@ class ControlPanelWindow(QWidget):
     def _setter(self, target, field_name: str) -> Callable[[float], None]:
         def on_change(value: float) -> None:
             setattr(target, field_name, value)
+            if target is self.config.motion or target is self.config.audio:
+                # Behavior/Audio tab values belong to the avatar
+                # (2026-10-02), so editing one is an unsaved change.
+                self._mark_dirty()
             self._save_config()
 
         return on_change
@@ -2843,6 +2854,20 @@ class ControlPanelWindow(QWidget):
     # Dirty-tracking / Save / Save As / Quit confirmation
     # =====================================================================
 
+    def _capture_avatar_tuning_into_rig(self) -> None:
+        capture_avatar_tuning(self.config, self.rig)
+
+    def _apply_avatar_tuning_from_rig(self) -> None:
+        """Pushes the (just loaded/reloaded) avatar's saved Behavior/Audio
+        values into the live config and the spinboxes -- signals blocked,
+        since this is a load, not an edit."""
+        apply_avatar_tuning(self.config, self.rig)
+        for name, box in self._motion_fields.items():
+            box.blockSignals(True)
+            box.setValue(getattr(self.config.motion, name))
+            box.blockSignals(False)
+        self._sync_audio_profile_fields()
+
     def _mark_dirty(self) -> None:
         self._dirty = True
         self._update_dirty_indicator()
@@ -2863,6 +2888,7 @@ class ControlPanelWindow(QWidget):
         if not self._current_avatar_path:
             self._on_save_as()
             return
+        self._capture_avatar_tuning_into_rig()
         try:
             save_avatar(self.rig, self._current_avatar_path)
         except OSError as exc:
@@ -2889,6 +2915,7 @@ class ControlPanelWindow(QWidget):
             return
         if not path.endswith(DEFAULT_EXTENSION):
             path += DEFAULT_EXTENSION
+        self._capture_avatar_tuning_into_rig()
         try:
             save_avatar(self.rig, path)
         except OSError as exc:
@@ -3970,6 +3997,7 @@ class ControlPanelWindow(QWidget):
         afterward would restore pre-reload sprites that may not
         correspond to anything on disk any more."""
         had_unsaved_changes = self._dirty
+        self._apply_avatar_tuning_from_rig()  # the file's own Behavior/Audio values
         self.refresh_after_external_change()
         self._undo_stack.clear()
         self._redo_stack.clear()
@@ -4082,6 +4110,7 @@ class ControlPanelWindow(QWidget):
         self._redo_stack.clear()
         self._update_undo_redo_buttons()
         self.rig.replace_contents_from(loaded)
+        self._apply_avatar_tuning_from_rig()
         self.rig.active_costume = remembered_active_costume(self.config.control_panel, path)
         self._current_avatar_path = path
         self.config.avatar_path = path

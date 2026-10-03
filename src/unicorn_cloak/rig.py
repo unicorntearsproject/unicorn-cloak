@@ -242,6 +242,16 @@ class AvatarRig:
     # everything else in this class rather than living in settings.json.
     zoom: float = 1.0
 
+    # Per-avatar tuning (owner's request, 2026-10-02: everything on the
+    # Behavior and Audio tabs belongs to the avatar, not the machine --
+    # only the Application tab is app-wide). Plain dicts so this module
+    # stays free of config/Qt; config.capture_avatar_tuning/
+    # apply_avatar_tuning translate to and from the live config objects.
+    # None = this avatar has no saved tuning yet (every file saved before
+    # this) -- the live values are left alone rather than reset.
+    motion: dict | None = None
+    audio_profiles: dict | None = None
+
     # Explicit (hide_sprite_id, show_sprite_id) pairs assigned to each
     # costume hotkey slot -- an *authoring* convenience only (see
     # control_panel_window.py's costume editor). Adding a pair also writes
@@ -342,6 +352,8 @@ class AvatarRig:
         self.name = other.name
         self.sprites = other.sprites
         self.zoom = other.zoom
+        self.motion = other.motion
+        self.audio_profiles = other.audio_profiles
         self.costume_assignments = other.costume_assignments
         self.expression_hotkeys = other.expression_hotkeys
         if not keep_active_costume:

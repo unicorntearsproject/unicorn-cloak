@@ -628,3 +628,35 @@ def test_timestamped_backup_names_are_covered_by_gitignore(tmp_path):
     save_avatar(AvatarRig(name="t", sprites=[]), path)
     save_avatar(AvatarRig(name="t", sprites=[]), path)
     assert timestamped_backups(path)[0].name.endswith(".bak")
+
+
+# --- Per-avatar Behavior/Audio tuning (2026-10-02) ---------------------------
+
+
+def test_tuning_round_trips_through_the_avatar_file(tmp_path):
+    path = tmp_path / "a.uc"
+    rig = AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png")])
+    rig.motion = {"bounce_strength": 99.0, "blink_chance": 7}
+    rig.audio_profiles = {"microphone": {"noise_gate": 0.01}}
+    save_avatar(rig, path)
+
+    loaded = load_avatar(path)
+
+    assert loaded.motion == {"bounce_strength": 99.0, "blink_chance": 7}
+    assert loaded.audio_profiles == {"microphone": {"noise_gate": 0.01}}
+    assert len(loaded.sprites) == 1  # the new keys aren't mistaken for sprites
+
+
+def test_an_avatar_without_saved_tuning_loads_with_none(tmp_path):
+    path = tmp_path / "a.uc"
+    save_avatar(AvatarRig(name="t", sprites=[Sprite(id=1, path="x.png")]), path)
+    loaded = load_avatar(path)
+    assert loaded.motion is None and loaded.audio_profiles is None
+    assert "__motion__" not in json.loads(path.read_text())
+
+
+def test_junk_tuning_values_load_as_none(tmp_path):
+    path = tmp_path / "a.uc"
+    path.write_text(json.dumps({"__motion__": [1, 2], "__audio_profiles__": "x"}))
+    loaded = load_avatar(path)
+    assert loaded.motion is None and loaded.audio_profiles is None

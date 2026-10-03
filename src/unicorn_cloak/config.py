@@ -424,6 +424,42 @@ def remembered_active_costume(cp: ControlPanelConfig, path: str | None) -> int:
     return slot if isinstance(slot, int) and 0 <= slot < NUM_COSTUMES else 0
 
 
+def _numeric(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def capture_avatar_tuning(config: "Config", rig) -> None:
+    """Copies the live Behavior/Audio tab values into `rig`, ready for
+    save_avatar -- per-avatar settings, 2026-10-02. The active source's
+    profile is its live values; the others are whatever was stashed."""
+    rig.motion = {f.name: getattr(config.motion, f.name) for f in fields(MotionConfig)}
+    profiles = {src: dict(vals) for src, vals in config.audio.profiles.items() if isinstance(vals, dict)}
+    profiles[config.audio.source] = {n: getattr(config.audio, n) for n in AUDIO_PROFILE_FIELDS}
+    rig.audio_profiles = profiles
+
+
+def apply_avatar_tuning(config: "Config", rig) -> None:
+    """Loads `rig`'s saved tuning into the live config objects, in place
+    (the Render Window, AudioManager and envelope follower all hold
+    those objects by reference). An avatar with nothing saved yet keeps
+    the current live values, so existing avatars don't jump to defaults
+    and the first save simply starts recording them. Non-numeric or
+    unknown entries from a hand-edited file are ignored field by field."""
+    if isinstance(rig.motion, dict):
+        for f in fields(MotionConfig):
+            value = rig.motion.get(f.name)
+            if _numeric(value):
+                setattr(config.motion, f.name, type(getattr(config.motion, f.name))(value))
+    if isinstance(rig.audio_profiles, dict):
+        config.audio.profiles = {
+            src: {n: float(v) for n, v in vals.items() if n in AUDIO_PROFILE_FIELDS and _numeric(v)}
+            for src, vals in rig.audio_profiles.items() if isinstance(vals, dict)
+        }
+        stored = config.audio.profiles.get(config.audio.source, {})
+        for name, value in stored.items():
+            setattr(config.audio, name, value)
+
+
 @dataclass
 class Config:
     avatar_path: str = DEFAULT_AVATAR_PATH

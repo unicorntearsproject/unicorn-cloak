@@ -20,7 +20,7 @@ from . import theme
 from .audio import SpeakingState, update_speaking
 from .audio_manager import AudioManager
 from .avatar_io import load_avatar_with_upgrade
-from .config import load_state, remembered_active_costume, save_state
+from .config import apply_avatar_tuning, load_state, remembered_active_costume, save_state
 from .control_panel_window import ControlPanelWindow
 from .hot_reload import AssetWatcher
 from .obs_link_manager import ObsLinkManager
@@ -180,6 +180,9 @@ def main() -> int:
     config = load_state()
 
     rig = load_avatar_with_upgrade(config.avatar_path)
+    # Per-avatar Behavior/Audio tuning (2026-10-02); an avatar without any
+    # keeps settings.json's values as its starting point.
+    apply_avatar_tuning(config, rig)
     # E7: reopen in whichever costume this avatar was last showing.
     rig.active_costume = remembered_active_costume(config.control_panel, config.avatar_path)
     window = RenderWindow(

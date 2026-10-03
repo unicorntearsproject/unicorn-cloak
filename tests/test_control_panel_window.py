@@ -3882,3 +3882,101 @@ def test_a_saved_device_missing_from_the_list_stays_visible_and_selected(qapp, t
 
     assert panel.audio_device.currentData() == "Speakers"
     assert "not currently listed as an input" in panel.audio_device.currentText()
+
+
+# --- Behavior/Audio settings are per avatar (2026-10-02) ---------------------
+
+
+def test_editing_a_behavior_field_marks_the_avatar_unsaved(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    assert panel._dirty is False
+    panel._motion_fields["gravity"].setValue(777.0)
+    assert panel._dirty is True
+
+
+def test_editing_an_audio_field_marks_the_avatar_unsaved(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.noise_gate_field.setValue(0.02)
+    assert panel._dirty is True
+
+
+def test_editing_an_application_tab_field_does_not_mark_the_avatar_unsaved(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel.window_width.setValue(999)
+    panel.grid_spacing.setValue(55)
+    assert panel._dirty is False
+
+
+def test_every_motion_setting_has_a_registered_behavior_field(qapp, tmp_path):
+    import dataclasses
+
+    from unicorn_cloak.config import MotionConfig
+
+    config, window, panel, _ = make_panel(tmp_path)
+    assert set(panel._motion_fields) == {f.name for f in dataclasses.fields(MotionConfig)}
+
+
+def test_save_writes_tuning_into_the_avatar_file(qapp, tmp_path):
+    from unicorn_cloak.persistence import load_avatar
+
+    config, window, panel, _ = make_panel(tmp_path)
+    target = tmp_path / "mine.uc"
+    panel._current_avatar_path = str(target)
+    panel._motion_fields["gravity"].setValue(777.0)
+    panel.noise_gate_field.setValue(0.02)
+
+    panel._on_save()
+
+    saved = load_avatar(target)
+    assert saved.motion["gravity"] == 777.0
+    assert saved.audio_profiles["microphone"]["noise_gate"] == 0.02
+    assert panel._dirty is False
+
+
+def test_load_applies_that_avatars_tuning_and_syncs_the_fields(qapp, tmp_path, monkeypatch):
+    from unicorn_cloak.persistence import save_avatar
+
+    config, window, panel, _ = make_panel(tmp_path)
+    other = make_test_rig()
+    other.motion = {"gravity": 321.0}
+    other.audio_profiles = {"microphone": {"noise_gate": 0.04}}
+    path = tmp_path / "other.uc"
+    save_avatar(other, path)
+    monkeypatch.setattr(cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
+
+    panel._on_load()
+
+    assert config.motion.gravity == 321.0
+    assert panel._motion_fields["gravity"].value() == pytest.approx(321.0)
+    assert panel.noise_gate_field.value() == pytest.approx(0.04)
+    assert panel._dirty is False  # applying a load isn't an edit
+
+
+def test_loading_an_avatar_with_no_saved_tuning_keeps_the_current_values(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    panel._motion_fields["gravity"].setValue(444.0)
+    panel._dirty = False
+    path = _save_other_avatar(tmp_path)
+    monkeypatch.setattr(cpw_module.QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
+
+    panel._on_load()
+
+    assert config.motion.gravity == 444.0
+
+
+def test_two_avatars_keep_independent_tuning(qapp, tmp_path, monkeypatch):
+    config, window, panel, _ = make_panel(tmp_path)
+    a, b = tmp_path / "a.uc", tmp_path / "b.uc"
+    panel._current_avatar_path = str(a)
+    panel._motion_fields["gravity"].setValue(111.0)
+    panel._on_save()
+    panel._motion_fields["gravity"].setValue(222.0)
+    panel._current_avatar_path = str(b)
+    panel._on_save()
+
+    monkeypatch.setattr(cpw_module.QFileDialog, "getOpenFileName", lambda *a_, **k: (str(a), ""))
+    panel._on_load()
+    assert config.motion.gravity == 111.0
+    monkeypatch.setattr(cpw_module.QFileDialog, "getOpenFileName", lambda *a_, **k: (str(b), ""))
+    panel._on_load()
+    assert config.motion.gravity == 222.0

@@ -600,6 +600,18 @@ field also requires an actual click into it before the wheel does
 anything at all -- just hovering over it while scrolling is not enough
 to change it.</p>
 
+<h3>What's saved where</h3>
+<p>Everything on the <b>Behavior</b> and <b>Audio</b> tabs (Motion, the
+Envelope values and their per-source profiles) is saved <i>with the
+avatar</i>: Save writes it into the <code>.uc</code> file, Load brings it
+back, and editing any of it marks the avatar as having unsaved changes.
+Only the <b>Application</b> tab (and window/panel layout, audio source and
+device, hotkeys) is app-wide. An avatar saved by an older version has no
+stored values yet, so it simply keeps whatever is active until you save
+it. The one exception on the Audio tab is <b>OBS mute awareness</b>: it
+stays app-wide because it holds your OBS password, which doesn't belong
+inside a file you might share.</p>
+
 <h3>Behavior tab</h3>
 <ul>
 <li><b>Motion</b> section — the avatar-wide speech bounce (strength,

@@ -173,3 +173,11 @@ def test_reference_tab_explains_the_per_source_device_lists(qapp):
     text = tabs.widget(4).toPlainText()
     assert "only real inputs" in text
     assert "only outputs" in text
+
+
+def test_reference_tab_explains_per_avatar_vs_app_wide_settings(qapp):
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    text = tabs.widget(4).toPlainText()
+    assert "saved with the avatar" in text
+    assert "OBS password" in text

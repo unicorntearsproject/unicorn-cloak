@@ -1479,6 +1479,49 @@ above).
 
 751 tests (741 -> 751).
 
+**2026-10-02: three owner-reported fixes.**
+
+**(a) Qt portal warning mid-session.** `qt.qpa.services: Failed to
+register with host portal` (the known, harmless GNOME portal noise) came
+back mid-session; Qt retries the registration after startup, which
+`QT_LOGGING_RULES` doesn't reliably cover. `__main__.filtered_qt_message_handler`
+now drops exactly that category+text for the whole session (non-debug
+mode); everything else still reaches stderr. Couldn't reproduce the exact
+trigger in isolation (file dialogs alone didn't), so this is a symptom
+filter, not a root-cause fix.
+
+**(b) Device lists per source.** Microphone offered speakers; Desktop
+audio offered microphones. Channel counts can't tell them apart under
+PipeWire's JACK shim (a sink appears as a capturable monitor; the Blue
+mic is one duplex client), so `audio.list_input_devices(kind)` asks
+`pw-dump` (media.class Audio/Source vs Audio/Sink; `node.description`
+equals the JACK/PortAudio device name, verified live), falling back to a
+channel-count rule (monitor ports mirror playback ports 1:1) without
+PipeWire. Verified on this machine: 5 inputs / 4 outputs, app streams
+(LibreWolf, OBS) in neither. The dropdown rebuilds on every source
+change; a saved device missing from the list stays selected, marked "not
+currently listed". Caveat: a duplex device (the Blue mic) is a single
+JACK client, so Desktop capture from it may still read its mic ports.
+
+**(c) Behavior and Audio tab settings are per avatar.** Motion values and
+the Envelope values/per-source profiles are stored in the `.uc`
+(`__motion__`, `__audio_profiles__`), captured on Save/Save As and
+applied on startup, Load and external hot reload; editing them now marks
+the avatar unsaved. `config.capture_avatar_tuning`/`apply_avatar_tuning`
+move values between the file and the live config objects in place (the
+Render Window, AudioManager and envelope follower hold them by
+reference). An avatar with nothing stored keeps the live values (so old
+avatars don't jump to defaults); settings.json still holds the last live
+values as that fallback. Judgment call: **OBS mute awareness stays
+app-wide** -- it holds the OBS password, which shouldn't be written into a
+shareable/committed avatar file (CLAUDE.md secrets rule). Audio source,
+device and file stay app-wide too (machine-specific, bottom bar).
+
+Known: `test_the_real_default_avatars_costume_slots_swap_hoodie_for_vest`
+fails because the demo avatar's costume assignments were edited on
+2026-09-26 (uncommitted) -- not touched here.
+
+
 
 See each dated entry below for the actual work and the bugs found doing
 it — this paragraph is a current snapshot, not a chronological record.

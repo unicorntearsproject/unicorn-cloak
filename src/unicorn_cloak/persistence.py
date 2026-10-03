@@ -68,7 +68,14 @@ _EXPRESSION_HOTKEYS_KEY = "__expression_hotkeys__"
 # defaults to 1.0 (native size) on load, same pattern as the other
 # rig-level keys above.
 _ZOOM_KEY = "__zoom__"
-_NON_SPRITE_KEYS = {_FORMAT_VERSION_KEY, _COSTUME_ASSIGNMENTS_KEY, _EXPRESSION_HOTKEYS_KEY, _ZOOM_KEY}
+# Per-avatar Behavior/Audio tab tuning (2026-10-02) -- see rig.AvatarRig.
+# Absent from every file saved before today; load leaves them None.
+_MOTION_KEY = "__motion__"
+_AUDIO_PROFILES_KEY = "__audio_profiles__"
+_NON_SPRITE_KEYS = {
+    _FORMAT_VERSION_KEY, _COSTUME_ASSIGNMENTS_KEY, _EXPRESSION_HOTKEYS_KEY, _ZOOM_KEY,
+    _MOTION_KEY, _AUDIO_PROFILES_KEY,
+}
 
 _VEC2_RE = re.compile(r"Vector2\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)")
 
@@ -204,6 +211,10 @@ def load_avatar(path: str | Path, name: str | None = None) -> AvatarRig:
         costume_assignments=_normalize_slot_pairs(raw.get(_COSTUME_ASSIGNMENTS_KEY)),
         expression_hotkeys=_normalize_slot_pairs(raw.get(_EXPRESSION_HOTKEYS_KEY)),
         zoom=raw.get(_ZOOM_KEY, 1.0),
+        motion=raw.get(_MOTION_KEY) if isinstance(raw.get(_MOTION_KEY), dict) else None,
+        audio_profiles=(
+            raw.get(_AUDIO_PROFILES_KEY) if isinstance(raw.get(_AUDIO_PROFILES_KEY), dict) else None
+        ),
     )
 
 
@@ -271,6 +282,10 @@ def save_avatar(rig: AvatarRig, path: str | Path) -> None:
         _EXPRESSION_HOTKEYS_KEY: rig.expression_hotkeys,
         _ZOOM_KEY: rig.zoom,
     }
+    if rig.motion is not None:
+        out[_MOTION_KEY] = rig.motion
+    if rig.audio_profiles is not None:
+        out[_AUDIO_PROFILES_KEY] = rig.audio_profiles
     for i, sprite in enumerate(rig.sprites):
         out[str(i)] = {
             "type": "sprite",
