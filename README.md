@@ -30,6 +30,10 @@ Escape (or the Control Panel's Quit button) quits, with a confirmation
 and an extra warning if the avatar has unsaved changes. Set
 `UNICORN_CLOAK_DEBUG=1` to see startup diagnostics normally hidden as
 environment noise (see `docs/PLAN.md`'s "Startup noise hidden" entry).
+In debug mode a watchdog also writes every thread's stack to
+`~/.local/state/unicorn-cloak/debug.log` if the UI freezes for 8+ seconds
+(and on a hard crash) -- run `UNICORN_CLOAK_DEBUG=1 .venv/bin/python -m
+unicorn_cloak`, and after a lock-up send that file.
 
 ## Tests
 
@@ -38,7 +42,7 @@ environment noise (see `docs/PLAN.md`'s "Startup noise hidden" entry).
 ```
 
 Qt runs headless via `QT_QPA_PLATFORM=offscreen` (set automatically by
-`tests/conftest.py`). 784 tests as of 2026-10-02.
+`tests/conftest.py`). 789 tests as of 2026-10-02.
 
 ## Layout
 

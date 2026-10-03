@@ -181,3 +181,9 @@ def test_reference_tab_explains_per_avatar_vs_app_wide_settings(qapp):
     text = tabs.widget(4).toPlainText()
     assert "saved with the avatar" in text
     assert "OBS password" in text
+
+
+def test_obs_mute_awareness_is_documented_under_the_application_tab(qapp):
+    dlg = HelpWindow()
+    text = dlg.findChild(QTabWidget).widget(4).toPlainText()
+    assert text.index("OBS mute awareness") > text.index("Application tab")

@@ -1975,7 +1975,12 @@ class ControlPanelWindow(QWidget):
             box.valueChanged.connect(self._refresh_threshold_warning)
         self._refresh_threshold_warning()
 
+        # Built here (it sits with the audio code it relates to) but shown
+        # on the Application tab -- owner's call, 2026-10-02: OBS
+        # connection details are app-wide, and only Application-tab
+        # settings are, so the section lives there.
         obs_section = CollapsibleSection("OBS mute awareness")
+        self._obs_section = obs_section
         obs_form = QFormLayout()
         self.obs_enabled = QCheckBox("Force mouth closed while muted in OBS")
         self.obs_enabled.setChecked(self.config.obs.enabled)
@@ -2049,7 +2054,7 @@ class ControlPanelWindow(QWidget):
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        self._add_tab_splitter(outer, [envelope_section, obs_section])
+        self._add_tab_splitter(outer, [envelope_section])
         return tab
 
     def _build_application_tab(self) -> QWidget:
@@ -2161,7 +2166,7 @@ class ControlPanelWindow(QWidget):
 
         tab = QWidget()
         outer = QVBoxLayout(tab)
-        self._add_tab_splitter(outer, [display_section])
+        self._add_tab_splitter(outer, [display_section, self._obs_section])
         return tab
 
     def _build_costumes_tab(self) -> QWidget:

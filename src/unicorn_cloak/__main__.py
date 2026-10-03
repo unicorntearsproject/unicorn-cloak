@@ -9,11 +9,13 @@ an extra warning if the avatar has unsaved changes.
 from __future__ import annotations
 
 import contextlib
+import faulthandler
 import os
 import sys
 import time
+from pathlib import Path
 
-from PySide6.QtCore import Qt, qInstallMessageHandler
+from PySide6.QtCore import Qt, QTimer, qInstallMessageHandler
 from PySide6.QtWidgets import QApplication
 
 from . import theme
@@ -50,6 +52,32 @@ def _suppressed_native_stderr():
         os.dup2(saved_fd, stderr_fd)
         os.close(devnull_fd)
         os.close(saved_fd)
+
+
+HANG_TIMEOUT_S = 8.0
+
+
+def debug_log_path() -> Path:
+    state_home = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    return state_home / "unicorn-cloak" / "debug.log"
+
+
+def install_hang_watchdog(log_file, timeout_s: float = HANG_TIMEOUT_S, parent=None) -> QTimer:
+    """Debug mode only. A 1s Qt timer re-arms faulthandler's
+    dump_traceback_later; if the Qt thread stops running events for
+    `timeout_s` (a freeze), every thread's stack is written to `log_file`
+    -- repeatedly, until it recovers -- so a hang that needs a force-quit
+    leaves evidence of what each thread was blocked on. Added 2026-10-02
+    after an unexplained lock-up (owner's report). Returns the timer;
+    keep a reference."""
+    def rearm() -> None:
+        faulthandler.dump_traceback_later(timeout_s, repeat=True, file=log_file)
+
+    timer = QTimer(parent)
+    timer.timeout.connect(rearm)
+    timer.start(1000)
+    rearm()
+    return timer
 
 
 def filtered_qt_message_handler(msg_type, context, message) -> None:
@@ -379,6 +407,15 @@ def main() -> int:
         # quitting before the first autosave tick.
 
     app.aboutToQuit.connect(on_quit)
+
+    if debug:
+        log_path = debug_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        debug_log = open(log_path, "a", buffering=1)
+        debug_log.write(f"\n=== run started {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
+        faulthandler.enable(file=debug_log, all_threads=True)  # hard crashes too
+        hang_watchdog = install_hang_watchdog(debug_log, parent=app)
+        print(f"[debug] hang/crash stack dumps go to {log_path}", flush=True)
 
     print(f"Loaded avatar: {rig.name} ({len(rig.sprites)} sprites)")
     print(f"Window title for OBS Window Capture: {WINDOW_TITLE!r}")

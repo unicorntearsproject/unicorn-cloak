@@ -3980,3 +3980,12 @@ def test_two_avatars_keep_independent_tuning(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(cpw_module.QFileDialog, "getOpenFileName", lambda *a_, **k: (str(b), ""))
     panel._on_load()
     assert config.motion.gravity == 222.0
+
+
+def test_obs_section_lives_on_the_application_tab(qapp, tmp_path):
+    config, window, panel, _ = make_panel(tmp_path)
+    titles = [panel.tabs.tabText(i) for i in range(panel.tabs.count())]
+    app_page = panel.tabs.widget(titles.index("Application"))
+    audio_page = panel.tabs.widget(titles.index("Audio"))
+    assert app_page.isAncestorOf(panel._obs_section)
+    assert not audio_page.isAncestorOf(panel._obs_section)

@@ -168,3 +168,51 @@ def test_host_portal_text_in_another_category_is_not_swallowed(capsys):
 
     filtered_qt_message_handler(QtMsgType.QtWarningMsg, _Ctx("qt.something.else"), "host portal thing")
     assert "host portal thing" in capsys.readouterr().err
+
+
+# --- Debug-mode hang watchdog (2026-10-02) -----------------------------------
+
+
+def test_debug_log_path_honours_xdg_state_home(monkeypatch, tmp_path):
+    from unicorn_cloak.__main__ import debug_log_path
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert debug_log_path() == tmp_path / "unicorn-cloak" / "debug.log"
+
+
+def test_watchdog_dumps_all_thread_stacks_when_the_event_loop_stalls(qapp, tmp_path):
+    import faulthandler
+    import time as time_module
+
+    from unicorn_cloak.__main__ import install_hang_watchdog
+
+    log = open(tmp_path / "debug.log", "w", buffering=1)
+    timer = install_hang_watchdog(log, timeout_s=0.3)
+    try:
+        time_module.sleep(0.8)  # block the Qt thread, as a freeze would
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        timer.stop()
+        log.close()
+    assert "most recent call first" in (tmp_path / "debug.log").read_text()
+
+
+def test_watchdog_stays_quiet_while_the_event_loop_keeps_running(qapp, tmp_path):
+    import faulthandler
+    import time as time_module
+
+    from unicorn_cloak.__main__ import install_hang_watchdog
+
+    log = open(tmp_path / "debug.log", "w", buffering=1)
+    timer = install_hang_watchdog(log, timeout_s=0.5)
+    try:
+        timer.setInterval(50)  # tighter than the test's own timeout
+        deadline = time_module.monotonic() + 1.2
+        while time_module.monotonic() < deadline:
+            qapp.processEvents()
+            time_module.sleep(0.01)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        timer.stop()
+        log.close()
+    assert (tmp_path / "debug.log").read_text() == ""

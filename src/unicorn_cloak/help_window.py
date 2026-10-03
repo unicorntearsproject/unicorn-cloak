@@ -605,12 +605,11 @@ to change it.</p>
 Envelope values and their per-source profiles) is saved <i>with the
 avatar</i>: Save writes it into the <code>.uc</code> file, Load brings it
 back, and editing any of it marks the avatar as having unsaved changes.
-Only the <b>Application</b> tab (and window/panel layout, audio source and
-device, hotkeys) is app-wide. An avatar saved by an older version has no
-stored values yet, so it simply keeps whatever is active until you save
-it. The one exception on the Audio tab is <b>OBS mute awareness</b>: it
-stays app-wide because it holds your OBS password, which doesn't belong
-inside a file you might share.</p>
+Only the <b>Application</b> tab (which includes <b>OBS mute awareness</b>
+-- it holds your OBS password, which doesn't belong inside a file you
+might share) and window/panel layout, audio source and device, and
+hotkeys are app-wide. An avatar saved by an older version has no stored
+values yet, so it simply keeps whatever is active until you save it.</p>
 
 <h3>Behavior tab</h3>
 <ul>
@@ -663,16 +662,6 @@ names which one you're editing) -- voice and game/music audio need very
 different thresholds, so tuning one no longer undoes the other. A source
 you've never tuned starts from whatever values were active when you
 first switched to it.</li>
-<li><b>OBS mute awareness</b> section — reads a named OBS input's mute
-state live, over obs-websocket, and forces the mouth fully closed while
-it's muted -- so the avatar doesn't keep "talking" while the stream
-hears silence. Turn it on, fill in Host/Port/Password (from OBS's own
-Settings → WebSocket Server Settings → Show Connect Info) and Input name
-(must match an OBS source exactly, case-sensitive -- check OBS's own
-Sources/Mixer list). The status line updates live. OBS not running, or
-the input name being wrong, are both handled gracefully -- the former
-just keeps quietly retrying; the latter shows a clear one-time message
-saying so.</li>
 </ul>
 
 <h3>File-playback timeline (bottom bar)</h3>
@@ -755,6 +744,16 @@ Guide button in the bottom bar. (Zoom lives on the Behavior tab's
 Position &amp; Hierarchy section instead, since it's saved with the
 avatar, not app-wide like everything else here — see Behavior tab
 below.)</li>
+<li><b>OBS mute awareness</b> section — reads a named OBS input's mute
+state live, over obs-websocket, and forces the mouth fully closed while
+it's muted -- so the avatar doesn't keep "talking" while the stream
+hears silence. Turn it on, fill in Host/Port/Password (from OBS's own
+Settings → WebSocket Server Settings → Show Connect Info) and Input name
+(must match an OBS source exactly, case-sensitive -- check OBS's own
+Sources/Mixer list). The status line updates live. OBS not running, or
+the input name being wrong, are both handled gracefully -- the former
+just keeps quietly retrying; the latter shows a clear one-time message
+saying so.</li>
 </ul>
 <p>Costume/Expression hotkey setup moved to its own <b>Costume
 Hotkeys</b>/<b>Expression Hotkeys</b> tabs, immediately right of Sprites

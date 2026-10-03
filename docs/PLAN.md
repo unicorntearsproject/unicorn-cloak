@@ -1517,6 +1517,17 @@ app-wide** -- it holds the OBS password, which shouldn't be written into a
 shareable/committed avatar file (CLAUDE.md secrets rule). Audio source,
 device and file stay app-wide too (machine-specific, bottom bar).
 
+**Follow-ups, same day.** OBS mute awareness moved from the Audio tab
+to the Application tab (it's app-wide; Help updated). Debug mode
+(`UNICORN_CLOAK_DEBUG=1`) now installs a hang watchdog: a 1s Qt timer
+re-arms `faulthandler.dump_traceback_later(8s, repeat)`, so a UI freeze
+writes every thread's stack to `~/.local/state/unicorn-cloak/debug.log`
+(plus `faulthandler.enable` for hard crashes) -- added after an
+unexplained lock-up needing a force-quit; cause not yet known, the log is
+how we find out. Suspects worth checking in it: `pw-dump` (3s timeout) and
+`Microphone.stop()` (2s join) both run on the Qt thread during a source
+switch.
+
 Known: `test_the_real_default_avatars_costume_slots_swap_hoodie_for_vest`
 fails because the demo avatar's costume assignments were edited on
 2026-09-26 (uncommitted) -- not touched here.
