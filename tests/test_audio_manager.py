@@ -153,7 +153,9 @@ def test_play_file_forwards_position_and_duration_signals(qapp, tmp_path):
     manager.play_file()
 
     assert _wait_until(qapp, lambda: not manager.is_file_playing)
-    assert len(positions) >= 1
+    # Signals from the playback thread are queued -- wait for delivery
+    # instead of racing the end of playback.
+    assert _wait_until(qapp, lambda: len(positions) >= 1)
     assert positions == sorted(positions)
 
 
@@ -819,7 +821,7 @@ def test_stop_loop_restores_desktop_audio_not_the_microphone(qapp, monkeypatch):
 def test_list_devices_delegates_to_audio_module(qapp, monkeypatch):
     monkeypatch.setattr(
         "unicorn_cloak.audio_manager.list_input_devices",
-        lambda: ["Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"],
+        lambda kind="all": ["Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"],
     )
     manager = AudioManager(Config())
     assert manager.list_devices() == [

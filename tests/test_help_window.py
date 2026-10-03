@@ -163,3 +163,13 @@ def test_reference_tab_documents_per_source_audio_profiles(qapp):
     dlg = HelpWindow()
     tabs = dlg.findChild(QTabWidget)
     assert "per-source profile" in tabs.widget(4).toPlainText()
+
+
+def test_reference_tab_explains_the_per_source_device_lists(qapp):
+    # Owner's report 2026-10-02: Microphone and Desktop audio each used to
+    # offer every device.
+    dlg = HelpWindow()
+    tabs = dlg.findChild(QTabWidget)
+    text = tabs.widget(4).toPlainText()
+    assert "only real inputs" in text
+    assert "only outputs" in text

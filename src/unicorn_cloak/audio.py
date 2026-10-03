@@ -29,6 +29,7 @@ interchangeably.
 """
 from __future__ import annotations
 
+import json
 import math
 import shutil
 import subprocess
@@ -248,8 +249,76 @@ def resolve_input_device(hint: str | None, *, strict: bool = False) -> int | Non
     return usable[0]["index"]
 
 
-def list_input_devices() -> list[str]:
-    return [str(info["name"]) for info in usable_input_devices()]
+def _pipewire_node_names() -> tuple[set[str], set[str]] | None:
+    """(source descriptions, sink descriptions) from `pw-dump`, lowercased,
+    or None if PipeWire's tools aren't there / the call fails.
+
+    Why this exists (owner's report, 2026-10-02: the Microphone list
+    offered speakers and the Desktop Audio list offered microphones):
+    PortAudio's JACK host API, which is all this machine exposes, only
+    reports channel counts, and under PipeWire's JACK shim a speaker
+    ("sink") shows up as a capturable device too (its monitor), while a
+    duplex device like the Blue mic is one client with both. Channel
+    counts alone can't tell "a microphone" from "a speaker's monitor".
+    PipeWire knows exactly (media.class Audio/Source vs Audio/Sink), and
+    its node.description is the very string the JACK shim hands PortAudio
+    as the device name (verified live: 'Built-in Audio Analog Stereo',
+    'Blue Microphones Analog Stereo', ...)."""
+    if shutil.which("pw-dump") is None:
+        return None
+    try:
+        result = subprocess.run(["pw-dump"], capture_output=True, text=True, timeout=3.0)
+        nodes = json.loads(result.stdout)
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return None
+    sources: set[str] = set()
+    sinks: set[str] = set()
+    for obj in nodes if isinstance(nodes, list) else []:
+        if not isinstance(obj, dict) or obj.get("type") != "PipeWire:Interface:Node":
+            continue
+        props = (obj.get("info") or {}).get("props") or {}
+        media_class = str(props.get("media.class", ""))
+        description = str(props.get("node.description") or "").strip().lower()
+        if not description:
+            continue
+        if media_class.startswith("Audio/Source"):
+            sources.add(description)
+        elif media_class.startswith("Audio/Sink"):
+            sinks.add(description)
+    return (sources, sinks) if (sources or sinks) else None
+
+
+def _matches_kind_by_channels(info: dict, kind: str) -> bool:
+    """Fallback for systems without PipeWire's tools. Under a JACK-style
+    host API a sink's capturable monitor ports mirror its playback ports
+    one-to-one, so a device has a real capture source only when it
+    exposes more inputs than outputs (or no outputs at all), and is an
+    output device exactly when it has playback channels."""
+    inputs = int(info.get("max_input_channels", 0))
+    outputs = int(info.get("max_output_channels", 0))
+    if kind == "desktop":
+        return inputs > 0 and outputs > 0
+    return inputs > 0 and (outputs == 0 or inputs > outputs)
+
+
+def list_input_devices(kind: str = "all") -> list[str]:
+    """Names of capturable devices. kind="microphone" keeps genuine
+    inputs only; kind="desktop" keeps genuine outputs (whose monitor is
+    what gets captured -- see config.AudioConfig.desktop_device);
+    anything else lists everything usable. A device that is both (a
+    duplex headset/USB mic) legitimately appears in both lists. If the
+    classification would leave nothing at all, falls back to channel
+    counts rather than an empty dropdown."""
+    devices = usable_input_devices()
+    if kind not in ("microphone", "desktop"):
+        return [str(info["name"]) for info in devices]
+    kinds = _pipewire_node_names()
+    if kinds is not None:
+        wanted = kinds[0] if kind == "microphone" else kinds[1]
+        chosen = [d for d in devices if str(d["name"]).strip().lower() in wanted]
+        if chosen:
+            return [str(d["name"]) for d in chosen]
+    return [str(d["name"]) for d in devices if _matches_kind_by_channels(d, kind)]
 
 
 # --- Capture ----------------------------------------------------------

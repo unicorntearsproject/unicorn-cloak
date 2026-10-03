@@ -247,8 +247,10 @@ class AudioManager(QObject):
             self._stop_microphone()
             self._start_microphone()
 
-    def list_devices(self) -> list[str]:
-        return list_input_devices()
+    def list_devices(self, kind: str = "all") -> list[str]:
+        """kind: "microphone", "desktop" or "all" -- see
+        audio.list_input_devices."""
+        return list_input_devices(kind)
 
     def switch_to_file(self, path: str | None = None) -> None:
         """Records the chosen file (if given) and stops the mic, but does

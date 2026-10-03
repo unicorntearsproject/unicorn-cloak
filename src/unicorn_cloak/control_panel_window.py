@@ -4200,15 +4200,32 @@ class ControlPanelWindow(QWidget):
         """(Re)builds the device dropdown's item list from whatever's
         actually plugged in right now, then restores the selection for
         whichever source (Microphone/Desktop Audio) is currently active
-        -- see _current_device_hint. Called once at startup and again on
-        a manual Refresh click (see that button's own tooltip for why
-        this never happens automatically)."""
+        -- see _current_device_hint. Called once at startup, on a manual
+        Refresh click (see that button's own tooltip for why this never
+        happens automatically), and on every source change: the list is
+        specific to the source -- Microphone offers only inputs, Desktop
+        Audio only outputs (owner's report, 2026-10-02: each used to
+        offer everything, speakers and microphones alike)."""
+        is_desktop = self.config.audio.source == "desktop"
+        kind = "desktop" if is_desktop else "microphone"
         self.audio_device.blockSignals(True)
         self.audio_device.clear()
         self.audio_device.addItem("System default", None)
+        listed: list[str] = []
         if self.audio_manager is not None:
-            for name in self.audio_manager.list_devices():
+            listed = self.audio_manager.list_devices(kind)
+            for name in listed:
                 self.audio_device.addItem(name, name)
+        # A saved choice that isn't in this source's list (hand-edited,
+        # picked back when every device was offered, or the device is
+        # simply unplugged right now) stays visible and selected rather
+        # than the box silently saying "System default" while capture
+        # actually uses the saved device -- the UI-vs-reality mismatch
+        # bug audit addendum D1 was about.
+        hint = self._current_device_hint()
+        if hint and hint not in listed:
+            label = "an output" if is_desktop else "an input"
+            self.audio_device.addItem(f"{hint} (not currently listed as {label})", hint)
         self.audio_device.blockSignals(False)
         self._sync_audio_device_selection()
 
@@ -4264,7 +4281,9 @@ class ControlPanelWindow(QWidget):
             # live-tracked OBS mute state (see _on_obs_mute_changed),
             # the same value its status label already reflects.
             self.render_window.set_muted(self._obs_muted and source == "microphone")
-        self._sync_audio_device_selection()
+        # Rebuilds the list, not just the selection: Microphone and
+        # Desktop Audio offer different devices (inputs vs outputs).
+        self._populate_audio_devices()
         self._update_source_controls_enabled()
         self._update_play_button_text()
         self._update_record_loop_button_text()

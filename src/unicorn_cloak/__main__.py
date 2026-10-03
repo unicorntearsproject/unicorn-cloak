@@ -13,7 +13,7 @@ import os
 import sys
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, qInstallMessageHandler
 from PySide6.QtWidgets import QApplication
 
 from . import theme
@@ -50,6 +50,29 @@ def _suppressed_native_stderr():
         os.dup2(saved_fd, stderr_fd)
         os.close(devnull_fd)
         os.close(saved_fd)
+
+
+def filtered_qt_message_handler(msg_type, context, message) -> None:
+    """Drops Qt's "Failed to register with host portal" warning for the
+    whole life of the process, passing everything else through to stderr.
+
+    Qt re-attempts its xdg-desktop-portal app-ID registration later on,
+    not just at startup (observed 2026-10-02, owner's report: it showed
+    up mid-session, after switching audio sources and choosing a file --
+    "Connection already associated with an application ID", i.e. the
+    registration had already succeeded and Qt asked again). It is the
+    same already-investigated, harmless GNOME portal noise
+    docs/PLAN.md's "Startup noise hidden" entry covers, but
+    QT_LOGGING_RULES (set in main()) only reliably silences categories
+    whose first use comes after it's read, so a later retry slipped
+    through. A message handler sees every message regardless of when it
+    fires. Matches category AND text so a genuinely different
+    qt.qpa.services problem would still show."""
+    if getattr(context, "category", None) == "qt.qpa.services" and "host portal" in message:
+        return
+    category = getattr(context, "category", None)
+    prefix = f"{category}: " if category and category != "default" else ""
+    print(f"{prefix}{message}", file=sys.stderr, flush=True)
 
 
 def reset_speaking_state_and_close_mouth(window: RenderWindow) -> SpeakingState:
@@ -123,6 +146,7 @@ def main() -> int:
     # startup noise is hidden, never a real error this app raises itself.
     debug = os.environ.get("UNICORN_CLOAK_DEBUG") == "1"
     if not debug:
+        qInstallMessageHandler(filtered_qt_message_handler)
         # qt.qpa.services' "Failed to register with host portal" warning
         # -- the already-investigated, already-accepted GNOME/
         # xdg-desktop-portal limitation documented in docs/PLAN.md (OBS

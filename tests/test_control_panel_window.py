@@ -1513,7 +1513,7 @@ def test_device_dropdown_lists_audio_manager_devices(qapp, tmp_path, monkeypatch
     rig = make_test_rig()
     window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
     manager = AudioManager(config)
-    monkeypatch.setattr(manager, "list_devices", lambda: ["Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"])
+    monkeypatch.setattr(manager, "list_devices", lambda kind="all": ["Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo"])
     panel = ControlPanelWindow(
         rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
     )
@@ -1529,7 +1529,7 @@ def test_selecting_a_device_calls_set_device_and_persists(qapp, tmp_path, monkey
     rig = make_test_rig()
     window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
     manager = AudioManager(config)
-    monkeypatch.setattr(manager, "list_devices", lambda: ["Built-in Audio Analog Stereo"])
+    monkeypatch.setattr(manager, "list_devices", lambda kind="all": ["Built-in Audio Analog Stereo"])
     calls = []
     monkeypatch.setattr(manager, "set_device", lambda device: calls.append(device))
     panel = ControlPanelWindow(
@@ -1551,7 +1551,7 @@ def test_switching_source_shows_each_sources_own_device_choice(qapp, tmp_path, m
     rig = make_test_rig()
     window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
     manager = AudioManager(config)
-    monkeypatch.setattr(manager, "list_devices", lambda: ["Mic A", "Desktop B"])
+    monkeypatch.setattr(manager, "list_devices", lambda kind="all": ["Mic A", "Desktop B"])
     monkeypatch.setattr(manager, "switch_to_microphone", lambda: None)
     monkeypatch.setattr(manager, "switch_to_desktop", lambda: None)
     panel = ControlPanelWindow(
@@ -1574,7 +1574,7 @@ def test_refresh_button_repopulates_the_device_list(qapp, tmp_path, monkeypatch)
     window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
     manager = AudioManager(config)
     device_names = ["Blue Microphones Analog Stereo"]
-    monkeypatch.setattr(manager, "list_devices", lambda: list(device_names))
+    monkeypatch.setattr(manager, "list_devices", lambda kind="all": list(device_names))
     panel = ControlPanelWindow(
         rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
     )
@@ -3818,3 +3818,67 @@ def test_profile_switch_re_evaluates_the_threshold_warning(qapp, tmp_path):
     panel.audio_source.setCurrentIndex(panel.audio_source.findData("microphone"))
 
     assert panel._threshold_warning_label.isHidden() is True
+
+
+# --- Device list is specific to the source (owner's report, 2026-10-02) -----
+
+
+def _panel_with_kinded_devices(tmp_path, monkeypatch):
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    kinds = {"microphone": ["Blue Mic", "Webcam Mic"], "desktop": ["Speakers", "HDMI Out"]}
+    monkeypatch.setattr(manager, "list_devices", lambda kind="all": kinds.get(kind, kinds["microphone"] + kinds["desktop"]))
+    monkeypatch.setattr(manager, "switch_to_microphone", lambda: None)
+    monkeypatch.setattr(manager, "switch_to_desktop", lambda: None)
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+    return config, panel
+
+
+def _device_names(panel):
+    return [panel.audio_device.itemText(i) for i in range(panel.audio_device.count())]
+
+
+def test_microphone_source_lists_only_inputs(qapp, tmp_path, monkeypatch):
+    config, panel = _panel_with_kinded_devices(tmp_path, monkeypatch)
+    assert _device_names(panel) == ["System default", "Blue Mic", "Webcam Mic"]
+
+
+def test_desktop_source_lists_only_outputs(qapp, tmp_path, monkeypatch):
+    config, panel = _panel_with_kinded_devices(tmp_path, monkeypatch)
+
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+
+    assert _device_names(panel) == ["System default", "Speakers", "HDMI Out"]
+
+
+def test_switching_back_to_microphone_restores_the_input_list(qapp, tmp_path, monkeypatch):
+    config, panel = _panel_with_kinded_devices(tmp_path, monkeypatch)
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("desktop"))
+    panel.audio_source.setCurrentIndex(panel.audio_source.findData("microphone"))
+    assert _device_names(panel) == ["System default", "Blue Mic", "Webcam Mic"]
+
+
+def test_a_saved_device_missing_from_the_list_stays_visible_and_selected(qapp, tmp_path, monkeypatch):
+    # E.g. a speaker picked back when every device was offered as a
+    # microphone: the box must say so, not fall back to "System default"
+    # while capture quietly keeps using the saved device.
+    from unicorn_cloak.audio_manager import AudioManager
+
+    config = Config()
+    config.audio.device = "Speakers"
+    rig = make_test_rig()
+    window = RenderWindow(rig, config.motion, hotkeys_config=config.hotkeys)
+    manager = AudioManager(config)
+    monkeypatch.setattr(manager, "list_devices", lambda kind="all": ["Blue Mic"])
+    panel = ControlPanelWindow(
+        rig, config, window, state_path=tmp_path / "settings.json", audio_manager=manager,
+    )
+
+    assert panel.audio_device.currentData() == "Speakers"
+    assert "not currently listed as an input" in panel.audio_device.currentText()

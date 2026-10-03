@@ -969,3 +969,112 @@ def test_envelope_loop_playback_stop_is_prompt():
     start = time.monotonic()
     playback.stop()
     assert time.monotonic() - start < 1.5
+
+
+# --- Device kinds: microphone vs desktop (owner's report, 2026-10-02) -------
+#
+# Trimmed from what pw-dump / sounddevice really reported on this machine:
+# the JACK shim exposes a speaker as a capturable device too (its monitor),
+# the Blue mic is one duplex client, and app streams (LibreWolf) appear as
+# plain inputs.
+
+_KIND_DEVICES = [
+    {"name": "Blue Microphones Analog Stereo", "hostapi": 2, "max_input_channels": 4, "max_output_channels": 2},
+    {"name": "C922 Pro Stream Webcam Analog Stereo", "hostapi": 2, "max_input_channels": 2, "max_output_channels": 0},
+    {"name": "LibreWolf", "hostapi": 2, "max_input_channels": 4, "max_output_channels": 0},
+    {"name": "Built-in Audio Analog Stereo", "hostapi": 2, "max_input_channels": 2, "max_output_channels": 2},
+    {"name": "DDJ-REV1 Analog Surround 4.0", "hostapi": 2, "max_input_channels": 4, "max_output_channels": 4},
+]
+
+
+def _patch_kind_devices(monkeypatch, pipewire):
+    monkeypatch.setattr(audio_module.sd, "query_hostapis", lambda: _HOSTAPIS)
+    monkeypatch.setattr(audio_module.sd, "query_devices", lambda: _KIND_DEVICES)
+    monkeypatch.setattr(audio_module, "_pipewire_node_names", lambda: pipewire)
+
+
+_PIPEWIRE = (
+    {"blue microphones analog stereo", "c922 pro stream webcam analog stereo"},
+    {"blue microphones analog stereo", "built-in audio analog stereo", "ddj-rev1 analog surround 4.0"},
+)
+
+
+def test_kind_all_lists_everything_usable(monkeypatch):
+    _patch_kind_devices(monkeypatch, _PIPEWIRE)
+    assert len(list_input_devices("all")) == len(_KIND_DEVICES)
+    assert list_input_devices() == list_input_devices("all")
+
+
+def test_microphone_kind_uses_pipewire_sources(monkeypatch):
+    _patch_kind_devices(monkeypatch, _PIPEWIRE)
+    assert list_input_devices("microphone") == [
+        "Blue Microphones Analog Stereo", "C922 Pro Stream Webcam Analog Stereo",
+    ]
+
+
+def test_desktop_kind_uses_pipewire_sinks(monkeypatch):
+    _patch_kind_devices(monkeypatch, _PIPEWIRE)
+    assert list_input_devices("desktop") == [
+        "Blue Microphones Analog Stereo", "Built-in Audio Analog Stereo", "DDJ-REV1 Analog Surround 4.0",
+    ]
+
+
+def test_a_duplex_device_appears_in_both_lists(monkeypatch):
+    _patch_kind_devices(monkeypatch, _PIPEWIRE)
+    assert "Blue Microphones Analog Stereo" in list_input_devices("microphone")
+    assert "Blue Microphones Analog Stereo" in list_input_devices("desktop")
+
+
+def test_kind_falls_back_to_channel_counts_without_pipewire(monkeypatch):
+    # A sink's monitor ports mirror its playback ports 1:1, so a real
+    # capture source is "more inputs than outputs, or no outputs".
+    _patch_kind_devices(monkeypatch, None)
+    mics = list_input_devices("microphone")
+    assert "Blue Microphones Analog Stereo" in mics  # 4 in > 2 out
+    assert "C922 Pro Stream Webcam Analog Stereo" in mics
+    assert "Built-in Audio Analog Stereo" not in mics  # 2 in == 2 out: just a monitor
+    assert "DDJ-REV1 Analog Surround 4.0" not in mics
+    desktop = list_input_devices("desktop")
+    assert "Built-in Audio Analog Stereo" in desktop
+    assert "C922 Pro Stream Webcam Analog Stereo" not in desktop
+
+
+def test_kind_falls_back_when_pipewire_names_match_nothing(monkeypatch):
+    # pw-dump works but its descriptions don't line up with PortAudio's
+    # names -- better the channel heuristic than an empty dropdown.
+    _patch_kind_devices(monkeypatch, ({"something else"}, {"another thing"}))
+    assert list_input_devices("microphone") != []
+    assert list_input_devices("desktop") != []
+
+
+def test_pipewire_node_names_parses_pw_dump_output(monkeypatch):
+    import json as json_module
+    import subprocess
+
+    dump = [
+        {"type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Audio/Source", "node.description": "Blue Mic"}}},
+        {"type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Audio/Sink", "node.description": "Speakers"}}},
+        {"type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Audio/Sink/Virtual", "node.description": "Null Sink"}}},
+        {"type": "PipeWire:Interface:Node", "info": {"props": {"media.class": "Stream/Output/Audio", "node.name": "LibreWolf"}}},
+        {"type": "PipeWire:Interface:Device", "info": {"props": {"media.class": "Audio/Device"}}},
+    ]
+    monkeypatch.setattr(audio_module.shutil, "which", lambda name: "/usr/bin/pw-dump")
+    monkeypatch.setattr(
+        audio_module.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=json_module.dumps(dump), stderr=""),
+    )
+    assert audio_module._pipewire_node_names() == ({"blue mic"}, {"speakers", "null sink"})
+
+
+def test_pipewire_node_names_is_none_without_the_tool_or_on_garbage(monkeypatch):
+    import subprocess
+
+    monkeypatch.setattr(audio_module.shutil, "which", lambda name: None)
+    assert audio_module._pipewire_node_names() is None
+
+    monkeypatch.setattr(audio_module.shutil, "which", lambda name: "/usr/bin/pw-dump")
+    monkeypatch.setattr(
+        audio_module.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="not json", stderr=""),
+    )
+    assert audio_module._pipewire_node_names() is None

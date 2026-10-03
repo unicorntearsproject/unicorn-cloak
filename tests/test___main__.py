@@ -128,3 +128,43 @@ def test_handle_avatar_file_changed_returns_false_and_does_not_touch_the_rig_on_
     # E3 (bug audit addendum 2026-09-23): surfaced in the UI, not just printed.
     assert len(panel.status_messages) == 1
     assert panel.status_messages[0][0] == "Hot reload"
+
+
+# --- Qt portal-registration noise filter (2026-10-02) ----------------------
+
+
+class _Ctx:
+    def __init__(self, category):
+        self.category = category
+
+
+def test_portal_registration_warning_is_dropped(capsys):
+    from PySide6.QtCore import QtMsgType
+    from unicorn_cloak.__main__ import filtered_qt_message_handler
+
+    filtered_qt_message_handler(
+        QtMsgType.QtWarningMsg, _Ctx("qt.qpa.services"),
+        'Failed to register with host portal QDBusError("org.freedesktop.portal.Error.Failed", '
+        '"Could not register app ID: Connection already associated with an application ID")',
+    )
+    assert capsys.readouterr().err == ""
+
+
+def test_other_messages_still_reach_stderr(capsys):
+    from PySide6.QtCore import QtMsgType
+    from unicorn_cloak.__main__ import filtered_qt_message_handler
+
+    filtered_qt_message_handler(QtMsgType.QtWarningMsg, _Ctx("qt.qpa.services"), "some other services problem")
+    filtered_qt_message_handler(QtMsgType.QtWarningMsg, _Ctx("default"), "plain warning")
+    err = capsys.readouterr().err
+    assert "qt.qpa.services: some other services problem" in err
+    assert "plain warning" in err
+    assert "default:" not in err
+
+
+def test_host_portal_text_in_another_category_is_not_swallowed(capsys):
+    from PySide6.QtCore import QtMsgType
+    from unicorn_cloak.__main__ import filtered_qt_message_handler
+
+    filtered_qt_message_handler(QtMsgType.QtWarningMsg, _Ctx("qt.something.else"), "host portal thing")
+    assert "host portal thing" in capsys.readouterr().err

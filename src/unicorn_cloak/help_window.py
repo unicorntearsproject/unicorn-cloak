@@ -710,7 +710,15 @@ what was active before recording started.</p>
 source row -- only meaningful for Microphone and Desktop Audio (grayed
 out on File, which doesn't use a capture device at all). Remembered
 separately per source, so switching between Microphone and Desktop Audio
-keeps each one's own choice. "System default" picks automatically for
+keeps each one's own choice. The list is specific to the source:
+<b>Microphone</b> offers only real inputs (microphones, webcam mics,
+line-ins), and <b>Desktop audio</b> only outputs (speakers, headphones,
+HDMI) -- it captures whatever is playing out of the one you pick. A
+device that is genuinely both (a USB mic with a headphone jack) shows up
+in both. Other programs' audio streams aren't listed. A saved choice
+that isn't in the list right now (unplugged, or picked in an older
+version) stays selected and is marked "not currently listed" rather than
+silently reverting to System default. "System default" picks automatically for
 Microphone; Desktop Audio has no such automatic pick (see above) -- choose
 a real device from the list. A "Now capturing: …" label next to the row
 shows the device this app actually opened, once one is; if that doesn't
