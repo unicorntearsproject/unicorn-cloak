@@ -47,6 +47,7 @@ docs/              canonical documentation (docs/README.md is the index)
   PLAN.md          plan, current status, full dated build log
   decisions/       short decision records (NNNN-slug.md), numbered from 0001
   audit/           dated audit reports (YYYY-MM-DD-slug.md)
+  planning/        proposed plans not yet built (e.g. installation-plan.md)
   avatar-lipsync-setup.md   superseded: the PNGTuber-Plus setup this replaced
 src/unicorn_cloak/ the app: rig, renderer, audio, control panel, persistence
 assets/            bundled default avatar art (unicorn-demo)
