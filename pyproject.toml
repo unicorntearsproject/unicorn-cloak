@@ -1,6 +1,8 @@
 [project]
 name = "unicorn-cloak"
-version = "0.0.1"
+dynamic = ["version"]
+license = "MIT"
+license-files = ["LICENSE"]
 description = "Mic-reactive layered-sprite avatar overlay for OBS. Replaces PNGTuber-Plus."
 requires-python = ">=3.11"
 dependencies = [
@@ -10,8 +12,12 @@ dependencies = [
     "obsws-python",
 ]
 
+[project.scripts]
+unicorn-cloak = "unicorn_cloak.__main__:run"
+
 [project.optional-dependencies]
 dev = ["pytest"]
+build = ["pyinstaller"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -19,3 +25,9 @@ pythonpath = ["src"]
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "unicorn_cloak.__version__"}
+
+[tool.setuptools.package-data]
+unicorn_cloak = ["assets/fonts/*.ttf", "assets/icons/*.png"]

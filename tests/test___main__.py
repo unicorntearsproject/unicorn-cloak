@@ -216,3 +216,37 @@ def test_watchdog_stays_quiet_while_the_event_loop_keeps_running(qapp, tmp_path)
         timer.stop()
         log.close()
     assert (tmp_path / "debug.log").read_text() == ""
+
+
+# --- Entry point: --version / --self-test (installers) -----------------------
+
+
+def test_version_flag_prints_the_version_and_exits_zero(monkeypatch, capsys):
+    import pytest as _pytest
+
+    from unicorn_cloak import __version__
+    from unicorn_cloak.__main__ import run
+
+    codes = []
+    monkeypatch.setattr("unicorn_cloak.__main__.os._exit", lambda c: (codes.append(c), (_ for _ in ()).throw(SystemExit)))
+    with _pytest.raises(SystemExit):
+        run(["--version"])
+    assert codes == [0]
+    assert f"unicorn-cloak {__version__}" in capsys.readouterr().out
+
+
+def test_self_test_passes_against_the_bundled_demo_avatar(qapp, capsys):
+    from unicorn_cloak.__main__ import self_test
+
+    assert self_test() == 0
+    out = capsys.readouterr().out
+    assert "bundled demo avatar" in out and "self-test passed" in out
+
+
+def test_self_test_fails_when_the_demo_avatar_is_missing(qapp, monkeypatch, capsys, tmp_path):
+    from unicorn_cloak import config as config_module
+    from unicorn_cloak.__main__ import self_test
+
+    monkeypatch.setattr(config_module, "DEFAULT_AVATAR_PATH", str(tmp_path / "gone.uc"))
+    assert self_test() == 1
+    assert "self-test FAILED" in capsys.readouterr().out

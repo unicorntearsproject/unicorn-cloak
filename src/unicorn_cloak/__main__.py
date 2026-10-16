@@ -16,13 +16,14 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, qInstallMessageHandler
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from . import theme
+from . import __version__, theme
 from .audio import SpeakingState, update_speaking
 from .audio_manager import AudioManager
 from .avatar_io import load_avatar_with_upgrade
-from .config import apply_avatar_tuning, load_state, remembered_active_costume, save_state
+from .config import apply_avatar_tuning, load_state, relocate_bundled_default_avatar, remembered_active_costume, save_state
 from .control_panel_window import ControlPanelWindow
 from .hot_reload import AssetWatcher
 from .obs_link_manager import ObsLinkManager
@@ -205,7 +206,13 @@ def main() -> int:
     # Control Panel/Help windows only, never the Render Window (see
     # theme.py's module docstring for exactly why that's safe).
     theme.apply(app)
+    icon_path = Path(__file__).resolve().parent / "assets" / "icons" / "unicorn-cloak.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
     config = load_state()
+    # Installed copies edit their own copy of the demo avatar, never the
+    # shipped one (see config.relocate_bundled_default_avatar).
+    relocate_bundled_default_avatar(config)
 
     rig = load_avatar_with_upgrade(config.avatar_path)
     # Per-avatar Behavior/Audio tuning (2026-10-02); an avatar without any
@@ -424,7 +431,76 @@ def main() -> int:
     return app.exec()
 
 
-if __name__ == "__main__":
+def _version_line() -> str:
+    try:
+        from ._build_info import COMMIT, TAG  # written into release payloads only
+        extra = f" ({TAG} {COMMIT})"
+    except ImportError:
+        extra = ""
+    return f"unicorn-cloak {__version__}{extra}"
+
+
+def self_test() -> int:
+    """Headless install check (installers' last step, CI smoke test):
+    Qt + Qt Multimedia import, theme fonts, the bundled demo avatar,
+    audio device enumeration (no stream opened), ffmpeg/ffprobe lookup.
+    Exits 0 unless something the app can't run without is broken;
+    audio devices and ffmpeg only warn."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    failures: list[str] = []
+
+    def check(label: str, fn) -> None:
+        try:
+            detail = fn()
+            print(f"ok    {label}{': ' + str(detail) if detail else ''}", flush=True)
+        except Exception as exc:  # noqa: BLE001 -- a self-test reports everything
+            failures.append(label)
+            print(f"FAIL  {label}: {exc}", flush=True)
+
+    def qt() -> str:
+        from PySide6 import QtMultimedia  # noqa: F401
+        app = QApplication.instance() or QApplication([])
+        theme.apply(app)
+        if not list(theme.FONT_DIR.glob("*.ttf")):
+            raise RuntimeError(f"no fonts in {theme.FONT_DIR}")
+        return f"platform {app.platformName()}"
+
+    def avatar() -> str:
+        from .config import DEFAULT_AVATAR_PATH
+        from .persistence import load_avatar
+        rig = load_avatar(DEFAULT_AVATAR_PATH)
+        if not rig.sprites:
+            raise RuntimeError("demo avatar has no sprites")
+        return f"{rig.name}, {len(rig.sprites)} sprites"
+
+    check("Qt / Multimedia / fonts", qt)
+    check("bundled demo avatar", avatar)
+    from . import audio, paths
+    print(f"info  app root: {paths.app_root()}", flush=True)
+    try:
+        print(f"info  audio devices: {len(audio.list_input_devices())}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"warn  audio device list failed: {exc}", flush=True)
+    for tool in ("ffmpeg", "ffprobe"):
+        found = paths.find_tool(tool)
+        print(f"{'ok   ' if found else 'warn '} {tool}: {found or 'not found (file playback needs it)'}", flush=True)
+    print("self-test " + ("FAILED" if failures else "passed"), flush=True)
+    return 1 if failures else 0
+
+
+def run(argv: list[str] | None = None) -> None:
+    """Entry point for both `python -m unicorn_cloak` and the installed
+    `unicorn-cloak` console script / bundle. Always ends in os._exit --
+    see the long comment below -- which is why this is a function every
+    launch path shares rather than code under `if __name__`."""
+    args = sys.argv[1:] if argv is None else argv
+    if "--version" in args:
+        print(_version_line(), flush=True)
+        os._exit(0)
+    if "--self-test" in args:
+        code = self_test()
+        sys.stdout.flush()
+        os._exit(code)
     exit_code = main()
     # Owner's report, 2026-09-17: "the app *seems* to be quitting
     # properly but the cli launcher is not exiting" -- by this point,
@@ -450,3 +526,7 @@ if __name__ == "__main__":
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(exit_code)
+
+
+if __name__ == "__main__":
+    run()

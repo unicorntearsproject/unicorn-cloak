@@ -41,6 +41,8 @@ from dataclasses import dataclass
 import numpy as np
 import sounddevice as sd
 
+from .paths import find_tool
+
 
 @dataclass
 class SpeakingState:
@@ -548,7 +550,7 @@ DEFAULT_FILE_BLOCKSIZE = 1024
 
 
 def ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None
+    return find_tool("ffmpeg") is not None
 
 
 def probe_duration(path: str) -> float | None:
@@ -562,12 +564,13 @@ def probe_duration(path: str) -> float | None:
     itself is (see ffmpeg_available/FilePlayback) -- a file that plays
     fine but can't be probed should still play, just without a known
     total until FilePlayback's own on_position eventually catches up."""
-    if shutil.which("ffprobe") is None:
+    ffprobe = find_tool("ffprobe")
+    if ffprobe is None:
         return None
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                ffprobe, "-v", "error", "-show_entries", "format=duration",
                 "-of", "csv=p=0", path,
             ],
             capture_output=True, text=True, timeout=5.0,
@@ -710,7 +713,7 @@ class FilePlayback:
                 self._on_duration(duration)
 
         bytes_per_block = self.blocksize * 4  # float32 mono
-        cmd = ["ffmpeg", "-v", "error"]
+        cmd = [find_tool("ffmpeg") or "ffmpeg", "-v", "error"]
         if self.start_offset_s > 0:
             # Before -i, not after: an *input* seek, which ffmpeg can do
             # by jumping straight to the nearest point in the source

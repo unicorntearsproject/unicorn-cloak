@@ -546,3 +546,54 @@ def test_apply_loads_the_current_sources_profile_into_the_live_fields():
     config_module.apply_avatar_tuning(c, rig)
     assert c.audio.noise_gate == 0.07
     assert c.audio.profiles["microphone"] == {"noise_gate": 0.002}
+
+
+# --- First-run demo avatar relocation (installed copies) ---------------------
+
+
+def test_installed_first_run_copies_the_demo_avatar_and_points_config_at_it(monkeypatch, tmp_path):
+    from unicorn_cloak import paths
+
+    shipped = tmp_path / "root" / "assets" / "unicorn-demo" / "unicorn-demo.uc"
+    shipped.parent.mkdir(parents=True)
+    shipped.write_text("{}")
+    monkeypatch.setattr(config_module, "DEFAULT_AVATAR_PATH", str(shipped))
+    monkeypatch.setattr(paths, "is_installed", lambda: True)
+    monkeypatch.setattr(paths, "user_avatars_dir", lambda: tmp_path / "avatars")
+    config = Config(avatar_path=str(shipped))
+
+    config_module.relocate_bundled_default_avatar(config)
+
+    assert config.avatar_path == str(tmp_path / "avatars" / "unicorn-demo.uc")
+    assert (tmp_path / "avatars" / "unicorn-demo.uc").read_text() == "{}"
+
+
+def test_relocation_never_overwrites_the_users_existing_copy(monkeypatch, tmp_path):
+    from unicorn_cloak import paths
+
+    shipped = tmp_path / "shipped.uc"
+    shipped.write_text("new")
+    mine = tmp_path / "avatars" / "shipped.uc"
+    mine.parent.mkdir()
+    mine.write_text("my edits")
+    monkeypatch.setattr(config_module, "DEFAULT_AVATAR_PATH", str(shipped))
+    monkeypatch.setattr(paths, "is_installed", lambda: True)
+    monkeypatch.setattr(paths, "user_avatars_dir", lambda: tmp_path / "avatars")
+
+    config_module.relocate_bundled_default_avatar(Config(avatar_path=str(shipped)))
+
+    assert mine.read_text() == "my edits"
+
+
+def test_relocation_is_a_noop_in_a_dev_checkout_or_for_a_custom_avatar(monkeypatch, tmp_path):
+    from unicorn_cloak import paths
+
+    monkeypatch.setattr(paths, "is_installed", lambda: False)
+    config = Config()
+    config_module.relocate_bundled_default_avatar(config)
+    assert config.avatar_path == config_module.DEFAULT_AVATAR_PATH
+
+    monkeypatch.setattr(paths, "is_installed", lambda: True)
+    custom = Config(avatar_path=str(tmp_path / "mine.uc"))
+    config_module.relocate_bundled_default_avatar(custom)
+    assert custom.avatar_path == str(tmp_path / "mine.uc")

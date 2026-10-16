@@ -28,9 +28,13 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+from . import paths
 from .rig import NUM_COSTUMES
 
-DEFAULT_STATE_PATH = Path(__file__).resolve().parents[2] / "settings.json"
+# Dev checkout: repo-root settings.json (gitignored). Installed (bundle /
+# UNICORN_CLOAK_APP_ROOT): the user config dir. UNICORN_CLOAK_CONFIG
+# overrides either. See paths.py.
+DEFAULT_STATE_PATH = paths.default_state_path()
 
 # Format versioning (added 2026-09-17, mirroring persistence.py's own
 # CURRENT_FORMAT_VERSION/needs_migration for avatar files -- owner's
@@ -113,9 +117,25 @@ def _migrate_raw_config(raw: dict) -> dict:
 # worth fixing now specifically because this folder is headed for its own
 # repo (see docs/PLAN.md's git history note) and an absolute, owner-specific
 # path would silently break for anyone else.
-DEFAULT_AVATAR_PATH = str(
-    Path(__file__).resolve().parents[2] / "assets" / "unicorn-demo" / "unicorn-demo.uc"
-)
+DEFAULT_AVATAR_PATH = str(paths.app_root() / "assets" / "unicorn-demo" / "unicorn-demo.uc")
+
+
+def relocate_bundled_default_avatar(config: "Config") -> None:
+    """First run of an *installed* copy: the shipped demo avatar lives in
+    the read-only, upgrade-replaced app root, and is never to be written
+    to (Save would fail or be lost on the next upgrade), so copy it into
+    the user's avatars dir once and point config at that copy. A dev
+    checkout keeps editing the in-repo file, as before."""
+    if not paths.is_installed() or Path(config.avatar_path) != Path(DEFAULT_AVATAR_PATH):
+        return
+    target = paths.user_avatars_dir() / Path(DEFAULT_AVATAR_PATH).name
+    if not target.exists():
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(DEFAULT_AVATAR_PATH, target)
+        except OSError:
+            return  # keep running from the shipped copy rather than fail startup
+    config.avatar_path = str(target)
 
 
 @dataclass
