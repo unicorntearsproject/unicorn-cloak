@@ -1528,6 +1528,22 @@ how we find out. Suspects worth checking in it: `pw-dump` (3s timeout) and
 `Microphone.stop()` (2s join) both run on the Qt thread during a source
 switch.
 
+**2026-10-16: installers (shortest path to AppImage + Windows .exe).**
+See `docs/planning/installation-plan.md`'s status. Phase 0 landed:
+`paths.py` (app root / user dirs / bundled ffmpeg lookup), `run()` entry
++ `unicorn-cloak` script + `--version`/`--self-test`, installed copies keep
+settings in the user config dir and edit a first-run copy of the demo
+avatar (dev checkouts unchanged), MIT `LICENSE`, window icon. `packaging/`
+holds the PyInstaller spec, `build_appimage.sh`, `fetch_ffmpeg.sh`
+(static ffmpeg/ffprobe, GPL build on Linux, LGPL on Windows), desktop
+entry and icon ladder; `.github/workflows/windows.yml` builds the exe.
+Real problem found and fixed: the first AppImage aborted at startup under
+this shell ("GLib-GIO-ERROR ... does not contain a key named
+'antialiasing'") because PyInstaller bundled GTK3/GLib/GIO via Qt's GTK
+theme plugin, clashing with the system's GSettings; the spec now excludes
+them. Windows: WASAPI-only device list (otherwise 4 copies of each) and
+Desktop audio hidden/reporting unsupported until WASAPI loopback exists.
+
 Known: `test_the_real_default_avatars_costume_slots_swap_hoodie_for_vest`
 fails because the demo avatar's costume assignments were edited on
 2026-09-26 (uncommitted) -- not touched here.

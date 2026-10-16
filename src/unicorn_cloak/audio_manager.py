@@ -57,6 +57,7 @@ from .audio import (
     list_input_devices,
 )
 from .config import Config
+from .paths import desktop_audio_supported
 
 
 class AudioManager(QObject):
@@ -463,6 +464,12 @@ class AudioManager(QObject):
             return
         is_desktop = self.config.audio.source == "desktop"
         device = self.config.audio.desktop_device if is_desktop else self.config.audio.device
+        if is_desktop and not desktop_audio_supported():
+            self.error_occurred.emit(
+                "Desktop Audio isn't available on Windows yet (it needs WASAPI "
+                "loopback) -- use Microphone or File."
+            )
+            return
         if is_desktop and not device:
             # Never silently falls back to "whatever's first usable
             # device" for desktop audio -- bug audit addendum

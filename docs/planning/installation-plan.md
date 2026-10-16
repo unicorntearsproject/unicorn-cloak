@@ -1,6 +1,15 @@
 # Unicorn Cloak — Installation Plan
 
-**Status:** proposed, 2026-10-02. Nothing in this plan is built yet.
+**Status:** partly built, 2026-10-16. Done: Phase 0 (entry point, user dirs,
+bundled demo avatar + first-run copy, icon, `--version`/`--self-test`, MIT
+license, ffmpeg bundling), the desktop entry (Phase 2 file), a Linux AppImage
+(`packaging/build_appimage.sh`, verified: self-test + real launch on this
+machine) and a Windows single-file exe via GitHub Actions (unverified on real
+Windows). Not built: one-liner/R2 release pipeline, `.deb`/`.rpm`, Inno Setup,
+signing, CI beyond the Windows build, Windows Desktop Audio (WASAPI
+loopback; the option is hidden there for now). Owner decisions made
+2026-10-16: MIT, icon = Neon Ninja Unicorn Avatar-2, ship demo avatar, bundle
+ffmpeg, Windows built with GitHub Actions.
 **Source:** adapted from unicorn-viz's installer work
 (`../unicorn-viz/tools/install*`, `tools/install/`, `tools/launchers/`,
 `tools/packaging/`, and `docs/planning/installers.md`). The goal is to use the

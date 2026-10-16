@@ -185,8 +185,14 @@ def usable_input_devices() -> list[dict]:
     except Exception:
         return []
     hostapi_names = _hostapi_names()
+    # Windows exposes every physical device once per host API (MME,
+    # DirectSound, WASAPI, WDM-KS) -- a dropdown of four copies of each.
+    # Keep WASAPI alone when it's there.
+    wasapi = {i for i, name in hostapi_names.items() if "wasapi" in name}
     devices = []
     for i, info in enumerate(raw_devices):
+        if wasapi and int(info.get("hostapi", -1)) not in wasapi:
+            continue
         if info.get("max_input_channels", 0) < 1:
             continue
         if _is_alsa_hostapi(info, hostapi_names):

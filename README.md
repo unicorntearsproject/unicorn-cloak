@@ -35,6 +35,16 @@ In debug mode a watchdog also writes every thread's stack to
 (and on a hard crash) -- run `UNICORN_CLOAK_DEBUG=1 .venv/bin/python -m
 unicorn_cloak`, and after a lock-up send that file.
 
+## Building installers
+
+- **Linux AppImage:** `packaging/build_appimage.sh` (needs `appimagetool` on
+  PATH) -> `dist/UnicornCloak-<version>-x86_64.AppImage`, ffmpeg bundled.
+- **Windows .exe:** the `Windows build` GitHub Actions workflow
+  (`gh workflow run windows.yml`, or push a `v*` tag) builds a single-file
+  exe, runs `--self-test`, and uploads it (and attaches it to the release).
+- `unicorn-cloak --version` / `--self-test` verify any install.
+- Plan and what's still to come: `docs/planning/installation-plan.md`.
+
 ## Tests
 
 ```
@@ -42,7 +52,7 @@ unicorn_cloak`, and after a lock-up send that file.
 ```
 
 Qt runs headless via `QT_QPA_PLATFORM=offscreen` (set automatically by
-`tests/conftest.py`). 789 tests as of 2026-10-02.
+`tests/conftest.py`). 806 tests as of 2026-10-16.
 
 ## Layout
 

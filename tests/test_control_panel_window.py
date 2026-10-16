@@ -3989,3 +3989,10 @@ def test_obs_section_lives_on_the_application_tab(qapp, tmp_path):
     audio_page = panel.tabs.widget(titles.index("Audio"))
     assert app_page.isAncestorOf(panel._obs_section)
     assert not audio_page.isAncestorOf(panel._obs_section)
+
+
+def test_desktop_audio_option_is_hidden_where_unsupported(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(cpw_module, "desktop_audio_supported", lambda: False)
+    config, window, panel, _ = make_panel(tmp_path)
+    values = [panel.audio_source.itemData(i) for i in range(panel.audio_source.count())]
+    assert values == ["microphone", "file"]

@@ -1003,3 +1003,20 @@ def test_looping_reports_the_recorded_rate_not_a_hardcoded_default(qapp, monkeyp
     assert manager.samplerate == 48000
 
     manager.shutdown()
+
+
+def test_desktop_audio_reports_unsupported_instead_of_capturing_on_windows(qapp, monkeypatch):
+    monkeypatch.setattr("unicorn_cloak.audio_manager.desktop_audio_supported", lambda: False)
+    FakeMic, started, _stopped = _fake_microphone_class()
+    monkeypatch.setattr("unicorn_cloak.audio_manager.Microphone", FakeMic)
+    config = Config()
+    config.audio.source = "desktop"
+    config.audio.desktop_device = "Speakers"
+    manager = AudioManager(config)
+    errors = []
+    manager.error_occurred.connect(errors.append)
+
+    manager.start()
+
+    assert started == []
+    assert "Windows" in errors[0]

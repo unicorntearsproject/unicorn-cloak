@@ -71,3 +71,10 @@ def find_tool(name: str) -> str | None:
     if bundled.is_file():
         return str(bundled)
     return shutil.which(name)
+
+
+def desktop_audio_supported() -> bool:
+    """Capturing "what's playing" needs a sink's monitor, which PipeWire/
+    PulseAudio expose as a capturable input. Windows only offers that via
+    WASAPI loopback, which this app doesn't implement yet."""
+    return sys.platform != "win32"

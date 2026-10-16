@@ -51,6 +51,8 @@ docs/              canonical documentation (docs/README.md is the index)
   avatar-lipsync-setup.md   superseded: the PNGTuber-Plus setup this replaced
 src/unicorn_cloak/ the app: rig, renderer, audio, control panel, persistence
 assets/            bundled default avatar art (unicorn-demo)
+packaging/         installer build inputs: PyInstaller spec, AppImage/ffmpeg scripts, desktop entry, icon ladder
+.github/workflows/ CI: Windows .exe build
 tests/             pytest suite, one file per module
 spike/             throwaway scripts from early de-risking work
 ```

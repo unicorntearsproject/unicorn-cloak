@@ -94,6 +94,7 @@ from .config import (
 )
 from .help_window import HelpWindow
 from .persistence import DEFAULT_EXTENSION, save_avatar
+from .paths import desktop_audio_supported
 from .render import BACKGROUND_COLORS
 from .rig import NUM_COSTUMES, AvatarRig, Sprite, duplicate_sprite, with_costume_layer
 from .rig_lint import find_rig_issues
@@ -2298,7 +2299,8 @@ class ControlPanelWindow(QWidget):
         self.source_row = QHBoxLayout()
         self.audio_source = QComboBox()
         self.audio_source.addItem("Microphone", "microphone")
-        self.audio_source.addItem("Desktop audio (what's playing)", "desktop")
+        if desktop_audio_supported():
+            self.audio_source.addItem("Desktop audio (what's playing)", "desktop")
         self.audio_source.addItem("File (play a recording instead)", "file")
         self.audio_source.setToolTip(
             "What drives the mouth: a live microphone (normal setup),\n"

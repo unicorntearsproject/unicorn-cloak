@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Unicorn Cloak
+GenericName=Avatar Overlay
+Comment=Mic-reactive layered-sprite avatar for OBS
+Exec=unicorn-cloak %U
+Icon=unicorn-cloak
+Terminal=false
+Categories=AudioVideo;Video;
+Keywords=pngtuber;vtuber;avatar;obs;stream;overlay;
+StartupNotify=true
+StartupWMClass=unicorn-cloak

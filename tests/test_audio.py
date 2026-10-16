@@ -1078,3 +1078,19 @@ def test_pipewire_node_names_is_none_without_the_tool_or_on_garbage(monkeypatch)
         lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="not json", stderr=""),
     )
     assert audio_module._pipewire_node_names() is None
+
+
+# --- Windows host-API preference / unsupported Desktop audio (2026-10-16) ----
+
+
+def test_wasapi_devices_are_preferred_over_the_other_windows_host_apis(monkeypatch):
+    hostapis = [{"name": "MME"}, {"name": "Windows DirectSound"}, {"name": "Windows WASAPI"}, {"name": "Windows WDM-KS"}]
+    devices = [
+        {"name": "Mic (MME)", "hostapi": 0, "max_input_channels": 2},
+        {"name": "Mic (DS)", "hostapi": 1, "max_input_channels": 2},
+        {"name": "Mic (WASAPI)", "hostapi": 2, "max_input_channels": 2},
+        {"name": "Mic (KS)", "hostapi": 3, "max_input_channels": 2},
+    ]
+    monkeypatch.setattr(audio_module.sd, "query_hostapis", lambda: hostapis)
+    monkeypatch.setattr(audio_module.sd, "query_devices", lambda: devices)
+    assert [d["name"] for d in usable_input_devices()] == ["Mic (WASAPI)"]

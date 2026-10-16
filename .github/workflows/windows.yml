@@ -1,0 +1,52 @@
+name: Windows build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[build]"
+      - name: Fetch ffmpeg
+        shell: bash
+        run: bash packaging/fetch_ffmpeg.sh windows
+      - name: Build exe (single file)
+        shell: bash
+        env:
+          UC_ONEFILE: "1"
+        run: pyinstaller --noconfirm --clean packaging/unicorn-cloak.spec
+      - name: Self-test
+        shell: bash
+        run: |
+          # A windowed exe has no console, so redirect to see the output.
+          code=0
+          dist/unicorn-cloak.exe --version > version.txt 2>&1 || code=$?
+          dist/unicorn-cloak.exe --self-test > selftest.txt 2>&1 || code=$?
+          cat version.txt selftest.txt
+          exit $code
+      - name: Name the artifact
+        shell: bash
+        run: |
+          v=$(python -c "import re;print(re.search(r'__version__ = \"(.+?)\"', open('src/unicorn_cloak/__init__.py').read()).group(1))")
+          mv dist/unicorn-cloak.exe "dist/UnicornCloak-$v-win-x64.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UnicornCloak-windows
+          path: dist/UnicornCloak-*-win-x64.exe
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/UnicornCloak-*-win-x64.exe --clobber || gh release create "${{ github.ref_name }}" dist/UnicornCloak-*-win-x64.exe --generate-notes
