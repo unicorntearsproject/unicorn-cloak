@@ -35,6 +35,28 @@ In debug mode a watchdog also writes every thread's stack to
 (and on a hard crash) -- run `UNICORN_CLOAK_DEBUG=1 .venv/bin/python -m
 unicorn_cloak`, and after a lock-up send that file.
 
+## Installing
+
+**Status (v0.9.0, 2026-10-16): pre-release.** Two installers exist; the
+rest of the plan is not built yet.
+
+- **Linux:** download `UnicornCloak-<version>-x86_64.AppImage` from the
+  [Releases](../../releases) page, `chmod +x` it and run it. ffmpeg is
+  bundled. Tested on Fedora 44 / Wayland only.
+- **Windows:** download `UnicornCloak-<version>-win-x64.exe` from Releases.
+  It's a single-file exe built by CI and has **not been run on real Windows
+  yet**; the build's headless self-test passes, nothing more is verified.
+  Windows will warn about an unknown publisher (unsigned). Known gap:
+  **Desktop audio is unavailable on Windows** (needs WASAPI loopback, not
+  built); microphone and file playback are the intended paths there.
+- **Not available yet:** a one-line install script, `.deb`/`.rpm`, a
+  Windows setup wizard, code signing, macOS. See
+  `docs/planning/installation-plan.md`.
+
+Either way, `unicorn-cloak --version` and `--self-test` check an install.
+Installed copies keep settings in your user config folder and edit their
+own copy of the demo avatar.
+
 ## Building installers
 
 - **Linux AppImage:** `packaging/build_appimage.sh` (needs `appimagetool` on
