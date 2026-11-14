@@ -41,7 +41,18 @@ unicorn_cloak`, and after a lock-up send that file.
 rest of the plan is not built yet.
 
 - **Linux:** download `UnicornCloak-<version>-x86_64.AppImage` from the
-  [Releases](../../releases) page, `chmod +x` it and run it. ffmpeg is
+  [Releases](../../releases) page, then in a terminal:
+
+  ```bash
+  chmod +x UnicornCloak-*.AppImage
+  ./UnicornCloak-*.AppImage --install-desktop
+  ```
+
+  That copies it to `~/Applications` and adds an app-menu entry and icon
+  (`--uninstall-desktop` removes them). **Don't double-click the file on
+  Fedora/GNOME:** it has no "run" handler for AppImages and opens the disk
+  image writer instead. AppImages also need FUSE 2 (`sudo dnf install
+  fuse-libs`); without it, run with `--appimage-extract-and-run`. ffmpeg is
   bundled. Tested on Fedora 44 / Wayland only.
 - **Windows:** download `UnicornCloak-<version>-win-x64.exe` from Releases.
   It's a single-file exe built by CI and has **not been run on real Windows

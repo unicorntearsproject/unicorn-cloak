@@ -497,6 +497,16 @@ def run(argv: list[str] | None = None) -> None:
     if "--version" in args:
         print(_version_line(), flush=True)
         os._exit(0)
+    if "--install-desktop" in args or "--uninstall-desktop" in args:
+        from . import desktop_integration
+        try:
+            print(desktop_integration.install() if "--install-desktop" in args
+                  else desktop_integration.uninstall(), flush=True)
+            code = 0
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr, flush=True)
+            code = 1
+        os._exit(code)
     if "--self-test" in args:
         code = self_test()
         sys.stdout.flush()
